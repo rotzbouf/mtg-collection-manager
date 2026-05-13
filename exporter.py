@@ -16,6 +16,30 @@ _CSV_FIELDS = [
     "chaos_key",
 ]
 
+# Moxfield condition labels
+_CONDITION_MAP = {
+    "NM": "Near Mint",
+    "LP": "Lightly Played",
+    "MP": "Moderately Played",
+    "HP": "Heavily Played",
+    "DMG": "Damaged",
+}
+
+# Moxfield language codes (ISO 639-1 → Moxfield name)
+_LANG_MAP = {
+    "en": "English",
+    "de": "German",
+    "fr": "French",
+    "it": "Italian",
+    "es": "Spanish",
+    "pt": "Portuguese",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "ru": "Russian",
+    "zhs": "Simplified Chinese",
+    "zht": "Traditional Chinese",
+}
+
 
 def _flatten(v: Any) -> str:
     if isinstance(v, (list, dict)):
@@ -36,6 +60,26 @@ def to_csv(cards: list[dict]) -> str:
     writer.writeheader()
     for card in cards:
         writer.writerow({f: _flatten(card.get(f)) for f in _CSV_FIELDS})
+    return buf.getvalue()
+
+
+def to_moxfield(cards: list[dict]) -> str:
+    """Export in Moxfield collection CSV format (importable at moxfield.com)."""
+    fields = ["Count", "Name", "Edition", "Condition", "Language", "Foil", "Collector Number"]
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=fields, lineterminator="\n")
+    writer.writeheader()
+    for card in cards:
+        foil_val = "foil" if card.get("foil") else ""
+        writer.writerow({
+            "Count":            1,
+            "Name":             card.get("name_en") or "",
+            "Edition":          (card.get("set_code") or "").upper(),
+            "Condition":        _CONDITION_MAP.get(card.get("condition", "NM"), "Near Mint"),
+            "Language":         _LANG_MAP.get(card.get("language", "en"), "English"),
+            "Foil":             foil_val,
+            "Collector Number": card.get("collector_number") or "",
+        })
     return buf.getvalue()
 
 

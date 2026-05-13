@@ -910,13 +910,14 @@ async def cmd_update(interaction: discord.Interaction, id: int, field: str, valu
 # /export
 # ──────────────────────────────────────────────────────────────────────────────
 
-@bot.tree.command(name="export", description="Export your entire collection as CSV or JSON")
+@bot.tree.command(name="export", description="Export your entire collection")
 @app_commands.describe(format="File format")
 @app_commands.choices(format=[
-    app_commands.Choice(name="CSV (Excel-compatible)", value="csv"),
+    app_commands.Choice(name="Moxfield CSV (recommended)", value="moxfield"),
+    app_commands.Choice(name="CSV (Excel-compatible, full data)", value="csv"),
     app_commands.Choice(name="JSON", value="json"),
 ])
-async def cmd_export(interaction: discord.Interaction, format: str = "csv"):
+async def cmd_export(interaction: discord.Interaction, format: str = "moxfield"):
     if not await require_guest(interaction):
         return
     await interaction.response.defer(thinking=True)
@@ -925,14 +926,15 @@ async def cmd_export(interaction: discord.Interaction, format: str = "csv"):
         await interaction.followup.send("Your collection is empty.", ephemeral=True)
         return
 
-    if format == "json":
+    if format == "moxfield":
+        content = exp.to_moxfield(cards).encode("utf-8")
+        filename = "collection_moxfield.csv"
+    elif format == "json":
         content = exp.to_json(cards).encode("utf-8")
         filename = "collection.json"
-        mime = "application/json"
     else:
         content = exp.to_csv(cards).encode("utf-8")
         filename = "collection.csv"
-        mime = "text/csv"
 
     file = discord.File(io.BytesIO(content), filename=filename)
     await interaction.followup.send(
@@ -1248,7 +1250,7 @@ async def cmd_help(interaction: discord.Interaction):
     )
     embed.add_field(
         name="📤 Export",
-        value="`/export` — download your full collection as CSV or JSON\n",
+        value="`/export` — download as **Moxfield CSV** (default), Excel CSV, or JSON\n",
         inline=False,
     )
     embed.add_field(
