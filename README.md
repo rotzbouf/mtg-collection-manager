@@ -430,6 +430,18 @@ A live progress bar shows download progress (MB) and hashing status.
 Wipes the entire index and re-downloads all card images from scratch.
 Use this after changing GPU availability or if the index appears corrupted.
 
+#### Pause, Resume, and Cancel
+
+Both `/index update` and `/index rebuild` attach control buttons directly to the progress message — no extra commands needed:
+
+| Button | Effect |
+|---|---|
+| **⏸ Pause** | Suspends new downloads and GPU hashing; in-flight downloads finish gracefully |
+| **▶ Resume** | Continues from where it left off |
+| **⏹ Cancel** | Stops the build immediately; already-committed batches are kept in the index |
+
+Only one build can run at a time. Starting a second one while a build is active returns an ephemeral error pointing to the existing progress message.
+
 > **Note:** The first `/index update` or rebuild can take a long time depending on how many sets are missing. The bot remains fully usable during the process.
 
 ---
