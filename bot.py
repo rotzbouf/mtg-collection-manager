@@ -13,6 +13,15 @@ from discord import app_commands
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
 
+# Load .env before local imports so CUDA_VISIBLE_DEVICES and other env vars
+# are available when card_index._init_gpu() runs at import time.
+load_dotenv()
+
+# Prevent matplotlib / some OCR libs from trying to open a display
+os.environ.setdefault("MPLBACKEND", "Agg")
+# Suppress torch DataLoader pin_memory warning on CPU-only machines
+warnings.filterwarnings("ignore", message=".*pin_memory.*")
+
 import card_index
 import deckbuilder
 import exporter as exp
@@ -20,12 +29,6 @@ import scanner
 from database import Database
 from scryfall import ScryfallClient
 
-# Prevent matplotlib / some OCR libs from trying to open a display
-os.environ.setdefault("MPLBACKEND", "Agg")
-# Suppress torch DataLoader pin_memory warning on CPU-only machines
-warnings.filterwarnings("ignore", message=".*pin_memory.*")
-
-load_dotenv()
 logger = logging.getLogger(__name__)
 
 
