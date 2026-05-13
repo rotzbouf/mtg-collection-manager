@@ -47,8 +47,9 @@ def _configure_logging() -> None:
 
 TOKEN = os.environ["DISCORD_TOKEN"]
 GUILD_ID = os.getenv("DISCORD_GUILD_ID")
-SCAN_CHANNEL_ID = int(os.getenv("DISCORD_SCAN_CHANNEL_ID", 0)) or None
-DECK_CHANNEL_ID = int(os.getenv("DISCORD_DECKBUILDER_CHANNEL_ID", 0)) or None
+SCAN_CHANNEL_ID     = int(os.getenv("DISCORD_SCAN_CHANNEL_ID",       0)) or None
+DECK_CHANNEL_ID     = int(os.getenv("DISCORD_DECKBUILDER_CHANNEL_ID", 0)) or None
+SHOWCASE_CHANNEL_ID = int(os.getenv("DISCORD_SHOWCASE_CHANNEL_ID",    0)) or None
 GUEST_ROLE        = os.getenv("DISCORD_GUEST_ROLE",     "")   # read-only commands
 COLLECTOR_ROLE    = os.getenv("DISCORD_COLLECTOR_ROLE", "")   # add / scan / update
 ADMIN_ROLE        = os.getenv("DISCORD_ADMIN_ROLE",     "")   # remove / container mgmt / index rebuild
@@ -231,6 +232,7 @@ def paginate_embeds(cards: list[dict], page: int, per_page: int = 10) -> tuple[d
 _READ_ONLY_COMMANDS = {
     "search", "list", "card", "stats", "export", "help",
     "container list", "index status", "index check",
+    "showcase",
 }
 
 class MTGCommandTree(app_commands.CommandTree):
@@ -239,11 +241,16 @@ class MTGCommandTree(app_commands.CommandTree):
         if cmd is None:
             return True
         name = cmd.qualified_name
-        is_deck = name.startswith("deck")
-        if is_deck:
+        if name.startswith("deck"):
             if DECK_CHANNEL_ID and interaction.channel_id != DECK_CHANNEL_ID:
                 await interaction.response.send_message(
                     f"Deck commands only work in <#{DECK_CHANNEL_ID}>.", ephemeral=True
+                )
+                return False
+        elif name == "showcase":
+            if SHOWCASE_CHANNEL_ID and interaction.channel_id != SHOWCASE_CHANNEL_ID:
+                await interaction.response.send_message(
+                    f"This command only works in <#{SHOWCASE_CHANNEL_ID}>.", ephemeral=True
                 )
                 return False
         elif name not in _READ_ONLY_COMMANDS:
@@ -285,6 +292,7 @@ class MTGBot(commands.Bot):
             logger.info("Slash commands synced globally (may take up to 1 hour to appear)")
 
         new_set_check.start()
+        record_prices_task.start()
         # Load OCR models in background — slow on first run, must not block the sync
         asyncio.create_task(self._init_ocr())
 
@@ -341,6 +349,20 @@ async def new_set_check():
 
 @new_set_check.before_loop
 async def _before_new_set_check():
+    await bot.wait_until_ready()
+
+
+@tasks.loop(hours=24)
+async def record_prices_task():
+    try:
+        n = await bot.db.record_prices()
+        logger.info("Price snapshot recorded for %d unique cards", n)
+    except Exception as e:
+        logger.error("Price recording failed: %s", e)
+
+
+@record_prices_task.before_loop
+async def _before_record_prices():
     await bot.wait_until_ready()
 
 
@@ -1227,6 +1249,117 @@ async def deck_propose(interaction: discord.Interaction, format: str = "commande
 
 
 bot.tree.add_command(deck_group)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# /showcase  —  top 5 most valuable cards with price history
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _make_price_chart(history: list[dict], card_name: str) -> Optional[bytes]:
+    """Render a price-history line chart as PNG bytes. Returns None if < 2 points."""
+    if len(history) < 2:
+        return None
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import matplotlib.dates as mdates
+        from datetime import datetime as _dt
+
+        dates  = [_dt.strptime(h["recorded_at"], "%Y-%m-%d") for h in history]
+        prices = [h["price_eur"] for h in history]
+
+        fig, ax = plt.subplots(figsize=(6, 2.4), facecolor="#2b2d31")
+        ax.set_facecolor("#383a40")
+        ax.plot(dates, prices, color="#5865f2", linewidth=2, marker="o", markersize=4)
+        ax.fill_between(dates, prices, alpha=0.15, color="#5865f2")
+        ax.set_ylabel("EUR", color="#dbdee1", fontsize=8)
+        ax.tick_params(colors="#dbdee1", labelsize=7)
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%d.%m"))
+        ax.xaxis.set_major_locator(mdates.AutoDateLocator())
+        for spine in ax.spines.values():
+            spine.set_color("#4e5058")
+        plt.xticks(rotation=30, ha="right")
+        fig.tight_layout(pad=0.5)
+
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", dpi=100, bbox_inches="tight")
+        plt.close(fig)
+        buf.seek(0)
+        return buf.read()
+    except Exception as e:
+        logger.warning("Price chart generation failed: %s", e)
+        return None
+
+
+@bot.tree.command(name="showcase", description="Show the 5 most valuable cards in your collection")
+async def cmd_showcase(interaction: discord.Interaction):
+    await interaction.response.defer()
+    cards = await bot.db.get_top_by_value(5)
+    if not cards:
+        await interaction.followup.send("No cards with a known price in your collection yet.")
+        return
+
+    RARITY_COLOUR = {
+        "mythic":   0xe8742a,
+        "rare":     0xc3a343,
+        "uncommon": 0x6e7f8d,
+        "common":   0x393939,
+    }
+
+    for rank, card in enumerate(cards, start=1):
+        name       = card.get("name_en") or "Unknown"
+        price_eur  = card.get("price_eur") or 0.0
+        price_usd  = card.get("price_usd")
+        rarity     = (card.get("rarity") or "").lower()
+        container  = card.get("container_name") or "—"
+        set_code   = (card.get("set_code") or "").upper()
+        set_name   = card.get("set_name") or ""
+        coll_nr    = card.get("collector_number") or ""
+        type_line  = card.get("type_line") or ""
+        condition  = card.get("condition") or "NM"
+        language   = card.get("language") or "en"
+        foil       = bool(card.get("foil"))
+        image_url  = card.get("image_url") or ""
+        scryfall_id = card.get("scryfall_id") or ""
+
+        colour = RARITY_COLOUR.get(rarity, 0x5865f2)
+        foil_tag = " ✨" if foil else ""
+        price_str = f"**€{price_eur:.2f}**"
+        if price_usd:
+            price_str += f"  ·  ${price_usd:.2f}"
+
+        embed = discord.Embed(
+            title=f"#{rank} — {name}{foil_tag}",
+            colour=colour,
+        )
+        embed.add_field(name="Price", value=price_str, inline=True)
+        embed.add_field(name="Container", value=f"📦 {container}", inline=True)
+        embed.add_field(name="Rarity", value=rarity.capitalize(), inline=True)
+        embed.add_field(name="Set", value=f"{set_name} ({set_code}) #{coll_nr}", inline=True)
+        embed.add_field(name="Type", value=type_line or "—", inline=True)
+        embed.add_field(name="Condition", value=f"{condition} · {language.upper()}", inline=True)
+        if image_url:
+            embed.set_thumbnail(url=image_url)
+        embed.set_footer(text=f"Collection ID #{card.get('id')}")
+
+        # Price history
+        history: list[dict] = []
+        if scryfall_id:
+            history = await bot.db.get_price_history(scryfall_id)
+
+        chart_bytes = _make_price_chart(history, name)
+        if chart_bytes:
+            file = discord.File(io.BytesIO(chart_bytes), filename=f"chart_{rank}.png")
+            embed.set_image(url=f"attachment://chart_{rank}.png")
+            await interaction.followup.send(embed=embed, file=file)
+        else:
+            if len(history) == 1:
+                hist_text = f"First recorded: {history[0]['recorded_at']} — €{history[0]['price_eur']:.2f}"
+            else:
+                hist_text = "No history yet — prices are recorded automatically once a day."
+            embed.add_field(name="Price history", value=hist_text, inline=False)
+            await interaction.followup.send(embed=embed)
 
 
 # ──────────────────────────────────────────────────────────────────────────────

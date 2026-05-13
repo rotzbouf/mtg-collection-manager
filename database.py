@@ -147,6 +147,18 @@ CREATE TABLE IF NOT EXISTS index_meta (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+-- Daily price snapshots for price-history charts
+CREATE TABLE IF NOT EXISTS price_history (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    scryfall_id TEXT NOT NULL,
+    price_eur   REAL NOT NULL,
+    recorded_at TEXT NOT NULL DEFAULT (date('now'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_price_history_unique
+    ON price_history(scryfall_id, recorded_at);
+CREATE INDEX IF NOT EXISTS idx_price_history_lookup
+    ON price_history(scryfall_id);
 """
 
 
@@ -482,6 +494,59 @@ class Database:
         ) as cur:
             rows = await cur.fetchall()
         return [_row_to_dict(r) for r in rows]
+
+    # ------------------------------------------------------------------ #
+    # Price history                                                         #
+    # ------------------------------------------------------------------ #
+
+    async def record_prices(self) -> int:
+        """Snapshot today's EUR price for every distinct scryfall_id in the collection."""
+        async with self._db.execute(
+            """
+            SELECT scryfall_id, MAX(price_eur) AS price_eur
+            FROM collection
+            WHERE scryfall_id IS NOT NULL AND price_eur IS NOT NULL
+            GROUP BY scryfall_id
+            """
+        ) as cur:
+            rows = await cur.fetchall()
+        for row in rows:
+            await self._db.execute(
+                "INSERT OR IGNORE INTO price_history (scryfall_id, price_eur) VALUES (?, ?)",
+                (row["scryfall_id"], row["price_eur"]),
+            )
+        await self._db.commit()
+        return len(rows)
+
+    async def get_price_history(self, scryfall_id: str) -> list[dict]:
+        async with self._db.execute(
+            """
+            SELECT price_eur, recorded_at
+            FROM price_history
+            WHERE scryfall_id = ?
+            ORDER BY recorded_at ASC
+            """,
+            (scryfall_id,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+    async def get_top_by_value(self, limit: int = 5) -> list[dict]:
+        async with self._db.execute(
+            """
+            SELECT c.id, c.name_en, c.set_code, c.set_name, c.collector_number,
+                   c.rarity, c.type_line, c.mana_cost, c.cmc, c.language,
+                   c.condition, c.foil, c.price_eur, c.price_usd, c.image_url,
+                   c.scryfall_id, c.oracle_text,
+                   ct.name AS container_name
+            FROM collection c
+            LEFT JOIN containers ct ON c.container_id = ct.id
+            WHERE c.price_eur IS NOT NULL
+            ORDER BY c.price_eur DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ) as cur:
+            return [_row_to_dict(r) for r in await cur.fetchall()]
 
     # ------------------------------------------------------------------ #
     # Container operations                                                  #

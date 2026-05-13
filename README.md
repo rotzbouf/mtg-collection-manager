@@ -21,6 +21,8 @@ search and export your collection, and generate deck proposals — all from Disc
 | **Deckbuilder** | Auto-generates Commander (100-card) or 60-card (Timeless/Standard) proposals |
 | **Hash index** | Perceptual hash index built concurrently with downloads; GPU or CPU |
 | **Daily set check** | Notifies you when Scryfall has new sets not yet in the hash index |
+| **Showcase** | `/showcase` displays the 5 most valuable cards with image, details, and a price-history chart |
+| **Price history** | Prices are snapshotted daily; history chart auto-appears once 2+ data points exist |
 
 ---
 
@@ -51,6 +53,7 @@ easyocr>=1.7.0
 imagehash>=4.3.1
 numpy>=1.24.0
 opencv-python-headless>=4.8.0
+matplotlib>=3.7.0
 ```
 
 ### GPU support (optional)
@@ -148,10 +151,11 @@ DEBUG_SCAN_PREVIEW=0
 
 | Setting | Restricted commands | Available everywhere |
 |---|---|---|
-| `DISCORD_SCAN_CHANNEL_ID` | `/add`, `/scan`, `/update`, `/remove`, `/container create/rename/delete`, `/index update/rebuild`, auto-scan image drops | `/search`, `/list`, `/card`, `/stats`, `/export`, `/container list`, `/index status/check`, `/help` |
+| `DISCORD_SCAN_CHANNEL_ID` | `/add`, `/scan`, `/update`, `/remove`, `/container create/rename/delete`, `/index update/rebuild`, auto-scan image drops | `/search`, `/list`, `/card`, `/stats`, `/export`, `/container list`, `/index status/check`, `/help`, `/showcase` |
 | `DISCORD_DECKBUILDER_CHANNEL_ID` | `/deck propose` | — |
+| `DISCORD_SHOWCASE_CHANNEL_ID` | `/showcase` | — |
 
-Leave both blank to allow all commands anywhere.
+Leave all blank to allow all commands anywhere.
 
 ### Role-based access control
 
@@ -307,6 +311,19 @@ Collection-wide statistics:
 - Rarity breakdown (Common · Uncommon · Rare · Mythic) with values
 - Top 5 most valuable cards with container location
 - Per-container overview with bulk detection (containers where the most expensive card ≤ €0.05 are flagged as bulk)
+
+#### `/showcase`
+
+Displays the 5 most valuable cards in your collection, one embed per card:
+
+- Card image (thumbnail)
+- Current price (EUR and USD where available)
+- Set, collector number, rarity, condition, language, container location
+- **Price history chart** — a line chart is automatically attached once at least 2 daily snapshots exist
+
+Prices are recorded automatically once per day in the background. The chart appears without any manual action after the bot has been running for two days.
+
+If `DISCORD_SHOWCASE_CHANNEL_ID` is set, this command is restricted to that channel.
 
 ---
 
@@ -497,6 +514,7 @@ exporter.py     — Moxfield CSV, full CSV, and JSON serialisation
 | `collection_fts` | FTS5 virtual table, auto-synced via triggers |
 | `card_hashes` | Perceptual hash index (scryfall_id → pHash) |
 | `index_meta` | Key/value store for index metadata |
+| `price_history` | Daily EUR price snapshots per scryfall_id (for `/showcase` charts) |
 
 The database is created automatically on first run at `./mtg_collection.db`.
 Schema migrations run automatically on startup.
