@@ -1,12 +1,11 @@
 """MTG Collection Manager — Discord bot."""
 
-import argparse
 import asyncio
 import io
 import logging
 import os
+import sys
 import warnings
-from logging.handlers import RotatingFileHandler
 from typing import Optional
 
 import discord
@@ -21,25 +20,28 @@ import scanner
 from database import Database
 from scryfall import ScryfallClient
 
+# Prevent matplotlib / some OCR libs from trying to open a display
+os.environ.setdefault("MPLBACKEND", "Agg")
+# Suppress torch DataLoader pin_memory warning on CPU-only machines
+warnings.filterwarnings("ignore", message=".*pin_memory.*")
+
 load_dotenv()
 logger = logging.getLogger(__name__)
 
 
-
-
-
-def _configure_logging(headless: bool) -> None:
-    fmt = logging.Formatter("%(asctime)s %(levelname)-8s %(name)s: %(message)s")
-    root = logging.getLogger()
-    root.setLevel(logging.INFO)
-    if headless:
-        handler: logging.Handler = RotatingFileHandler(
-            "bot.log", maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
-        )
-    else:
-        handler = logging.StreamHandler()
-    handler.setFormatter(fmt)
-    root.addHandler(handler)
+def _configure_logging() -> None:
+    # Under systemd, journald adds timestamps and log level — keep the format minimal.
+    # For manual terminal runs, include them so the output is self-contained.
+    under_systemd = "JOURNAL_STREAM" in os.environ
+    fmt = (
+        "%(levelname)-8s %(name)s: %(message)s"
+        if under_systemd
+        else "%(asctime)s %(levelname)-8s %(name)s: %(message)s"
+    )
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(logging.Formatter(fmt))
+    logging.getLogger().setLevel(logging.INFO)
+    logging.getLogger().addHandler(handler)
 
 TOKEN = os.environ["DISCORD_TOKEN"]
 GUILD_ID = os.getenv("DISCORD_GUILD_ID")
@@ -1635,17 +1637,5 @@ async def on_message(message: discord.Message):
 # ──────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="MTG Collection Manager Discord bot")
-    parser.add_argument(
-        "--headless",
-        action="store_true",
-        help="Server/daemon mode: write logs to bot.log instead of stdout",
-    )
-    args = parser.parse_args()
-
-    if args.headless:
-        os.environ.setdefault("MPLBACKEND", "Agg")
-        warnings.filterwarnings("ignore", message=".*pin_memory.*")
-
-    _configure_logging(args.headless)
+    _configure_logging()
     bot.run(TOKEN)
