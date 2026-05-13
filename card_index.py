@@ -399,7 +399,17 @@ async def build_index(db, progress_cb=None) -> int:
         async with session.get(bulk_url) as resp:
             if resp.status != 200:
                 raise RuntimeError(f"Bulk data download returned {resp.status}")
-            raw = await resp.read()
+            content_length = int(resp.headers.get("Content-Length", 0))
+            chunks: list[bytes] = []
+            downloaded = 0
+            async for chunk in resp.content.iter_chunked(131_072):
+                chunks.append(chunk)
+                downloaded += len(chunk)
+                if progress_cb and content_length:
+                    mb = downloaded / 1_048_576
+                    mb_total = content_length / 1_048_576
+                    await progress_cb(0, 1, 0, f"Downloading bulk data… {mb:.0f} / {mb_total:.0f} MB")
+            raw = b"".join(chunks)
         cards = json.loads(raw)
         total = len(cards)
         logger.info("Bulk data: %d cards", total)
@@ -454,6 +464,7 @@ async def build_index(db, progress_cb=None) -> int:
                         phash_norm=h_norm,
                     )
                     counter["indexed"] += 1
+            await db.commit()
             pending.clear()
 
         # ── Step 4: download → hash loop ─────────────────────────────────────

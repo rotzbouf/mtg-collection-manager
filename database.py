@@ -580,7 +580,6 @@ class Database:
             """,
             (scryfall_id, name_en, set_code, collector_number, lang, phash, phash_norm),
         )
-        await self._db.commit()
 
     async def get_all_hashes(self) -> list[dict]:
         async with self._db.execute(
@@ -607,6 +606,9 @@ class Database:
         async with self._db.execute("SELECT COUNT(*) FROM card_hashes") as cur:
             row = await cur.fetchone()
         return row[0] if row else 0
+
+    async def commit(self):
+        await self._db.commit()
 
     async def clear_card_hashes(self):
         await self._db.execute("DELETE FROM card_hashes")
