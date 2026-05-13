@@ -228,22 +228,28 @@ def paginate_embeds(cards: list[dict], page: int, per_page: int = 10) -> tuple[d
 # Bot
 # ──────────────────────────────────────────────────────────────────────────────
 
+_READ_ONLY_COMMANDS = {
+    "search", "list", "card", "stats", "export", "help",
+    "container list", "index status", "index check",
+}
+
 class MTGCommandTree(app_commands.CommandTree):
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         cmd = interaction.command
         if cmd is None:
             return True
-        is_deck = cmd.qualified_name.startswith("deck")
+        name = cmd.qualified_name
+        is_deck = name.startswith("deck")
         if is_deck:
             if DECK_CHANNEL_ID and interaction.channel_id != DECK_CHANNEL_ID:
                 await interaction.response.send_message(
                     f"Deck commands only work in <#{DECK_CHANNEL_ID}>.", ephemeral=True
                 )
                 return False
-        else:
+        elif name not in _READ_ONLY_COMMANDS:
             if SCAN_CHANNEL_ID and interaction.channel_id != SCAN_CHANNEL_ID:
                 await interaction.response.send_message(
-                    f"This bot only works in <#{SCAN_CHANNEL_ID}>.", ephemeral=True
+                    f"This command only works in <#{SCAN_CHANNEL_ID}>.", ephemeral=True
                 )
                 return False
         return True

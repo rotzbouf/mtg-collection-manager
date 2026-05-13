@@ -144,7 +144,7 @@ DISCORD_ADMIN_ROLE=
 DEBUG_SCAN_PREVIEW=0
 ```
 
-If `DISCORD_SCAN_CHANNEL_ID` is set, all collection commands and image drops are restricted to that channel.
+If `DISCORD_SCAN_CHANNEL_ID` is set, write and scan commands (`/add`, `/scan`, `/update`, `/remove`, `/container create/rename/delete`, `/index update/rebuild`) are restricted to that channel. Read-only commands (`/search`, `/list`, `/card`, `/stats`, `/export`, `/container list`, `/index status/check`, `/help`) work in any channel.
 If `DISCORD_DECKBUILDER_CHANNEL_ID` is set, `/deck` commands only work there.
 Leave both blank to allow commands anywhere.
 
