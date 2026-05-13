@@ -372,16 +372,17 @@ async def build_index(db, progress_cb=None) -> int:
     Download Scryfall bulk data, hash all card images, persist to DB.
     Already-indexed cards (by scryfall_id) are skipped.
 
-    Download and hashing are decoupled:
-      1. A batch of up to 400 card images is downloaded concurrently.
-      2. All downloaded images are then hashed in GPU batches of _GPU_HASH_BATCH
-         via asyncio.to_thread so the event loop is never blocked.
+    Producer-consumer pipeline:
+      • Producer  — downloads images concurrently (rate-limited, CPU/network)
+      • Consumer  — hashes in GPU batches via asyncio.to_thread (GPU/CPU compute)
+    Both run at the same time so the GPU never sits idle waiting for downloads.
 
-    Calls progress_cb(done, total, indexed_count, status_str) after each batch.
+    Calls progress_cb(done, total, indexed_count, status_str) after each hash batch.
     Returns number of newly indexed cards.
     """
     sem     = asyncio.Semaphore(_CONCURRENCY)
-    counter = {"indexed": 0}
+    counter = {"indexed": 0, "done": 0}
+    device_label = "GPU" if _GPU_DEVICE and "cuda" in _GPU_DEVICE else "CPU"
 
     async with aiohttp.ClientSession(
         headers={"User-Agent": "MTGCollectionBot/1.0 contact:bot@local"}
@@ -396,7 +397,7 @@ async def build_index(db, progress_cb=None) -> int:
             meta = await resp.json()
         bulk_url = meta["download_uri"]
 
-        # ── Step 2: bulk JSON ────────────────────────────────────────────────
+        # ── Step 2: bulk JSON (streamed with progress) ───────────────────────
         if progress_cb:
             await progress_cb(0, 1, 0, "Downloading bulk data (~100 MB)…")
         async with session.get(bulk_url) as resp:
@@ -420,70 +421,78 @@ async def build_index(db, progress_cb=None) -> int:
         # ── Step 3: skip already-indexed cards ──────────────────────────────
         existing_ids = await db.get_indexed_scryfall_ids()
 
-        # pending accumulates (card_dict, img_bytes) for each download batch
-        pending: list[tuple[dict, bytes]] = []
+        # ── Step 4: pipeline ─────────────────────────────────────────────────
+        # Queue capacity: enough to keep the GPU fed without unbounded memory.
+        queue: asyncio.Queue = asyncio.Queue(maxsize=_GPU_HASH_BATCH * 8)
 
-        async def download_one(card: dict) -> None:
-            if card.get("layout") in ("art_series", "token"):
-                return
-            if card["id"] in existing_ids:
-                return
-            uris = card.get("image_uris") or (
-                (card.get("card_faces") or [{}])[0].get("image_uris")
-            ) or {}
-            url = uris.get("small")
-            if not url:
-                return
-            async with sem:
-                try:
-                    async with session.get(
-                        url, timeout=aiohttp.ClientTimeout(total=20)
-                    ) as resp:
-                        img_bytes = await resp.read() if resp.status == 200 else None
-                except Exception:
-                    img_bytes = None
-                await asyncio.sleep(_RATE_DELAY)
-            if img_bytes:
-                pending.append((card, img_bytes))
+        async def _download_one(card: dict) -> None:
+            """Download one card image and put it in the queue."""
+            try:
+                if card.get("layout") in ("art_series", "token"):
+                    return
+                if card["id"] in existing_ids:
+                    return
+                uris = card.get("image_uris") or (
+                    (card.get("card_faces") or [{}])[0].get("image_uris")
+                ) or {}
+                url = uris.get("small")
+                if not url:
+                    return
+                async with sem:
+                    try:
+                        async with session.get(
+                            url, timeout=aiohttp.ClientTimeout(total=20)
+                        ) as resp:
+                            img_bytes = await resp.read() if resp.status == 200 else None
+                    except Exception:
+                        img_bytes = None
+                    await asyncio.sleep(_RATE_DELAY)
+                if img_bytes:
+                    await queue.put((card, img_bytes))
+            finally:
+                counter["done"] += 1
 
-        async def flush_pending() -> None:
-            """Hash all pending images in GPU batches and upsert to DB."""
-            if not pending:
-                return
-            for batch_start in range(0, len(pending), _GPU_HASH_BATCH):
-                batch          = pending[batch_start : batch_start + _GPU_HASH_BATCH]
-                img_bytes_list = [img for _, img in batch]
-                hashes = await asyncio.to_thread(_phash_batch, img_bytes_list)
-                for (card, _), (h, h_norm) in zip(batch, hashes):
-                    if not h:
-                        continue
-                    await db.upsert_card_hash(
-                        scryfall_id=card["id"],
-                        name_en=card.get("name", ""),
-                        set_code=card.get("set", ""),
-                        collector_number=card.get("collector_number", ""),
-                        lang=card.get("lang", "en"),
-                        phash=h,
-                        phash_norm=h_norm,
-                    )
-                    counter["indexed"] += 1
+        async def _producer() -> None:
+            await asyncio.gather(*[_download_one(c) for c in cards])
+            await queue.put(None)  # poison pill — signals consumer to stop
+
+        async def _hash_and_save(batch: list) -> None:
+            """Hash one GPU batch and persist to DB."""
+            hashes = await asyncio.to_thread(_phash_batch, [img for _, img in batch])
+            for (card, _), (h, h_norm) in zip(batch, hashes):
+                if not h:
+                    continue
+                await db.upsert_card_hash(
+                    scryfall_id=card["id"],
+                    name_en=card.get("name", ""),
+                    set_code=card.get("set", ""),
+                    collector_number=card.get("collector_number", ""),
+                    lang=card.get("lang", "en"),
+                    phash=h,
+                    phash_norm=h_norm,
+                )
+                counter["indexed"] += 1
             await db.commit()
-            pending.clear()
-
-        # ── Step 4: download → hash loop ─────────────────────────────────────
-        device_label = "GPU" if _GPU_DEVICE and "cuda" in _GPU_DEVICE else "CPU"
-        dl_batch = 400
-        for start in range(0, total, dl_batch):
-            chunk = cards[start : start + dl_batch]
-            await asyncio.gather(*[download_one(c) for c in chunk])
-            await flush_pending()
             if progress_cb:
                 await progress_cb(
-                    min(start + dl_batch, total),
-                    total,
-                    counter["indexed"],
-                    f"Hashing card images ({device_label})…",
+                    counter["done"], total, counter["indexed"],
+                    f"Downloading + hashing ({device_label})…",
                 )
+
+        async def _consumer() -> None:
+            batch: list = []
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                batch.append(item)
+                if len(batch) >= _GPU_HASH_BATCH:
+                    await _hash_and_save(batch)
+                    batch.clear()
+            if batch:  # flush remainder
+                await _hash_and_save(batch)
+
+        await asyncio.gather(_producer(), _consumer())
 
     await db.set_index_meta("last_built_at", datetime.now(timezone.utc).isoformat())
     return counter["indexed"]
