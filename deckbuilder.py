@@ -262,11 +262,14 @@ def build_60_deck(pool: list[dict], fmt: str) -> dict:
 # ── Deck list formatting ───────────────────────────────────────────────────────
 
 def format_commander_decklist(result: dict) -> str:
-    lines = ["Commander", f"1 {result['commander'].get('name_en', '?')}", ""]
+    cmd = result["commander"]
+    cmd_container = cmd.get("container_name") or "—"
+    lines = ["Commander", f"1 {cmd.get('name_en', '?')}  // 📦 {cmd_container}", ""]
     for group, cards in sorted(result["groups"].items()):
         lines.append(group)
         for c in cards:
-            lines.append(f"1 {c.get('name_en', '?')}")
+            container = c.get("container_name") or "—"
+            lines.append(f"1 {c.get('name_en', '?')}  // 📦 {container}")
         lines.append("")
     if result["basics"]:
         lines.append("Basic Lands")
@@ -279,7 +282,8 @@ def format_60_decklist(result: dict) -> str:
     fmt = result["format"].capitalize()
     lines = [f"// {fmt} — Strategy: {result['strategy']}", ""]
     for card, n in result["deck"]:
-        lines.append(f"{n} {card.get('name_en', '?')}")
+        container = card.get("container_name") or "—"
+        lines.append(f"{n} {card.get('name_en', '?')}  // 📦 {container}")
     if result["basics"]:
         lines.append("")
         for land, n in sorted(result["basics"].items()):

@@ -1082,7 +1082,17 @@ def _commander_embed(result: dict) -> discord.Embed:
             value=", ".join(f"{n}× {land}" for land, n in sorted(result["basics"].items())),
             inline=False,
         )
-    embed.set_footer(text="Full deck list attached · confirm with Add buttons")
+    # Top 8 cards by value with container location
+    all_cards = [c for cards in groups.values() for c in cards]
+    all_cards.sort(key=lambda c: c.get("price_eur") or 0, reverse=True)
+    if all_cards:
+        lines = []
+        for c in all_cards[:8]:
+            container = c.get("container_name") or "—"
+            price = f"  €{c['price_eur']:.2f}" if c.get("price_eur") else ""
+            lines.append(f"• {c.get('name_en', '?')}  📦 {container}{price}")
+        embed.add_field(name="Key cards", value="\n".join(lines), inline=False)
+    embed.set_footer(text="Full deck list with containers attached as .txt")
     return embed
 
 
@@ -1112,6 +1122,17 @@ def _60_embed(result: dict) -> discord.Embed:
     return embed
 
 
+class DeckResultView(discord.ui.View):
+    """Shown after a deck proposal — lets the user acknowledge they've noted it."""
+    def __init__(self):
+        super().__init__(timeout=600)
+
+    @discord.ui.button(label="Accept", style=discord.ButtonStyle.success, emoji="✅")
+    async def accept(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.clear_items()
+        await interaction.response.edit_message(view=self)
+
+
 class CommanderPickView(discord.ui.View):
     def __init__(self, pool: list[dict], commanders: list[tuple[dict, int]]):
         super().__init__(timeout=180)
@@ -1138,7 +1159,7 @@ class CommanderPickView(discord.ui.View):
         decklist = deckbuilder.format_commander_decklist(result).encode("utf-8")
         fname = (commander.get("name_en") or "commander").replace(" ", "_").replace(",", "").lower()
         file = discord.File(io.BytesIO(decklist), filename=f"{fname}_deck.txt")
-        await interaction.edit_original_response(embed=embed, view=None, attachments=[file])
+        await interaction.edit_original_response(embed=embed, view=DeckResultView(), attachments=[file])
 
 
 deck_group = app_commands.Group(name="deck", description="Build decks from your collection")
@@ -1196,7 +1217,7 @@ async def deck_propose(interaction: discord.Interaction, format: str = "commande
         embed = _60_embed(result)
         decklist = deckbuilder.format_60_decklist(result).encode("utf-8")
         file = discord.File(io.BytesIO(decklist), filename=f"{format}_deck.txt")
-        await interaction.followup.send(embed=embed, file=file)
+        await interaction.followup.send(embed=embed, file=file, view=DeckResultView())
 
 
 bot.tree.add_command(deck_group)

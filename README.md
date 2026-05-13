@@ -424,11 +424,31 @@ Generates a deck proposal from your collection using synergy scoring.
 
 1. The bot scores every legendary creature in your collection by synergy with the rest of your cards
 2. A dropdown shows the top 10 candidates with colour identity and synergy score
-3. Pick a commander → the bot builds a 100-card list (up to 63 non-lands + basic lands) and attaches it as a `.txt` file
+3. Pick a commander → the bot builds a 100-card list (up to 63 non-lands + basic lands)
+4. The result embed lists the top key cards with their **container location** (📦 binder / box)
+5. A `.txt` deck list is attached — every line includes the container where the card is stored
+6. Press **✅ Accept** to dismiss the proposal when you're done
 
 **Timeless / Standard formats**
 
-Automatically detects the dominant strategy in your legal cards (tokens, counters, graveyard, control, etc.) and builds a 60-card list (36 non-lands + 24 basic lands), attached as `.txt`.
+Automatically detects the dominant strategy in your legal cards (tokens, counters, graveyard, control, etc.) and builds a 60-card list (36 non-lands + 24 basic lands).
+The attached `.txt` file includes the container location per card, and a **✅ Accept** button lets you dismiss the result.
+
+**Deck list format**
+
+```
+Commander
+1 Atraxa, Praetors' Voice  // 📦 Binder 1
+
+Creatures
+1 Doubling Season  // 📦 Binder 1
+1 Vorinclex, Monstrous Raider  // 📦 Commander Box
+...
+
+Basic Lands
+20 Forest
+16 Plains
+```
 
 ---
 
