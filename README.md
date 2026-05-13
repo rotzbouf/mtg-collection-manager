@@ -17,9 +17,9 @@ search and export your collection, and generate deck proposals — all from Disc
 | **Full-text search** | SQLite FTS5 across name, type, oracle text, set, flavour text, notes |
 | **Chaos sort** | MTG-native sort: W→U→B→R→G→Multi→Colourless→Land, then type, then CMC |
 | **Statistics** | Totals by language, foil/non-foil, rarity breakdown, top-5 by value |
-| **Export** | Download your full collection as CSV (Excel-compatible) or JSON |
+| **Export** | Moxfield CSV (default), Excel CSV, or JSON |
 | **Deckbuilder** | Auto-generates Commander (100-card) or 60-card (Timeless/Standard) proposals |
-| **Hash index** | Downloadable perceptual hash index for instant image recognition |
+| **Hash index** | Perceptual hash index built concurrently with downloads; GPU or CPU |
 | **Daily set check** | Notifies you when Scryfall has new sets not yet in the hash index |
 
 ---
@@ -55,14 +55,15 @@ opencv-python-headless>=4.8.0
 
 ### GPU support (optional)
 
-When an NVIDIA GPU is present the install script automatically installs PyTorch
-with CUDA support.  Three components benefit:
+When an NVIDIA GPU is present the install script automatically installs PyTorch with CUDA support.
 
 | Component | GPU effect |
 |---|---|
-| **EasyOCR** | OCR inference 3–10× faster (PyTorch CUDA) |
-| **pHash index build** | Card images hashed in GPU batches of 64 (DCT on GPU) |
-| **pHash query** | Query hashes computed on the same GPU path as the index |
+| **EasyOCR** | OCR inference 3–10× faster |
+| **pHash index build** | Card images hashed in GPU batches of 64 (DCT on GPU), pipelined with downloads |
+| **pHash query** | Query hashes computed on GPU |
+
+By default the bot pins itself to **GPU 0**. Override via `CUDA_VISIBLE_DEVICES` in `.env` (see Configuration).
 
 Without a GPU everything falls back to CPU automatically — no configuration needed.
 
@@ -70,24 +71,45 @@ Without a GPU everything falls back to CPU automatically — no configuration ne
 
 ## Installation
 
-Run the provided install script — it handles everything automatically:
+### First-time setup
 
 ```bash
-./install.sh
+git clone https://github.com/rotzbouf/mtg-collection-manager.git
+cd mtg-collection-manager
+bash install.sh
+nano .env          # fill in DISCORD_TOKEN and channel IDs
 ```
 
-The script:
+The install script:
 
 1. Checks for Python 3.10+
-2. Installs `tesseract-ocr`, the German language pack, and OpenCV system libraries via your package manager (`apt`, `dnf`, or `pacman`)
-3. Detects NVIDIA GPU via `nvidia-smi` and installs PyTorch with the best available CUDA wheel (`cu126` → `cu124` for CUDA 13+/12+, `cu124` → `cu121` for CUDA 12, `cu118` for CUDA 11); tries the next wheel automatically if one is unavailable, and falls back to CPU PyTorch without aborting
+2. Installs `tesseract-ocr`, the German language pack, and OpenCV system libraries (`apt`, `dnf`, or `pacman`)
+3. Detects NVIDIA GPU via `nvidia-smi` and installs PyTorch with the best available CUDA wheel; falls back to CPU PyTorch if no GPU is found
 4. Creates a virtual environment at `./venv`
 5. Installs all Python dependencies from `requirements.txt`
 6. Copies `.env.example` → `.env` if no `.env` exists yet
 
-> **Note:** On the very first run, EasyOCR downloads its language models (~150 MB). This happens once and is cached automatically.
+> **Note:** On the very first run EasyOCR downloads its language models (~150 MB). This is cached automatically.
 
-> **Note:** After switching from CPU to GPU (or vice versa) run `/index rebuild` so all stored hashes are computed on the same device.
+### Running as a systemd service (recommended for servers)
+
+```bash
+sudo bash service_install.sh
+```
+
+The service starts automatically on boot and restarts on failure. Logs go to the system journal.
+
+```bash
+sudo systemctl status mtg-bot          # check status
+sudo journalctl -u mtg-bot -f          # live logs
+sudo bash service_uninstall.sh         # remove the service
+```
+
+### Updating
+
+```bash
+git pull && sudo systemctl restart mtg-bot
+```
 
 ---
 
@@ -108,6 +130,10 @@ DISCORD_SCAN_CHANNEL_ID=
 # Channel where /deck commands work
 DISCORD_DECKBUILDER_CHANNEL_ID=
 
+# GPU — which CUDA device(s) PyTorch may use (default: 0 only)
+# Use "0,1" to allow both GPUs, or "1" to use only GPU 1.
+CUDA_VISIBLE_DEVICES=0
+
 # Role-based access control (role name or role ID; leave blank = everyone)
 DISCORD_GUEST_ROLE=
 DISCORD_COLLECTOR_ROLE=
@@ -118,10 +144,8 @@ DISCORD_ADMIN_ROLE=
 DEBUG_SCAN_PREVIEW=0
 ```
 
-If `DISCORD_SCAN_CHANNEL_ID` is set, all collection commands and image drops are
-restricted to that channel. If `DISCORD_DECKBUILDER_CHANNEL_ID` is set, `/deck`
-commands only work there.
-
+If `DISCORD_SCAN_CHANNEL_ID` is set, all collection commands and image drops are restricted to that channel.
+If `DISCORD_DECKBUILDER_CHANNEL_ID` is set, `/deck` commands only work there.
 Leave both blank to allow commands anywhere.
 
 ### Role-based access control
@@ -140,46 +164,32 @@ Admin  ≥  Collector  ≥  Guest
 
 Each variable accepts a **role name** (e.g. `Guest`) or a **role ID** (e.g. `123456789`).
 
-**Default behaviour when a variable is left blank:**
-
 | Scenario | Effect |
 |---|---|
-| `DISCORD_GUEST_ROLE` not set | Read-only commands are open to everyone |
-| `DISCORD_COLLECTOR_ROLE` not set | Collector commands are open to everyone |
-| `DISCORD_ADMIN_ROLE` not set | Admin commands are open to everyone |
+| `DISCORD_GUEST_ROLE` not set | Read-only commands open to everyone |
+| `DISCORD_COLLECTOR_ROLE` not set | Collector commands open to everyone |
+| `DISCORD_ADMIN_ROLE` not set | Admin commands open to everyone |
 | All three not set | Fully open — no role restrictions |
 
 `/help` is always accessible regardless of roles.
 
 ---
 
-## Running
+## Running manually
 
 ```bash
 source venv/bin/activate
 python bot.py
 ```
 
-For server/daemon deployments, pass `--headless`:
-
-```bash
-python bot.py --headless
-```
-
-The process double-forks, detaches from the terminal, and returns the shell prompt immediately.
-Logs are written to `bot.log` (5 MB rotating, 3 backups kept) and the daemon's PID is stored in `bot.pid`.
-
-```bash
-# Stop the daemon
-kill $(cat bot.pid)
-```
+Logs go to stdout. Use the systemd service for production deployments.
 
 On first start the bot:
 
 - Initialises the SQLite database (`mtg_collection.db`)
 - Syncs slash commands (instantly to the configured guild, or globally within ~1 hour)
-- Initialises the pHash DCT matrix on GPU or CPU and logs which device was found
-- Loads the EasyOCR model in the background on GPU if available (may take a minute on the very first run)
+- Pins the pHash engine and EasyOCR to GPU 0 (or CPU if no GPU is available)
+- Loads the EasyOCR model in the background (may take a minute on the very first run)
 - Starts a daily background check for new Scryfall sets
 
 ---
@@ -210,7 +220,7 @@ Add a card by name. Scryfall is queried automatically.
 
 #### `/scan`
 
-Add a card by attaching a photo. Uses both visual hash matching and OCR simultaneously.
+Add a card by attaching a photo. Uses visual hash matching and OCR simultaneously.
 
 | Parameter | Required | Default | Description |
 |---|---|---|---|
@@ -245,8 +255,6 @@ OCR → Scryfall lookup (runs in parallel) │
       ▼
 Confirmation embed  ──── Add  /  Add as foil  /  Wrong card?  /  Skip
 ```
-
-Both methods always run. The visual hash identifies the card, OCR detects whether the physical card is English or German. The result embed shows which methods contributed.
 
 If the bot misidentifies the card, tap **Wrong card?** to type the correct name and set code.
 
@@ -364,10 +372,13 @@ Removes the container; cards are unlinked but kept in the collection.
 
 Downloads your entire collection as a file attachment.
 
-| Format | Description |
-|---|---|
-| `csv` | Excel-compatible; all fields as columns |
-| `json` | Full record per card including all Scryfall metadata |
+| Format | Filename | Description |
+|---|---|---|
+| `Moxfield CSV` *(default)* | `collection_moxfield.csv` | Importable at moxfield.com; columns: Count, Name, Edition, Condition, Language, Foil, Collector Number |
+| `CSV` | `collection.csv` | Excel-compatible; all fields including Scryfall metadata |
+| `JSON` | `collection.json` | Full record per card including all Scryfall metadata |
+
+**Moxfield import:** go to your Moxfield collection → *Import* → upload `collection_moxfield.csv`.
 
 ---
 
@@ -375,6 +386,9 @@ Downloads your entire collection as a file attachment.
 
 The hash index stores perceptual hashes (pHash) of card images downloaded from Scryfall.
 When you drop a photo, the bot compares it against the entire index in milliseconds.
+
+Building the index uses a producer-consumer pipeline: image downloads and GPU hashing run
+concurrently, so the GPU starts working as soon as the first batch of images arrives.
 
 #### `/index status`
 
@@ -387,14 +401,14 @@ Lists all Scryfall sets not yet present in the hash index.
 #### `/index update`
 
 Downloads card images for any unindexed sets and adds them to the index.
-A live progress bar shows percentage and current status.
+A live progress bar shows download progress (MB) and hashing status.
 
 #### `/index rebuild`
 
 Wipes the entire index and re-downloads all card images from scratch.
-Use this if the index appears corrupted, after a major Scryfall data update, or after changing GPU availability.
+Use this after changing GPU availability or if the index appears corrupted.
 
-> **Note:** The first `/index update` or rebuild can take a long time depending on how many sets are missing. The bot remains fully usable during the process. The progress bar shows whether hashing runs on GPU or CPU.
+> **Note:** The first `/index update` or rebuild can take a long time depending on how many sets are missing. The bot remains fully usable during the process.
 
 ---
 
@@ -434,9 +448,6 @@ Creature → Instant → Sorcery → Enchantment → Artifact → Planeswalker �
 
 Within each type group: ascending CMC, then alphabetical by name.
 
-This is precomputed as a single sortable string key stored in the database,
-so `/list sort:chaos` is just an `ORDER BY` with no extra computation.
-
 ---
 
 ## Architecture
@@ -449,7 +460,7 @@ card_index.py   — Perceptual hash index: GPU-batched build, vectorised matchin
 scryfall.py     — Scryfall API client: card lookup, EN/DE name resolution
 sorting.py      — Chaos sort key computation
 deckbuilder.py  — Synergy scoring, deck construction, deck list formatting
-exporter.py     — CSV and JSON serialisation
+exporter.py     — Moxfield CSV, full CSV, and JSON serialisation
 ```
 
 ### Database schema (SQLite)
@@ -481,6 +492,8 @@ mtg_collection_manager/
 ├── sorting.py
 ├── requirements.txt
 ├── install.sh
+├── service_install.sh
+├── service_uninstall.sh
 ├── .env.example
 └── mtg_collection.db      ← created on first run
 ```
