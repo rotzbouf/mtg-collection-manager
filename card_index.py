@@ -366,7 +366,11 @@ async def check_new_sets(db) -> list[dict]:
 # Index build
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def build_index(db, progress_cb=None) -> int:
+async def build_index(
+    db,
+    progress_cb=None,
+    pause_event: asyncio.Event = None,
+) -> int:
     """
     Download Scryfall bulk data, hash all card images, persist to DB.
     Already-indexed cards (by scryfall_id) are skipped.
@@ -376,9 +380,17 @@ async def build_index(db, progress_cb=None) -> int:
       • Consumer  — hashes in GPU batches via asyncio.to_thread (GPU/CPU compute)
     Both run at the same time so the GPU never sits idle waiting for downloads.
 
+    pause_event: asyncio.Event — set = running, cleared = paused.
+                 The producer checks it before each download; the consumer
+                 before each hash batch.  Pass None to disable pause support.
+
     Calls progress_cb(done, total, indexed_count, status_str) after each hash batch.
     Returns number of newly indexed cards.
     """
+    if pause_event is None:
+        pause_event = asyncio.Event()
+        pause_event.set()
+
     sem     = asyncio.Semaphore(_CONCURRENCY)
     counter = {"indexed": 0, "done": 0}
     device_label = "GPU" if _GPU_DEVICE and "cuda" in _GPU_DEVICE else "CPU"
@@ -437,6 +449,7 @@ async def build_index(db, progress_cb=None) -> int:
                 url = uris.get("small")
                 if not url:
                     return
+                await pause_event.wait()   # block here while paused
                 async with sem:
                     try:
                         async with session.get(
@@ -486,6 +499,7 @@ async def build_index(db, progress_cb=None) -> int:
                     break
                 batch.append(item)
                 if len(batch) >= _GPU_HASH_BATCH:
+                    await pause_event.wait()   # block here while paused
                     await _hash_and_save(batch)
                     batch.clear()
             if batch:  # flush remainder

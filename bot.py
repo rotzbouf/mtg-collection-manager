@@ -55,6 +55,9 @@ COLLECTOR_ROLE    = os.getenv("DISCORD_COLLECTOR_ROLE", "")   # add / scan / upd
 ADMIN_ROLE        = os.getenv("DISCORD_ADMIN_ROLE",     "")   # remove / container mgmt / index rebuild
 DEBUG_SCAN_PREVIEW = os.getenv("DEBUG_SCAN_PREVIEW", "0") == "1"  # send processed image for debugging
 
+# Running index-build task (update or rebuild); None when idle
+_index_task: Optional[asyncio.Task] = None
+
 CONDITIONS = ["NM", "LP", "MP", "HP", "DMG"]
 LANG_EMOJI = {"en": "🇬🇧", "de": "🇩🇪"}
 COLOR_NAMES = {
@@ -474,8 +477,48 @@ bot.tree.add_command(container_group)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# /index  (status / update / check)
+# /index  (status / update / check / rebuild)
 # ──────────────────────────────────────────────────────────────────────────────
+
+class IndexProgressView(discord.ui.View):
+    """Pause/Resume toggle + Cancel button attached to the live progress message."""
+
+    def __init__(self, pause_event: asyncio.Event):
+        super().__init__(timeout=None)
+        self.pause_event = pause_event
+        self.task: Optional[asyncio.Task] = None   # set after task creation
+        self._paused = False
+        self._last_content = "Starting…"
+
+    def record_content(self, content: str) -> None:
+        self._last_content = content
+
+    @discord.ui.button(label="⏸ Pause", style=discord.ButtonStyle.secondary, custom_id="idx_pause")
+    async def pause_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self._paused:
+            self._paused = False
+            self.pause_event.set()
+            button.label = "⏸ Pause"
+            button.style = discord.ButtonStyle.secondary
+            await interaction.response.edit_message(content=self._last_content, view=self)
+        else:
+            self._paused = True
+            self.pause_event.clear()
+            button.label = "▶ Resume"
+            button.style = discord.ButtonStyle.success
+            await interaction.response.edit_message(
+                content=f"⏸ **Paused**\n{self._last_content}", view=self
+            )
+
+    @discord.ui.button(label="⏹ Cancel", style=discord.ButtonStyle.danger, custom_id="idx_cancel")
+    async def cancel_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.task and not self.task.done():
+            self.pause_event.set()   # unblock any waiting coroutines so they can be cancelled
+            self.task.cancel()
+        self.clear_items()
+        await interaction.response.edit_message(view=self)
+        self.stop()
+
 
 index_group = app_commands.Group(name="index", description="Manage the visual card hash index")
 
@@ -505,31 +548,61 @@ def _as_editable_message(interaction: discord.Interaction, webhook_msg) -> disco
 
 @index_group.command(name="update", description="Download new card images and update the hash index")
 async def index_update(interaction: discord.Interaction):
+    global _index_task
     if not await require_admin(interaction):
         return
+    if _index_task and not _index_task.done():
+        await interaction.response.send_message(
+            "An index build is already running. Use the ⏸/⏹ buttons on the progress message.",
+            ephemeral=True,
+        )
+        return
     await interaction.response.defer(thinking=True)
-    # Send initial message via the webhook (interaction token), then immediately
-    # re-fetch it as a plain Message so all subsequent edits use the bot token.
-    webhook_msg = await interaction.followup.send("Starting index build…", wait=True)
+
+    pause_event = asyncio.Event()
+    pause_event.set()
+    view = IndexProgressView(pause_event)
+
+    # Send initial message with the control buttons; re-fetch as plain Message
+    # so subsequent content edits use the bot token (never expires).
+    webhook_msg = await interaction.followup.send("Starting index build…", view=view, wait=True)
     progress_msg = _as_editable_message(interaction, webhook_msg)
 
     async def progress(done, total, indexed, status):
         pct = int(done / total * 100) if total else 0
         bar = "█" * (pct // 10) + "░" * (10 - pct // 10)
+        content = f"`[{bar}]` {pct}%  —  {status}\n{indexed} new cards indexed so far."
+        view.record_content(content)
         try:
-            await progress_msg.edit(
-                content=f"`[{bar}]` {pct}%  —  {status}\n{indexed} new cards indexed so far."
-            )
+            await progress_msg.edit(content=content)
         except discord.errors.HTTPException:
-            pass  # message deleted or bot lost channel access — skip silently
+            pass
 
-    newly = await card_index.build_index(bot.db, progress_cb=progress)
+    _index_task = asyncio.create_task(
+        card_index.build_index(bot.db, progress_cb=progress, pause_event=pause_event)
+    )
+    view.task = _index_task
+    try:
+        newly = await _index_task
+    except asyncio.CancelledError:
+        await progress_msg.edit(content="⏹ Index build cancelled.")
+        view.stop()
+        return
+    except Exception as e:
+        await progress_msg.edit(content=f"Index build failed: {e}")
+        view.stop()
+        return
+    finally:
+        _index_task = None
+
+    view.stop()
     bot.hash_cache = await bot.db.get_all_hashes()
     await progress_msg.edit(
         content=(
-            f"Index build complete. **{newly}** new card(s) indexed.\n"
+            f"✅ Index build complete. **{newly}** new card(s) indexed.\n"
             f"Cache reloaded — {len(bot.hash_cache)} total entries."
-        )
+        ),
+        view=None,
     )
 
 
@@ -555,34 +628,64 @@ async def index_check(interaction: discord.Interaction):
 
 @index_group.command(name="rebuild", description="Wipe the hash index and re-download all card images from scratch")
 async def index_rebuild(interaction: discord.Interaction):
+    global _index_task
     if not await require_admin(interaction):
+        return
+    if _index_task and not _index_task.done():
+        await interaction.response.send_message(
+            "An index build is already running. Use the ⏸/⏹ buttons on the progress message.",
+            ephemeral=True,
+        )
         return
     await interaction.response.defer(thinking=True)
     old_count = await bot.db.get_hash_count()
-    webhook_msg = await interaction.followup.send(
-        f"Clearing {old_count} existing entries and rebuilding from scratch…", wait=True
-    )
-    progress_msg = _as_editable_message(interaction, webhook_msg)
     await bot.db.clear_card_hashes()
     bot.hash_cache = []
+
+    pause_event = asyncio.Event()
+    pause_event.set()
+    view = IndexProgressView(pause_event)
+
+    webhook_msg = await interaction.followup.send(
+        f"Cleared {old_count} existing entries. Rebuilding from scratch…", view=view, wait=True
+    )
+    progress_msg = _as_editable_message(interaction, webhook_msg)
 
     async def progress(done, total, indexed, status):
         pct = int(done / total * 100) if total else 0
         bar = "█" * (pct // 10) + "░" * (10 - pct // 10)
+        content = f"`[{bar}]` {pct}%  —  {status}\n{indexed} cards indexed so far."
+        view.record_content(content)
         try:
-            await progress_msg.edit(
-                content=f"`[{bar}]` {pct}%  —  {status}\n{indexed} cards indexed so far."
-            )
+            await progress_msg.edit(content=content)
         except discord.errors.HTTPException:
             pass
 
-    newly = await card_index.build_index(bot.db, progress_cb=progress)
+    _index_task = asyncio.create_task(
+        card_index.build_index(bot.db, progress_cb=progress, pause_event=pause_event)
+    )
+    view.task = _index_task
+    try:
+        newly = await _index_task
+    except asyncio.CancelledError:
+        await progress_msg.edit(content="⏹ Rebuild cancelled.")
+        view.stop()
+        return
+    except Exception as e:
+        await progress_msg.edit(content=f"Rebuild failed: {e}")
+        view.stop()
+        return
+    finally:
+        _index_task = None
+
+    view.stop()
     bot.hash_cache = await bot.db.get_all_hashes()
     await progress_msg.edit(
         content=(
-            f"Rebuild complete. **{newly}** card(s) indexed.\n"
+            f"✅ Rebuild complete. **{newly}** card(s) indexed.\n"
             f"Cache reloaded — {len(bot.hash_cache)} total entries."
-        )
+        ),
+        view=None,
     )
 
 
