@@ -5,7 +5,6 @@ import asyncio
 import io
 import logging
 import os
-import sys
 import warnings
 from logging.handlers import RotatingFileHandler
 from typing import Optional
@@ -26,33 +25,7 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 
-_PIDFILE = "bot.pid"
 
-
-def _daemonize() -> None:
-    """Double-fork daemonize: detach from terminal, redirect stdio to /dev/null."""
-    # First fork — lets the shell think the command finished
-    if os.fork() > 0:
-        sys.exit(0)
-
-    os.setsid()  # new session leader, no controlling terminal
-
-    # Second fork — ensures the daemon can never re-acquire a terminal
-    if os.fork() > 0:
-        sys.exit(0)
-
-    os.chdir(os.path.dirname(os.path.abspath(__file__)))
-    os.umask(0)
-
-    with open(_PIDFILE, "w") as f:
-        f.write(str(os.getpid()) + "\n")
-
-    sys.stdout.flush()
-    sys.stderr.flush()
-    devnull_fd = os.open(os.devnull, os.O_RDWR)
-    for fd in (sys.stdin.fileno(), sys.stdout.fileno(), sys.stderr.fileno()):
-        os.dup2(devnull_fd, fd)
-    os.close(devnull_fd)
 
 
 def _configure_logging(headless: bool) -> None:
@@ -1671,7 +1644,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.headless:
-        _daemonize()  # detach from terminal before anything else
         os.environ.setdefault("MPLBACKEND", "Agg")
         warnings.filterwarnings("ignore", message=".*pin_memory.*")
 
