@@ -1,26 +1,25 @@
 """MTG Collection Manager — Discord bot."""
 
+# ── Environment setup — must run before ANY library that may touch CUDA ──────
+import os
+import warnings
+from dotenv import load_dotenv
+
+load_dotenv()
+os.environ.setdefault("CUDA_VISIBLE_DEVICES", "0")
+os.environ.setdefault("MPLBACKEND", "Agg")
+warnings.filterwarnings("ignore", message=".*pin_memory.*")
+# ─────────────────────────────────────────────────────────────────────────────
+
 import asyncio
 import io
 import logging
-import os
 import sys
-import warnings
 from typing import Optional
 
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
-from dotenv import load_dotenv
-
-# Load .env before local imports so CUDA_VISIBLE_DEVICES and other env vars
-# are available when card_index._init_gpu() runs at import time.
-load_dotenv()
-
-# Prevent matplotlib / some OCR libs from trying to open a display
-os.environ.setdefault("MPLBACKEND", "Agg")
-# Suppress torch DataLoader pin_memory warning on CPU-only machines
-warnings.filterwarnings("ignore", message=".*pin_memory.*")
 
 import card_index
 import deckbuilder

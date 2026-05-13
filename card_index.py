@@ -64,9 +64,6 @@ def _init_gpu() -> None:
     """
     global _GPU_DEVICE, _DCT_MATRIX
     try:
-        import os as _os
-        # Default to GPU 0 only; override via CUDA_VISIBLE_DEVICES in .env.
-        _os.environ.setdefault("CUDA_VISIBLE_DEVICES", "0")
         import torch
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         N = 32
