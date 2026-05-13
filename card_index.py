@@ -65,7 +65,13 @@ def _init_gpu() -> None:
     global _GPU_DEVICE, _DCT_MATRIX
     try:
         import torch
-        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        if torch.cuda.is_available():
+            torch.cuda.set_device(0)
+            device = torch.device("cuda:0")
+            logger.info("GPU pHash ready — %s (device 0)", torch.cuda.get_device_name(0))
+        else:
+            device = torch.device("cpu")
+            logger.info("GPU pHash: CUDA not available, using CPU torch DCT")
         N = 32
         k = torch.arange(N, dtype=torch.float64)
         n = torch.arange(N, dtype=torch.float64)
@@ -75,10 +81,6 @@ def _init_gpu() -> None:
             )
         ).to(device)
         _GPU_DEVICE = str(device)
-        if device.type == "cuda":
-            logger.info("GPU pHash ready — %s", torch.cuda.get_device_name(0))
-        else:
-            logger.info("GPU pHash: CUDA not available, using CPU torch DCT")
     except ImportError:
         logger.debug("PyTorch not found — pHash via imagehash (CPU)")
 

@@ -51,9 +51,12 @@ async def init_ocr():
     def _load():
         global _easyocr_reader
         try:
-            import os, torch
-            gpu_device = os.getenv("CUDA_VISIBLE_DEVICES", "0").split(",")[0]
-            gpu_arg = f"cuda:{gpu_device}" if torch.cuda.is_available() else False
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.set_device(0)
+                gpu_arg = "cuda:0"
+            else:
+                gpu_arg = False
         except ImportError:
             gpu_arg = False
         _easyocr_reader = _easyocr_mod.Reader(
