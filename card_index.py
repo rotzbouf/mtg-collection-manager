@@ -391,7 +391,6 @@ async def build_index(
         pause_event = asyncio.Event()
         pause_event.set()
 
-    sem     = asyncio.Semaphore(_CONCURRENCY)
     counter = {"indexed": 0, "done": 0}
     device_label = "GPU" if _GPU_DEVICE and "cuda" in _GPU_DEVICE else "CPU"
 
@@ -436,36 +435,37 @@ async def build_index(
         # Queue capacity: enough to keep the GPU fed without unbounded memory.
         queue: asyncio.Queue = asyncio.Queue(maxsize=_GPU_HASH_BATCH * 8)
 
-        async def _download_one(card: dict) -> None:
-            """Download one card image and put it in the queue."""
-            try:
+        # Shared iterator: _CONCURRENCY workers each pull the next card.
+        # Exactly _CONCURRENCY coroutines exist — no 70k+ coroutine flood.
+        card_iter = iter(cards)
+
+        async def _worker() -> None:
+            for card in card_iter:
+                await pause_event.wait()   # block here while paused
+                counter["done"] += 1
                 if card.get("layout") in ("art_series", "token"):
-                    return
+                    continue
                 if card["id"] in existing_ids:
-                    return
+                    continue
                 uris = card.get("image_uris") or (
                     (card.get("card_faces") or [{}])[0].get("image_uris")
                 ) or {}
                 url = uris.get("small")
                 if not url:
-                    return
-                await pause_event.wait()   # block here while paused
-                async with sem:
-                    try:
-                        async with session.get(
-                            url, timeout=aiohttp.ClientTimeout(total=20)
-                        ) as resp:
-                            img_bytes = await resp.read() if resp.status == 200 else None
-                    except Exception:
-                        img_bytes = None
-                    await asyncio.sleep(_RATE_DELAY)
+                    continue
+                try:
+                    async with session.get(
+                        url, timeout=aiohttp.ClientTimeout(total=20)
+                    ) as resp:
+                        img_bytes = await resp.read() if resp.status == 200 else None
+                except Exception:
+                    img_bytes = None
+                await asyncio.sleep(_RATE_DELAY)
                 if img_bytes:
                     await queue.put((card, img_bytes))
-            finally:
-                counter["done"] += 1
 
         async def _producer() -> None:
-            await asyncio.gather(*[_download_one(c) for c in cards])
+            await asyncio.gather(*[_worker() for _ in range(_CONCURRENCY)])
             await queue.put(None)  # poison pill — signals consumer to stop
 
         async def _hash_and_save(batch: list) -> None:
