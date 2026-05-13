@@ -260,10 +260,19 @@ def isolate_card(img: Image.Image) -> Image.Image:
     return _isolate_card_centre(img)
 
 
+_NAME_LEFT   = 0.04
+_NAME_TOP    = 0.03
+_NAME_RIGHT  = 0.80   # wider: captures full name incl. long German titles
+_NAME_BOTTOM = 0.10   # narrower: excludes the top of the art zone
+
+
 def _crop_name_zone(img: Image.Image) -> Image.Image:
     """Crop and enhance the card-name area for better OCR."""
     w, h = img.size
-    zone = img.crop((int(w * 0.04), int(h * 0.03), int(w * 0.74), int(h * 0.13)))
+    zone = img.crop((
+        int(w * _NAME_LEFT), int(h * _NAME_TOP),
+        int(w * _NAME_RIGHT), int(h * _NAME_BOTTOM),
+    ))
     zone = zone.resize((zone.width * 3, zone.height * 3), Image.LANCZOS)
     zone = ImageEnhance.Contrast(zone).enhance(2.5)
     return zone.filter(ImageFilter.SHARPEN)
@@ -306,8 +315,18 @@ def _easyocr_extract(image_bytes: bytes) -> Optional[str]:
         logger.info("EasyOCR raw: %s", [(r[1], round(r[2], 2)) for r in results])
         if not results:
             return None
-        best = max(results, key=lambda r: r[2])
-        text = best[1].strip()
+        # Collect all segments above the confidence floor, ordered left-to-right.
+        # This handles multi-word names that EasyOCR splits into separate boxes.
+        MIN_CONF = 0.35
+        confident = sorted(
+            [r for r in results if r[2] >= MIN_CONF],
+            key=lambda r: r[0][0][0],  # sort by left-x of bounding box
+        )
+        text = (
+            " ".join(r[1].strip() for r in confident).strip()
+            if confident
+            else max(results, key=lambda r: r[2])[1].strip()
+        )
         return text if len(text) > 1 else None
     except Exception as e:
         logger.error("EasyOCR error: %s", e)
@@ -355,8 +374,8 @@ def get_isolated_preview(image_bytes: bytes) -> Optional[bytes]:
         # Draw the OCR name zone as a red rectangle so it's visible
         w, h = card.size
         draw = ImageDraw.Draw(card)
-        x0, y0 = int(w * 0.04), int(h * 0.03)
-        x1, y1 = int(w * 0.74), int(h * 0.13)
+        x0, y0 = int(w * _NAME_LEFT),  int(h * _NAME_TOP)
+        x1, y1 = int(w * _NAME_RIGHT), int(h * _NAME_BOTTOM)
         draw.rectangle([x0, y0, x1, y1], outline=(255, 0, 0), width=max(2, w // 150))
 
         buf = io.BytesIO()
