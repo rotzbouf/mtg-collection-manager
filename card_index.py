@@ -64,10 +64,10 @@ def _init_gpu() -> None:
     """
     global _GPU_DEVICE, _DCT_MATRIX
     try:
-        import warnings as _warnings
+        import os as _os
+        # Restrict torch to GPU 0 before it initialises — hides GPU 1 entirely.
+        _os.environ.setdefault("CUDA_VISIBLE_DEVICES", "0")
         import torch
-        # Suppress DataParallel GPU-imbalance warning — the bot uses a single device only.
-        _warnings.filterwarnings("ignore", category=UserWarning, module="torch.nn.parallel")
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         N = 32
         k = torch.arange(N, dtype=torch.float64)
