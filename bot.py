@@ -1132,7 +1132,7 @@ def _60_embed(result: dict) -> discord.Embed:
 
 
 class DeckResultView(discord.ui.View):
-    """Shown after a deck proposal — lets the user acknowledge they've noted it."""
+    """Shown after a deck proposal — lets the user accept or decline it."""
     def __init__(self):
         super().__init__(timeout=600)
 
@@ -1141,6 +1141,12 @@ class DeckResultView(discord.ui.View):
         self.stop()
         self.clear_items()
         await interaction.response.edit_message(view=self)
+
+    @discord.ui.button(label="Decline", style=discord.ButtonStyle.danger, emoji="🗑️")
+    async def decline(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.stop()
+        await interaction.response.defer()
+        await interaction.delete_original_response()
 
 
 class CommanderPickView(discord.ui.View):
