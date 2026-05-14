@@ -51,19 +51,10 @@ async def init_ocr():
 
     def _load():
         global _easyocr_reader
-        try:
-            import torch
-            if torch.cuda.is_available():
-                torch.cuda.set_device(0)
-                gpu_arg = "cuda:0"
-            else:
-                gpu_arg = False
-        except ImportError:
-            gpu_arg = False
         _easyocr_reader = _easyocr_mod.Reader(
-            ["de", "en"], gpu=gpu_arg, verbose=False
+            ["de", "en"], gpu=False, verbose=False
         )
-        logger.info("EasyOCR ready (gpu=%s)", gpu_arg)
+        logger.info("EasyOCR ready (cpu)")
 
     await asyncio.to_thread(_load)
 
