@@ -119,6 +119,9 @@ DISCORD_SCAN_CHANNEL_ID=
 # Channel where /deck commands work
 DISCORD_DECKBUILDER_CHANNEL_ID=
 
+# Channel where /search works (leave blank = any channel)
+DISCORD_SEARCH_CHANNEL_ID=
+
 # Role-based access control (role name or role ID; leave blank = everyone)
 DISCORD_GUEST_ROLE=
 DISCORD_COLLECTOR_ROLE=
@@ -136,6 +139,7 @@ DEBUG_SCAN_PREVIEW=0
 | `DISCORD_SCAN_CHANNEL_ID` | `/add`, `/scan`, `/update`, `/remove`, `/container create/rename/delete`, auto-scan image drops | `/search`, `/list`, `/card`, `/stats`, `/export`, `/container list`, `/help`, `/showcase` |
 | `DISCORD_DECKBUILDER_CHANNEL_ID` | `/deck propose` | — |
 | `DISCORD_SHOWCASE_CHANNEL_ID` | `/showcase` | — |
+| `DISCORD_SEARCH_CHANNEL_ID` | `/search` | — |
 
 Leave all blank to allow all commands anywhere.
 

@@ -51,6 +51,7 @@ GUILD_ID = os.getenv("DISCORD_GUILD_ID")
 SCAN_CHANNEL_ID     = int(os.getenv("DISCORD_SCAN_CHANNEL_ID",       0)) or None
 DECK_CHANNEL_ID     = int(os.getenv("DISCORD_DECKBUILDER_CHANNEL_ID", 0)) or None
 SHOWCASE_CHANNEL_ID = int(os.getenv("DISCORD_SHOWCASE_CHANNEL_ID",    0)) or None
+SEARCH_CHANNEL_ID   = int(os.getenv("DISCORD_SEARCH_CHANNEL_ID",      0)) or None
 GUEST_ROLE        = os.getenv("DISCORD_GUEST_ROLE",     "")   # read-only commands
 COLLECTOR_ROLE    = os.getenv("DISCORD_COLLECTOR_ROLE", "")   # add / scan / update
 ADMIN_ROLE        = os.getenv("DISCORD_ADMIN_ROLE",     "")   # remove / container mgmt / index rebuild
@@ -350,6 +351,12 @@ class MTGCommandTree(app_commands.CommandTree):
             if SHOWCASE_CHANNEL_ID and interaction.channel_id != SHOWCASE_CHANNEL_ID:
                 await interaction.response.send_message(
                     f"This command only works in <#{SHOWCASE_CHANNEL_ID}>.", ephemeral=True
+                )
+                return False
+        elif name == "search":
+            if SEARCH_CHANNEL_ID and interaction.channel_id != SEARCH_CHANNEL_ID:
+                await interaction.response.send_message(
+                    f"Search only works in <#{SEARCH_CHANNEL_ID}>.", ephemeral=True
                 )
                 return False
         elif name not in _READ_ONLY_COMMANDS:
