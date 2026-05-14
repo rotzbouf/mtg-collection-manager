@@ -486,11 +486,12 @@ def extract_name(image_bytes: bytes) -> Optional[str]:
 
 def get_isolated_preview(image_bytes: bytes) -> Optional[bytes]:
     """
-    Return the card after isolation + name-zone highlight as JPEG bytes.
+    Return the card after isolation with OCR zone highlights as JPEG bytes.
     Used only when DEBUG_SCAN_PREVIEW=1 — not called in production.
     The returned image shows:
       • full isolated card (what goes into phash)
-      • red rectangle overlaid on the OCR name zone
+      • red rectangle   — OCR name zone
+      • blue rectangle  — footer zone (set code / collector number / language)
     """
     try:
         from PIL import ImageDraw
@@ -499,12 +500,23 @@ def get_isolated_preview(image_bytes: bytes) -> Optional[bytes]:
             return None
         card = isolate_card(img)
 
-        # Draw the OCR name zone as a red rectangle so it's visible
         w, h = card.size
+        lw = max(2, w // 150)
         draw = ImageDraw.Draw(card)
-        x0, y0 = int(w * _NAME_LEFT),  int(h * _NAME_TOP)
-        x1, y1 = int(w * _NAME_RIGHT), int(h * _NAME_BOTTOM)
-        draw.rectangle([x0, y0, x1, y1], outline=(255, 0, 0), width=max(2, w // 150))
+
+        # Name zone — red
+        draw.rectangle(
+            [int(w * _NAME_LEFT), int(h * _NAME_TOP),
+             int(w * _NAME_RIGHT), int(h * _NAME_BOTTOM)],
+            outline=(255, 0, 0), width=lw,
+        )
+
+        # Footer zone — blue
+        draw.rectangle(
+            [int(w * 0.02), int(h * _FOOTER_TOP),
+             int(w * 0.98), int(h * _FOOTER_BOTTOM)],
+            outline=(0, 100, 255), width=lw,
+        )
 
         buf = io.BytesIO()
         card.save(buf, format="JPEG", quality=85)
