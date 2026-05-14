@@ -12,6 +12,7 @@ warnings.filterwarnings("ignore", message=".*pin_memory.*")
 # ─────────────────────────────────────────────────────────────────────────────
 
 import asyncio
+import difflib
 import io
 import logging
 import sys
@@ -832,11 +833,14 @@ async def cmd_scan(
                 collector_info["set_code"], collector_info["collector_number"], "en"
             )
 
-    # ── OCR name match (skipped when collector already resolved the card) ─────
+    # ── OCR name match — set code hint narrows Scryfall search ──────────────
     ocr_card: Optional[dict] = None
     ocr_lang = "unknown"
     if extracted_name and not collector_card:
-        ocr_card, ocr_lang = await bot.scryfall.resolve_card(extracted_name)
+        set_hint = collector_info.get("set_code")
+        ocr_card, ocr_lang = await bot.scryfall.resolve_card(extracted_name, set_code=set_hint)
+        if not ocr_card and set_hint:
+            ocr_card, ocr_lang = await bot.scryfall.resolve_card(extracted_name)
 
     # Footer language is the most reliable indicator — the card explicitly prints
     # "EN", "DE", etc. in the copyright footer next to the collector number.
@@ -860,7 +864,16 @@ async def cmd_scan(
         if conf:
             match_note += f'  •  visual confirmed (d={conf["hash_distance"]})'
         if extracted_name:
-            match_note += f'  •  OCR: "{extracted_name}"'
+            en_name = collector_card.get("name_en", "")
+            de_name = collector_card.get("name_de") or collector_card.get("printed_name", "")
+            ratio = max(
+                difflib.SequenceMatcher(None, extracted_name.lower(), en_name.lower()).ratio(),
+                difflib.SequenceMatcher(None, extracted_name.lower(), de_name.lower()).ratio() if de_name else 0,
+            )
+            if ratio >= 0.55:
+                match_note += f'  •  name confirmed: "{extracted_name}" ({ratio:.0%})'
+            else:
+                match_note += f'  •  OCR: "{extracted_name}" (differs {ratio:.0%})'
 
     elif ocr_card:
         card = ocr_card
@@ -1673,6 +1686,27 @@ async def _do_scan_and_confirm(
     if collector_info:
         logger.info("OCR footer: %s", collector_info)
 
+    # Debug text: show all raw extraction results
+    if DEBUG_SCAN_PREVIEW:
+        ci = collector_info
+        dbg = []
+        if extracted:
+            dbg.append(f"**OCR Name:** `{extracted}`")
+        dbg.append(
+            f"**Footer:** set=`{ci.get('set_code') or '—'}` "
+            f"#=`{ci.get('collector_number') or '—'}` "
+            f"lang=`{ci.get('language') or '—'}`"
+        )
+        if hash_candidates:
+            dbg.append("**Hash top-3:** " + "  •  ".join(
+                f"`{c.get('name_en', '?')}` d={c['hash_distance']}"
+                for c in hash_candidates[:3]
+            ))
+        await interaction.followup.send(
+            "🔍 **Debug — OCR results:**\n" + "\n".join(dbg),
+            ephemeral=True,
+        )
+
     # ── Collector match: set code + number → exact Scryfall lookup ───────────
     # Most precise method: bypasses all fuzzy matching.
     collector_card: Optional[dict] = None
@@ -1686,11 +1720,15 @@ async def _do_scan_and_confirm(
                 collector_info["set_code"], collector_info["collector_number"], "en"
             )
 
-    # ── OCR name match (skipped when collector already resolved the card) ─────
+    # ── OCR name match — set code (if read) narrows the Scryfall search ───────
     ocr_card: Optional[dict] = None
     ocr_lang = "unknown"
     if extracted and not collector_card:
-        ocr_card, ocr_lang = await bot.scryfall.resolve_card(extracted)
+        set_hint = collector_info.get("set_code")
+        ocr_card, ocr_lang = await bot.scryfall.resolve_card(extracted, set_code=set_hint)
+        # If set-scoped search failed, retry globally
+        if not ocr_card and set_hint:
+            ocr_card, ocr_lang = await bot.scryfall.resolve_card(extracted)
 
     # Footer language is the most reliable indicator — the card explicitly prints
     # "EN", "DE", etc. in the copyright footer next to the collector number.
@@ -1714,8 +1752,20 @@ async def _do_scan_and_confirm(
         )
         if conf:
             method_parts.append(f"visual confirmed (d={conf['hash_distance']})")
+        # Cross-validate with OCR name (fuzzy match — no extra Scryfall call)
         if extracted:
-            method_parts.append(f'OCR: "{extracted}"')
+            en_name = collector_card.get("name_en", "")
+            de_name = collector_card.get("name_de") or collector_card.get("printed_name", "")
+            ratio = max(
+                difflib.SequenceMatcher(None, extracted.lower(), en_name.lower()).ratio(),
+                difflib.SequenceMatcher(None, extracted.lower(), de_name.lower()).ratio() if de_name else 0,
+            )
+            if ratio >= 0.55:
+                method_parts.append(f'name confirmed: "{extracted}" ({ratio:.0%})')
+            else:
+                logger.info("Collector/name mismatch: OCR='%s' vs '%s' (ratio=%.2f)",
+                            extracted, en_name, ratio)
+                method_parts.append(f'OCR: "{extracted}" (differs {ratio:.0%})')
 
     elif ocr_card:
         card = ocr_card

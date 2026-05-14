@@ -270,7 +270,7 @@ _NAME_TOP    = 0.03
 _NAME_RIGHT  = 0.80   # wider: captures full name incl. long German titles
 _NAME_BOTTOM = 0.10   # narrower: excludes the top of the art zone
 
-_FOOTER_TOP    = 0.94  # bottom-left corner: set code / collector number / language
+_FOOTER_TOP    = 0.93  # bottom-left corner: set code / collector number / language
 _FOOTER_BOTTOM = 0.99
 _FOOTER_LEFT   = 0.04
 _FOOTER_RIGHT  = 0.23
