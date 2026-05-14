@@ -163,6 +163,7 @@ class Database:
     def __init__(self, path: str = DB_PATH):
         self.path = path
         self._db: Optional[aiosqlite.Connection] = None
+        self._restore_lock = asyncio.Lock()
 
     async def initialize(self):
         self._db = await aiosqlite.connect(self.path)
@@ -707,22 +708,24 @@ class Database:
     async def restore_from_bytes(self, data: bytes) -> None:
         """Replace the current database with *data* and reinitialize.
 
+        Acquires an exclusive lock so no concurrent restore can run.
         The incoming data is written to a temp file first; the live connection
         is closed only after the temp file is confirmed writable, so a failed
         write leaves the running DB untouched.
         """
-        tmp_fd, tmp_path = tempfile.mkstemp(suffix=".db")
-        os.close(tmp_fd)
-        try:
-            with open(tmp_path, "wb") as f:
-                f.write(data)
-            await self.close()
-            shutil.move(tmp_path, self.path)
-        except Exception:
+        async with self._restore_lock:
+            tmp_fd, tmp_path = tempfile.mkstemp(suffix=".db")
+            os.close(tmp_fd)
             try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-            raise
-        await self.initialize()
+                with open(tmp_path, "wb") as f:
+                    f.write(data)
+                await self.close()
+                shutil.move(tmp_path, self.path)
+            except Exception:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
+            await self.initialize()
 

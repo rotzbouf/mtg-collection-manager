@@ -87,7 +87,7 @@ class ScryfallClient:
     def __init__(self):
         self._session: Optional[aiohttp.ClientSession] = None
         self._last_request = 0.0
-        self._semaphore = asyncio.Semaphore(5)
+        self._semaphore = asyncio.Semaphore(1)
 
     async def _session_get(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -96,11 +96,12 @@ class ScryfallClient:
 
     async def _get(self, url: str, **params) -> Optional[dict]:
         async with self._semaphore:
-            await asyncio.sleep(max(0, 0.1 - (asyncio.get_event_loop().time() - self._last_request)))
+            loop = asyncio.get_running_loop()
+            await asyncio.sleep(max(0, 0.1 - (loop.time() - self._last_request)))
             session = await self._session_get()
             try:
                 async with session.get(url, params=params, timeout=_REQUEST_TIMEOUT) as resp:
-                    self._last_request = asyncio.get_event_loop().time()
+                    self._last_request = loop.time()
                     if resp.status == 200:
                         return await resp.json()
                     if resp.status == 404:

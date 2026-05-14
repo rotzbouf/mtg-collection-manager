@@ -455,7 +455,7 @@ async def container_create(
         )
         return
     await interaction.response.send_message(
-        f'📦 Container **{name}** (`{type}`) created with ID **{cid}**.'
+        f'📦 Container **{name}** (`{type}`) created with ID **{cid}**.', ephemeral=True
     )
 
 
@@ -511,7 +511,7 @@ async def container_rename(interaction: discord.Interaction, id: int, name: str)
         return
     ok = await bot.db.rename_container(id, name)
     if ok:
-        await interaction.response.send_message(f'Container renamed to **{name}**.')
+        await interaction.response.send_message(f'Container renamed to **{name}**.', ephemeral=True)
     else:
         await interaction.response.send_message(f"No container with ID {id}.", ephemeral=True)
 
@@ -573,7 +573,13 @@ async def cmd_add(
         if container.isdigit():
             container_id = int(container)
             c = await bot.db.get_container(container_id)
-            container_name = c["name"] if c else None
+            if not c:
+                await interaction.followup.send(
+                    f"No container with ID **{container}** found. Use `/container list` to see available containers.",
+                    ephemeral=True,
+                )
+                return
+            container_name = c["name"]
         else:
             existing = await bot.db.list_containers()
             match = next((c for c in existing if c["name"].lower() == container.lower()), None)
@@ -1224,7 +1230,7 @@ def _make_price_chart(history: list[dict], card_name: str) -> Optional[bytes]:
         ax.xaxis.set_major_locator(mdates.AutoDateLocator())
         for spine in ax.spines.values():
             spine.set_color("#4e5058")
-        plt.xticks(rotation=30, ha="right")
+        fig.autofmt_xdate(rotation=30, ha="right")
         fig.tight_layout(pad=0.5)
 
         buf = io.BytesIO()
@@ -1239,7 +1245,7 @@ def _make_price_chart(history: list[dict], card_name: str) -> Optional[bytes]:
 
 @bot.tree.command(name="showcase", description="Show the 5 most valuable cards in your collection")
 async def cmd_showcase(interaction: discord.Interaction):
-    await interaction.response.defer()
+    await interaction.response.defer(thinking=True)
     cards = await bot.db.get_top_by_value(5)
     if not cards:
         await interaction.followup.send("No cards with a known price in your collection yet.")
@@ -1293,7 +1299,7 @@ async def cmd_showcase(interaction: discord.Interaction):
         if scryfall_id:
             history = await bot.db.get_price_history(scryfall_id)
 
-        chart_bytes = _make_price_chart(history, name)
+        chart_bytes = await asyncio.to_thread(_make_price_chart, history, name)
         if chart_bytes:
             file = discord.File(io.BytesIO(chart_bytes), filename=f"chart_{rank}.png")
             embed.set_image(url=f"attachment://chart_{rank}.png")
@@ -1483,6 +1489,11 @@ class RestoreConfirmView(discord.ui.View):
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.stop()
         await interaction.response.defer()
+        if bot.db._restore_lock.locked():
+            await interaction.edit_original_response(
+                content="A restore is already in progress. Please wait.", embed=None, view=None
+            )
+            return
         try:
             await bot.db.restore_from_bytes(self._data)
         except Exception as exc:
@@ -1662,6 +1673,12 @@ class ContainerSelectView(discord.ui.View):
     async def _on_select(self, interaction: discord.Interaction):
         container_id = int(interaction.data["values"][0])
         c = await bot.db.get_container(container_id)
+        if not c:
+            self.stop()
+            await interaction.response.send_message(
+                "This container was deleted. Please try again.", ephemeral=True
+            )
+            return
         _last_container[self._source.author.id] = (container_id, c["name"])
         self.stop()
         await _do_scan_and_confirm(interaction, self._image_bytes, self._source, container_id, c["name"])
