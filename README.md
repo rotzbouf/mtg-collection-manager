@@ -194,7 +194,7 @@ Add a card by name. Scryfall is queried automatically.
 | Parameter | Required | Default | Description |
 |---|---|---|---|
 | `name` | yes | — | English or German card name |
-| `container` | no | — | Container name or ID; created automatically if new |
+| `container` | no | — | Container name (created automatically if new) or numeric container ID (must exist; use `/container list` to find IDs) |
 | `set_code` | no | — | Narrow to a specific set, e.g. `MH3` |
 | `language` | no | auto | Override detected language (`en` / `de`) |
 | `condition` | no | `NM` | `NM` · `LP` · `MP` · `HP` · `DMG` |
