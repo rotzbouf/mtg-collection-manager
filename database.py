@@ -362,6 +362,25 @@ class Database:
             rows = await cur.fetchall()
         return [_row_to_dict(r) for r in rows]
 
+    async def count_cards(
+        self,
+        language: Optional[str] = None,
+        container_id: Optional[int] = None,
+    ) -> int:
+        conditions, params = [], []
+        if language:
+            conditions.append("language = ?")
+            params.append(language)
+        if container_id is not None:
+            conditions.append("container_id = ?")
+            params.append(container_id)
+        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+        async with self._db.execute(
+            f"SELECT COUNT(*) FROM collection {where}", params
+        ) as cur:
+            row = await cur.fetchone()
+        return row[0] if row else 0
+
     async def list_cards(
         self,
         limit: int = 200,

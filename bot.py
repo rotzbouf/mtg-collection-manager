@@ -251,7 +251,7 @@ def card_embed(card: dict, title_prefix: str = "") -> discord.Embed:
     embed.add_field(name="Mana", value=card.get("mana_cost") or "—", inline=True)
     embed.add_field(name="CMC", value=str(card.get("cmc", 0)), inline=True)
     embed.add_field(name="Color", value=color_str, inline=True)
-    embed.add_field(name="Set", value=f"{card.get('set_name', '?')} ({card.get('set_code', '?').upper()})", inline=True)
+    embed.add_field(name="Set", value=f"{card.get('set_name', '?')} ({(card.get('set_code') or '?').upper()})", inline=True)
     embed.add_field(name="№", value=card.get("collector_number") or "—", inline=True)
     embed.add_field(name="Rarity", value=rarity.capitalize(), inline=True)
     embed.add_field(name="Language", value=lang_flag, inline=True)
@@ -284,12 +284,24 @@ def card_embed(card: dict, title_prefix: str = "") -> discord.Embed:
     return embed
 
 
-def paginate_embeds(cards: list[dict], page: int, per_page: int = 10) -> tuple[discord.Embed, int]:
-    total = len(cards)
-    pages = max(1, (total + per_page - 1) // per_page)
-    page = max(1, min(page, pages))
-    start = (page - 1) * per_page
-    chunk = cards[start:start + per_page]
+def paginate_embeds(
+    cards: list[dict], page: int, per_page: int = 10, total: int = 0
+) -> tuple[discord.Embed, int]:
+    """Build a paginated collection embed.
+
+    When *total* is provided, *cards* is treated as the already-sliced page
+    and total/pages are computed from the given true count.  Without it the
+    function slices *cards* itself (legacy behaviour).
+    """
+    if total:
+        pages = max(1, (total + per_page - 1) // per_page)
+        chunk = cards
+    else:
+        total = len(cards)
+        pages = max(1, (total + per_page - 1) // per_page)
+        page = max(1, min(page, pages))
+        start = (page - 1) * per_page
+        chunk = cards[start:start + per_page]
 
     embed = discord.Embed(
         title=f"Collection — page {page}/{pages}  ({total} entries)",
@@ -308,7 +320,7 @@ def paginate_embeds(cards: list[dict], page: int, per_page: int = 10) -> tuple[d
             f"| {c.get('condition', 'NM')}{foil} "
             f"| {price} | {lang_flag} | 📦 {container}"
         )
-        embed.add_field(name=f"[{c['id']}] {name}", value=val, inline=False)
+        embed.add_field(name=f"[{c.get('id', '?')}] {name}", value=val, inline=False)
 
     return embed, pages
 
@@ -699,6 +711,10 @@ async def cmd_scan(
 async def cmd_search(interaction: discord.Interaction, query: str):
     if not await require_guest(interaction):
         return
+    query = query.strip()
+    if not query:
+        await interaction.response.send_message("Please enter a search term.", ephemeral=True)
+        return
     await interaction.response.defer(thinking=True)
     results = await bot.db.search(query, limit=15)
     if not results:
@@ -740,13 +756,20 @@ async def cmd_list(
     if not await require_guest(interaction):
         return
     await interaction.response.defer(thinking=True)
-    cards = await bot.db.list_cards(
-        limit=200, offset=0, sort=sort, language=language or None
-    )
-    if not cards:
+    per_page = 10
+    total = await bot.db.count_cards(language=language or None)
+    if not total:
         await interaction.followup.send("Your collection is empty.", ephemeral=True)
         return
-    embed, pages = paginate_embeds(cards, page)
+    pages = max(1, (total + per_page - 1) // per_page)
+    page = max(1, min(page, pages))
+    cards = await bot.db.list_cards(
+        limit=per_page,
+        offset=(page - 1) * per_page,
+        sort=sort,
+        language=language or None,
+    )
+    embed, _ = paginate_embeds(cards, page, per_page=per_page, total=total)
     await interaction.followup.send(embed=embed)
 
 
@@ -1108,6 +1131,7 @@ class DeckResultView(discord.ui.View):
 
     @discord.ui.button(label="Accept", style=discord.ButtonStyle.success, emoji="✅")
     async def accept(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.stop()
         self.clear_items()
         await interaction.response.edit_message(view=self)
 
@@ -1248,7 +1272,7 @@ async def cmd_showcase(interaction: discord.Interaction):
     await interaction.response.defer(thinking=True)
     cards = await bot.db.get_top_by_value(5)
     if not cards:
-        await interaction.followup.send("No cards with a known price in your collection yet.")
+        await interaction.followup.send("No cards with a known price in your collection yet.", ephemeral=True)
         return
 
     RARITY_COLOUR = {

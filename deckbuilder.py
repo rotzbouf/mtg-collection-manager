@@ -220,19 +220,23 @@ def build_60_deck(pool: list[dict], fmt: str) -> dict:
     others.sort(key=lambda c: int(c.get("cmc") or 0))
 
     name_used: Counter = Counter()
-    deck_cards: list[tuple[dict, int]] = []
+    name_first: dict[str, dict] = {}   # first physical copy per card name
     total = 0
     for card in (themed + others):
         if total >= 36:
             break
-        name  = (card.get("name_en") or "").lower()
-        avail = 1 if name_used[name] < 4 else 0
-        if avail <= 0:
+        name = (card.get("name_en") or "").lower()
+        if name_used[name] >= 4:
             continue
-        take = min(avail, 36 - total)
-        deck_cards.append((card, take))
+        take = min(4 - name_used[name], 36 - total)
+        if name not in name_first:
+            name_first[name] = card
         name_used[name] += take
         total += take
+
+    deck_cards: list[tuple[dict, int]] = [
+        (name_first[n], cnt) for n, cnt in name_used.items()
+    ]
 
     colors_used: set[str] = set()
     for card, _ in deck_cards:
