@@ -270,8 +270,10 @@ _NAME_TOP    = 0.03
 _NAME_RIGHT  = 0.80   # wider: captures full name incl. long German titles
 _NAME_BOTTOM = 0.10   # narrower: excludes the top of the art zone
 
-_FOOTER_TOP    = 0.89  # bottom strip: copyright / set / collector / language
+_FOOTER_TOP    = 0.89  # bottom-left corner: set code / collector number / language
 _FOOTER_BOTTOM = 0.97
+_FOOTER_LEFT   = 0.02
+_FOOTER_RIGHT  = 0.50
 
 # Language codes printed on MTG cards → Scryfall language identifiers
 _CARD_LANG_MAP: dict[str, str] = {
@@ -313,7 +315,7 @@ def _crop_name_zone(img: Image.Image) -> Image.Image:
 def _crop_footer_zone(img: Image.Image) -> Image.Image:
     """Crop and preprocess the card-footer strip for set/collector/language OCR."""
     w, h = img.size
-    zone = img.crop((int(w * 0.02), int(h * _FOOTER_TOP), int(w * 0.98), int(h * _FOOTER_BOTTOM)))
+    zone = img.crop((int(w * _FOOTER_LEFT), int(h * _FOOTER_TOP), int(w * _FOOTER_RIGHT), int(h * _FOOTER_BOTTOM)))
     # 5× upscale — footer text is much smaller than the card name
     zone = zone.resize((zone.width * 5, zone.height * 5), Image.LANCZOS)
     # Grayscale + CLAHE: footer text is black-on-white/cream, so grayscale is fine;
@@ -513,8 +515,8 @@ def get_isolated_preview(image_bytes: bytes) -> Optional[bytes]:
 
         # Footer zone — blue
         draw.rectangle(
-            [int(w * 0.02), int(h * _FOOTER_TOP),
-             int(w * 0.98), int(h * _FOOTER_BOTTOM)],
+            [int(w * _FOOTER_LEFT), int(h * _FOOTER_TOP),
+             int(w * _FOOTER_RIGHT), int(h * _FOOTER_BOTTOM)],
             outline=(0, 100, 255), width=lw,
         )
 
