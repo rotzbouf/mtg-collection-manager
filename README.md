@@ -21,6 +21,7 @@ search and export your collection, and generate deck proposals — all from Disc
 | **Deckbuilder** | Auto-generates Commander (100-card) or 60-card (Timeless/Standard) proposals |
 | **Showcase** | `/showcase` displays the 5 most valuable cards with image, details, and a price-history chart |
 | **Price history** | Prices are snapshotted daily; history chart auto-appears once 2+ data points exist |
+| **Overcount** | `/overcount` lists every non-basic-land card that appears more than 4 times, with per-container breakdown |
 | **Backup & restore** | `/backup create` downloads a `.db` snapshot; `/backup restore` replaces the database from a file |
 
 ---
@@ -289,6 +290,18 @@ Collection-wide statistics:
 - Rarity breakdown (Common · Uncommon · Rare · Mythic) with values
 - Top 5 most valuable cards with container location
 - Per-container overview with bulk detection (containers where the most expensive card ≤ €0.05 are flagged as bulk)
+
+#### `/overcount`
+
+Lists every non-basic-land card that appears more than 4 times in your collection, sorted by count (highest first).
+For each card the total copy count and a per-container breakdown are shown:
+
+```
+Lightning Bolt — 7×
+  📦 Binder 1: 4  ·  📦 Trade Box: 3
+```
+
+Useful for identifying surplus copies before trading or selling.
 
 #### `/showcase`
 
