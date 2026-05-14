@@ -141,13 +141,18 @@ def _isolate_card_cv(img: Image.Image) -> Optional[Image.Image]:
     """
     Detect the card outline and perspective-correct it.
 
-    Pass 1 — Otsu threshold (fast, reliable for any uniform background):
+    Pass 1 — Otsu threshold (fast, reliable for uniform backgrounds):
       Binarise the image; the card becomes the largest blob.
 
-    Pass 2 — Canny edges (works when background ≈ card brightness):
+    Pass 2 — Canny on Gaussian blur (works when background ≈ card brightness):
       Multiple blur / threshold / retrieval-mode combinations.
 
-    In both passes we first try approxPolyDP; if no clean quad is found we
+    Pass 3 — Canny on bilateral filter (textured / coloured backgrounds):
+      Bilateral filter smooths background texture (wood grain, fabric, desk
+      surface) while preserving the sharp card boundary, so Canny produces a
+      clean rectangle even when the background is busy or non-white.
+
+    In all passes we first try approxPolyDP; if no clean quad is found we
     keep the best minAreaRect candidate as a last-resort fallback.
     """
     import cv2
@@ -187,7 +192,7 @@ def _isolate_card_cv(img: Image.Image) -> Optional[Image.Image]:
         if quad is not None:
             break
 
-    # ── Pass 2: Canny edges ───────────────────────────────────────────────────
+    # ── Pass 2: Canny on Gaussian blur ───────────────────────────────────────
     if quad is None:
         for blur_k in (3, 5, 9, 13):
             blurred_k = cv2.GaussianBlur(gray, (blur_k, blur_k), 0)
@@ -197,6 +202,32 @@ def _isolate_card_cv(img: Image.Image) -> Optional[Image.Image]:
                 for retr, label in (
                     (cv2.RETR_EXTERNAL, f"canny-ext blur={blur_k} {lo}/{hi}"),
                     (cv2.RETR_LIST,     f"canny-list blur={blur_k} {lo}/{hi}"),
+                ):
+                    contours, _ = cv2.findContours(edges, retr, cv2.CHAIN_APPROX_SIMPLE)
+                    q, r = _best_quad_in_contours(contours, min_area, label)
+                    if q is not None:
+                        quad = q
+                        break
+                    if r is not None and best_rect is None:
+                        best_rect = r
+                if quad is not None:
+                    break
+            if quad is not None:
+                break
+
+    # ── Pass 3: Canny on bilateral filter ────────────────────────────────────
+    # Bilateral filter reduces texture noise (wood grain, fabric, desk surface)
+    # while keeping the sharp card boundary intact.  Works on any background
+    # colour; sigma values are intentionally large to strongly flatten textures.
+    if quad is None:
+        for d, sig in ((9, 75), (15, 100), (9, 150)):
+            bilateral = cv2.bilateralFilter(gray, d, sig, sig)
+            for lo, hi in ((20, 60), (30, 90), (50, 150)):
+                edges = cv2.Canny(bilateral, lo, hi)
+                edges = cv2.dilate(edges, np.ones((5, 5), np.uint8), iterations=2)
+                for retr, label in (
+                    (cv2.RETR_EXTERNAL, f"bilateral-ext d={d} sig={sig} {lo}/{hi}"),
+                    (cv2.RETR_LIST,     f"bilateral-list d={d} sig={sig} {lo}/{hi}"),
                 ):
                     contours, _ = cv2.findContours(edges, retr, cv2.CHAIN_APPROX_SIMPLE)
                     q, r = _best_quad_in_contours(contours, min_area, label)
