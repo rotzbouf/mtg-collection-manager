@@ -335,30 +335,52 @@ def _parse_footer(text: str) -> dict:
     """
     Extract set_code, collector_number, language from raw OCR footer text.
 
-    Typical footer line: "™ & © 2022 Wizards of the Coast LLC NEO · DE 042/270"
+    The blue box covers two printed lines in the card's bottom-left corner:
+      Line 1:  collector number   e.g. "042/270"  (or just "042")
+      Line 2:  set code · lang    e.g. "NEO · DE"
+
     All returned values may be None if the OCR text is too noisy.
     """
+    _BLOCKLIST = {"LLC", "INC", "LTD", "THE", "AND", "FOR", "ART",
+                  "COAST", "WIZARDS", "HASBRO"}
     upper = text.upper()
+    lines = [ln.strip() for ln in upper.splitlines() if ln.strip()]
 
-    # Language code (2–3 uppercase letters explicitly printed on every modern card)
+    # ── Collector number: line 1 ──────────────────────────────────────────────
+    # Prefer "X/Y" format (most reliable); fall back to bare number on first line.
+    coll_m = _FOOTER_COLL_RE.search(upper)
+    if coll_m:
+        collector_number = coll_m.group(1).lstrip("0") or None
+    elif lines:
+        bare_m = re.match(r'^\D*(\d{1,4})\b', lines[0])
+        collector_number = (bare_m.group(1).lstrip("0") or None) if bare_m else None
+    else:
+        collector_number = None
+
+    # ── Language code ─────────────────────────────────────────────────────────
     lang_m = _FOOTER_LANG_RE.search(upper)
     language = _CARD_LANG_MAP.get(lang_m.group(1)) if lang_m else None
 
-    # Collector number: prefer "X/Y" format over a bare number
-    coll_m = _FOOTER_COLL_RE.search(upper)
-    collector_number = (coll_m.group(1).lstrip("0") or None) if coll_m else None
-
-    # Set code: last 2–5-char alphanumeric word just before the language code.
-    # In "... LLC NEO · DE 042/270" → set_code = "NEO".
+    # ── Set code: first valid token on the line that contains the language code
+    # e.g. "NEO · DE" → everything before "DE" → first clean token = "NEO"
     set_code = None
-    if lang_m:
+    for line in lines:
+        lm = _FOOTER_LANG_RE.search(line)
+        if lm:
+            for token in line[:lm.start()].split():
+                token = re.sub(r"[^A-Z0-9]", "", token)
+                if 2 <= len(token) <= 5 and token not in _BLOCKLIST:
+                    set_code = token
+                    break
+            break
+
+    # Fallback: last valid token before the lang code anywhere in the full text
+    # (handles OCR output where line breaks are lost)
+    if not set_code and lang_m:
         before_lang = upper[:lang_m.start()].rstrip(" ·-—·")
         for token in reversed(before_lang.split()):
             token = re.sub(r"[^A-Z0-9]", "", token)
-            if 2 <= len(token) <= 5 and token not in {
-                "LLC", "INC", "LTD", "THE", "AND", "FOR", "ART",
-                "COAST", "WIZARDS", "HASBRO",
-            }:
+            if 2 <= len(token) <= 5 and token not in _BLOCKLIST:
                 set_code = token
                 break
 
