@@ -16,6 +16,7 @@ import difflib
 import io
 import logging
 import sys
+from datetime import datetime, timezone
 from typing import NamedTuple, Optional
 
 import discord
@@ -1261,6 +1262,70 @@ async def cmd_showcase(interaction: discord.Interaction):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# /backup — create & restore  (admin only)
+# ──────────────────────────────────────────────────────────────────────────────
+
+backup_group = app_commands.Group(name="backup", description="Database backup and restore (admin only)")
+
+
+@backup_group.command(name="create", description="Download the current database as a backup file")
+async def backup_create(interaction: discord.Interaction):
+    if not await require_admin(interaction):
+        return
+    await interaction.response.defer(thinking=True, ephemeral=True)
+    try:
+        data = await bot.db.backup_bytes()
+    except Exception as exc:
+        logger.exception("Backup failed")
+        await interaction.followup.send(f"Backup failed: {exc}", ephemeral=True)
+        return
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    filename = f"mtg_collection_{ts}.db"
+    file = discord.File(io.BytesIO(data), filename=filename)
+    size_kb = len(data) / 1024
+    await interaction.followup.send(
+        f"Backup created — `{filename}` ({size_kb:.1f} KB).",
+        file=file,
+        ephemeral=True,
+    )
+
+
+@backup_group.command(name="restore", description="Restore the database from a backup file")
+@app_commands.describe(file="A .db backup file previously created with /backup create")
+async def backup_restore(interaction: discord.Interaction, file: discord.Attachment):
+    if not await require_admin(interaction):
+        return
+    await interaction.response.defer(thinking=True, ephemeral=True)
+    if not file.filename.endswith(".db"):
+        await interaction.followup.send("Please attach a `.db` backup file.", ephemeral=True)
+        return
+    data = await file.read()
+    try:
+        counts = await Database.inspect_backup(data)
+    except ValueError as exc:
+        await interaction.followup.send(f"Invalid backup: {exc}", ephemeral=True)
+        return
+    except Exception as exc:
+        logger.exception("Could not inspect backup")
+        await interaction.followup.send(f"Could not read backup file: {exc}", ephemeral=True)
+        return
+    embed = discord.Embed(
+        title="Restore database?",
+        description=(
+            f"**Backup contains:** {counts['cards']} cards · {counts['containers']} containers\n\n"
+            "This will **replace the current database** with the backup.\n"
+            "All changes made after the backup was created will be lost."
+        ),
+        color=0xFF4444,
+    )
+    view = RestoreConfirmView(data)
+    await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+
+
+bot.tree.add_command(backup_group)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # /help
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -1330,6 +1395,14 @@ async def cmd_help(interaction: discord.Interaction):
         ),
         inline=False,
     )
+    embed.add_field(
+        name="💾 Backup (admin only)",
+        value=(
+            "`/backup create` — download the current database as a `.db` file\n"
+            "`/backup restore` — upload a `.db` file to replace the current database\n"
+        ),
+        inline=False,
+    )
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
@@ -1352,6 +1425,33 @@ class ConfirmView(discord.ui.View):
     async def no(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.stop()
         await interaction.response.defer()
+
+
+class RestoreConfirmView(discord.ui.View):
+    def __init__(self, data: bytes):
+        super().__init__(timeout=60)
+        self._data = data
+
+    @discord.ui.button(label="Yes, restore", style=discord.ButtonStyle.danger)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.stop()
+        await interaction.response.defer()
+        try:
+            await bot.db.restore_from_bytes(self._data)
+        except Exception as exc:
+            logger.exception("Restore failed")
+            await interaction.edit_original_response(
+                content=f"Restore failed: {exc}", embed=None, view=None
+            )
+            return
+        await interaction.edit_original_response(
+            content="Database restored successfully.", embed=None, view=None
+        )
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.stop()
+        await interaction.response.edit_message(content="Restore cancelled.", embed=None, view=None)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
