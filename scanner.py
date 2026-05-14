@@ -346,16 +346,27 @@ def _parse_footer(text: str) -> dict:
     upper = text.upper()
     lines = [ln.strip() for ln in upper.splitlines() if ln.strip()]
 
-    # ── Collector number: line 1 ──────────────────────────────────────────────
-    # Prefer "X/Y" format (most reliable); fall back to bare number on first line.
+    # ── Collector number ──────────────────────────────────────────────────────
+    # Cards print only the bare number (e.g. "042"), no "/total".
+    # Search every line for one that is purely numeric after stripping noise.
+    # The X/Y regex is kept as a secondary match in case some printings include it.
+    _BARE_NUM_RE = re.compile(r'^\D{0,3}(\d{1,4})\D{0,3}$')
+    collector_number = None
     coll_m = _FOOTER_COLL_RE.search(upper)
     if coll_m:
         collector_number = coll_m.group(1).lstrip("0") or None
-    elif lines:
-        bare_m = re.match(r'^\D*(\d{1,4})\b', lines[0])
-        collector_number = (bare_m.group(1).lstrip("0") or None) if bare_m else None
     else:
         collector_number = None
+        for line in lines:
+            bare_m = _BARE_NUM_RE.match(line)
+            if bare_m:
+                collector_number = bare_m.group(1).lstrip("0") or None
+                break
+        # Last resort: number at the very start of the full text (merged-line OCR)
+        if not collector_number:
+            start_m = re.match(r'^(\d{1,4})\b', upper.lstrip())
+            if start_m:
+                collector_number = start_m.group(1).lstrip("0") or None
 
     # ── Language code ─────────────────────────────────────────────────────────
     lang_m = _FOOTER_LANG_RE.search(upper)
