@@ -272,8 +272,8 @@ _NAME_BOTTOM = 0.10   # narrower: excludes the top of the art zone
 
 _FOOTER_TOP    = 0.92  # bottom-left corner: set code / collector number / language
 _FOOTER_BOTTOM = 0.99
-_FOOTER_LEFT   = 0.01
-_FOOTER_RIGHT  = 0.38
+_FOOTER_LEFT   = 0.04
+_FOOTER_RIGHT  = 0.23
 
 # Language codes printed on MTG cards → Scryfall language identifiers
 _CARD_LANG_MAP: dict[str, str] = {
