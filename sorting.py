@@ -7,7 +7,10 @@ Within each type: ascending CMC, then alphabetical name
 """
 
 import json
+import logging
 from typing import Union
+
+logger = logging.getLogger(__name__)
 
 _COLOR_BUCKET = {"W": 0, "U": 1, "B": 2, "R": 3, "G": 4}
 
@@ -51,6 +54,7 @@ def compute_chaos_key(
         try:
             colors = json.loads(colors)
         except Exception:
+            logger.warning("sort_key: invalid colors JSON %r, falling back to CSV split", colors)
             colors = [c.strip() for c in colors.split(",") if c.strip()]
 
     cb = _color_bucket(colors, type_line)
@@ -63,6 +67,7 @@ def color_sort_order(colors: Union[list[str], str], type_line: str) -> int:
         try:
             colors = json.loads(colors)
         except Exception:
+            logger.warning("color_sort_order: invalid colors JSON %r, falling back to CSV split", colors)
             colors = [c.strip() for c in colors.split(",") if c.strip()]
     return _color_bucket(colors, type_line)
 

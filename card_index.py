@@ -254,15 +254,6 @@ def _compute_query_hashes(image_bytes: bytes) -> tuple[list[str], list[str]]:
     except Exception as e:
         logger.warning("Query hash (isolated) failed: %s", e)
 
-    # Full-image fallback (no isolation)
-    try:
-        img_full = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        h_full, _ = _phash_images([img_full])[0]
-        if h_full:
-            raw.append(h_full)
-    except Exception:
-        pass
-
     return raw, norm
 
 

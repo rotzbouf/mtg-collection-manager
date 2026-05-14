@@ -346,7 +346,7 @@ def _parse_footer(text: str) -> dict:
 
     # Collector number: prefer "X/Y" format over a bare number
     coll_m = _FOOTER_COLL_RE.search(upper)
-    collector_number = coll_m.group(1).lstrip("0") or "0" if coll_m else None
+    collector_number = (coll_m.group(1).lstrip("0") or None) if coll_m else None
 
     # Set code: last 2–5-char alphanumeric word just before the language code.
     # In "... LLC NEO · DE 042/270" → set_code = "NEO".

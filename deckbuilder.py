@@ -226,7 +226,7 @@ def build_60_deck(pool: list[dict], fmt: str) -> dict:
         if total >= 36:
             break
         name  = (card.get("name_en") or "").lower()
-        avail = min(1, 4 - name_used[name])   # 1 physical card per row; cap at 4x total
+        avail = 1 if name_used[name] < 4 else 0
         if avail <= 0:
             continue
         take = min(avail, 36 - total)

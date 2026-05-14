@@ -16,7 +16,7 @@ import difflib
 import io
 import logging
 import sys
-from typing import Optional
+from typing import NamedTuple, Optional
 
 import discord
 from discord import app_commands
@@ -60,7 +60,11 @@ DEBUG_SCAN_PREVIEW = os.getenv("DEBUG_SCAN_PREVIEW", "0") == "1"  # send process
 _index_task: Optional[asyncio.Task] = None
 
 CONDITIONS = ["NM", "LP", "MP", "HP", "DMG"]
-LANG_EMOJI = {"en": "🇬🇧", "de": "🇩🇪"}
+LANG_EMOJI = {
+    "en": "🇬🇧", "de": "🇩🇪", "fr": "🇫🇷", "it": "🇮🇹",
+    "es": "🇪🇸", "pt": "🇵🇹", "ja": "🇯🇵", "ko": "🇰🇷",
+    "ru": "🇷🇺", "zhs": "🇨🇳", "zht": "🇹🇼",
+}
 COLOR_NAMES = {
     "W": "White", "U": "Blue", "B": "Black", "R": "Red", "G": "Green"
 }
@@ -72,6 +76,137 @@ RARITY_COLOR = {
     "special": 0x9B59B6,
     "bonus": 0x3498DB,
 }
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Scan helpers
+# ──────────────────────────────────────────────────────────────────────────────
+
+async def _no_hash() -> list:
+    return []
+
+
+def _oracle_match(a: dict, b: dict) -> bool:
+    oid = a.get("oracle_id")
+    return bool(oid) and oid == b.get("oracle_id")
+
+
+def _name_match(a: dict, b: dict) -> bool:
+    na = (a.get("name_en") or "").lower()
+    nb = (b.get("name_en") or "").lower()
+    return bool(na) and na == nb
+
+
+class _ScanMatch(NamedTuple):
+    card: Optional[dict]
+    detected_lang: str
+    method_parts: list
+    hash_candidates: list
+    extracted_name: Optional[str]
+    collector_info: dict
+
+
+async def _resolve_scan(image_bytes: bytes) -> _ScanMatch:
+    """Run hash + OCR + footer concurrently and return the best card match."""
+    hash_candidates, extracted_name, collector_info = await asyncio.gather(
+        card_index.find_top_candidates(image_bytes, bot.hash_cache) if bot.hash_cache else _no_hash(),
+        asyncio.to_thread(scanner.extract_name, image_bytes),
+        asyncio.to_thread(scanner.extract_collector_info, image_bytes),
+    )
+    collector_info = collector_info or {}
+
+    # Collector match: set code + number → exact Scryfall lookup
+    collector_card: Optional[dict] = None
+    if collector_info.get("set_code") and collector_info.get("collector_number"):
+        _clang = collector_info.get("language", "en")
+        collector_card = await bot.scryfall.get_by_collector(
+            collector_info["set_code"], collector_info["collector_number"], _clang
+        )
+        if not collector_card and _clang != "en":
+            collector_card = await bot.scryfall.get_by_collector(
+                collector_info["set_code"], collector_info["collector_number"], "en"
+            )
+
+    # OCR name match — set code hint narrows Scryfall search
+    ocr_card: Optional[dict] = None
+    ocr_lang = "unknown"
+    if extracted_name and not collector_card:
+        set_hint = collector_info.get("set_code")
+        ocr_card, ocr_lang = await bot.scryfall.resolve_card(extracted_name, set_code=set_hint)
+        if not ocr_card and set_hint:
+            ocr_card, ocr_lang = await bot.scryfall.resolve_card(extracted_name)
+
+    footer_lang = collector_info.get("language")
+
+    card: Optional[dict] = None
+    detected_lang = "en"
+    method_parts: list[str] = []
+
+    if collector_card:
+        card = collector_card
+        detected_lang = footer_lang or "en"
+        set_info = f'{collector_info["set_code"]} #{collector_info["collector_number"]}'
+        method_parts.append(f"collector [{set_info}]")
+        conf = next(
+            (c for c in hash_candidates if _oracle_match(collector_card, c) or _name_match(collector_card, c)),
+            None,
+        )
+        if conf:
+            method_parts.append(f"visual confirmed (d={conf['hash_distance']})")
+        if extracted_name:
+            en_name = collector_card.get("name_en", "")
+            de_name = collector_card.get("name_de") or collector_card.get("printed_name", "")
+            ratio = max(
+                difflib.SequenceMatcher(None, extracted_name.lower(), en_name.lower()).ratio(),
+                difflib.SequenceMatcher(None, extracted_name.lower(), de_name.lower()).ratio() if de_name else 0,
+            )
+            if ratio >= 0.55:
+                method_parts.append(f'name confirmed: "{extracted_name}" ({ratio:.0%})')
+            else:
+                logger.info("Collector/name mismatch: OCR='%s' vs '%s' (ratio=%.2f)",
+                            extracted_name, en_name, ratio)
+                method_parts.append(f'OCR: "{extracted_name}" (differs {ratio:.0%})')
+
+    elif ocr_card:
+        card = ocr_card
+        detected_lang = footer_lang or (ocr_lang if ocr_lang != "unknown" else "en")
+        method_parts.append(f'OCR [{ocr_lang}]: "{extracted_name}"')
+        if footer_lang:
+            method_parts.append(f"lang: {footer_lang} (footer)")
+        conf = next(
+            (c for c in hash_candidates if _oracle_match(ocr_card, c) or _name_match(ocr_card, c)),
+            None,
+        )
+        if conf:
+            method_parts.append(f"visual confirmed (d={conf['hash_distance']})")
+        elif hash_candidates:
+            top = hash_candidates[0]
+            if top["hash_distance"] <= card_index.MATCH_THRESHOLD:
+                logger.info("OCR/hash mismatch: OCR=%s, hash=%s → keeping OCR result",
+                            ocr_card.get("name_en"), top.get("name_en"))
+                method_parts.append(f"visual: {top.get('name_en', '?')} (d={top['hash_distance']}, mismatch)")
+
+    elif hash_candidates:
+        top = hash_candidates[0]
+        if top["hash_distance"] <= card_index.MATCH_THRESHOLD:
+            hash_card = await bot.scryfall.get_by_id(top["scryfall_id"])
+            if hash_card:
+                card = hash_card
+                detected_lang = footer_lang or top.get("lang", "en")
+                method_parts.append(f"visual (d={top['hash_distance']})")
+                if footer_lang:
+                    method_parts.append(f"lang: {footer_lang} (footer)")
+                if extracted_name:
+                    method_parts.append(f'OCR: "{extracted_name}" (no Scryfall match)')
+
+    return _ScanMatch(
+        card=card,
+        detected_lang=detected_lang,
+        method_parts=method_parts,
+        hash_candidates=hash_candidates,
+        extracted_name=extracted_name,
+        collector_info=collector_info,
+    )
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -808,123 +943,24 @@ async def cmd_scan(
     await interaction.response.defer(thinking=True)
 
     image_bytes = await image.read()
+    m = await _resolve_scan(image_bytes)
 
-    # Hash candidates, name OCR, and footer OCR run concurrently
-    async def _no_hash() -> list:
-        return []
-
-    hash_candidates, extracted_name, collector_info = await asyncio.gather(
-        card_index.find_top_candidates(image_bytes, bot.hash_cache) if bot.hash_cache else _no_hash(),
-        asyncio.to_thread(scanner.extract_name, image_bytes),
-        asyncio.to_thread(scanner.extract_collector_info, image_bytes),
-    )
-    collector_info = collector_info or {}
-
-    # ── Collector match: set code + number → exact Scryfall lookup ───────────
-    # Most precise method: bypasses all fuzzy matching.
-    collector_card: Optional[dict] = None
-    if collector_info.get("set_code") and collector_info.get("collector_number"):
-        _clang = collector_info.get("language", "en")
-        collector_card = await bot.scryfall.get_by_collector(
-            collector_info["set_code"], collector_info["collector_number"], _clang
-        )
-        if not collector_card and _clang != "en":
-            collector_card = await bot.scryfall.get_by_collector(
-                collector_info["set_code"], collector_info["collector_number"], "en"
-            )
-
-    # ── OCR name match — set code hint narrows Scryfall search ──────────────
-    ocr_card: Optional[dict] = None
-    ocr_lang = "unknown"
-    if extracted_name and not collector_card:
-        set_hint = collector_info.get("set_code")
-        ocr_card, ocr_lang = await bot.scryfall.resolve_card(extracted_name, set_code=set_hint)
-        if not ocr_card and set_hint:
-            ocr_card, ocr_lang = await bot.scryfall.resolve_card(extracted_name)
-
-    # Footer language is the most reliable indicator — the card explicitly prints
-    # "EN", "DE", etc. in the copyright footer next to the collector number.
-    footer_lang = collector_info.get("language")
-
-    card: Optional[dict] = None
-    detected_lang_final = "en"
-    match_note = ""
-
-    if collector_card:
-        card = collector_card
-        detected_lang_final = footer_lang or "en"
-        set_info = f'{collector_info["set_code"]} #{collector_info["collector_number"]}'
-        match_note = f"collector [{set_info}]"
-        conf = next(
-            (c for c in hash_candidates
-             if (bool(collector_card.get("oracle_id")) and collector_card.get("oracle_id") == c.get("oracle_id"))
-             or collector_card.get("name_en", "").lower() == c.get("name_en", "").lower()),
-            None,
-        )
-        if conf:
-            match_note += f'  •  visual confirmed (d={conf["hash_distance"]})'
-        if extracted_name:
-            en_name = collector_card.get("name_en", "")
-            de_name = collector_card.get("name_de") or collector_card.get("printed_name", "")
-            ratio = max(
-                difflib.SequenceMatcher(None, extracted_name.lower(), en_name.lower()).ratio(),
-                difflib.SequenceMatcher(None, extracted_name.lower(), de_name.lower()).ratio() if de_name else 0,
-            )
-            if ratio >= 0.55:
-                match_note += f'  •  name confirmed: "{extracted_name}" ({ratio:.0%})'
-            else:
-                match_note += f'  •  OCR: "{extracted_name}" (differs {ratio:.0%})'
-
-    elif ocr_card:
-        card = ocr_card
-        detected_lang_final = footer_lang or (ocr_lang if ocr_lang != "unknown" else "en")
-        match_note = f'OCR [{ocr_lang}]: "{extracted_name}"'
-        if footer_lang:
-            match_note += f'  •  lang: {footer_lang} (footer)'
-        conf = next(
-            (c for c in hash_candidates
-             if (bool(ocr_card.get("oracle_id")) and ocr_card.get("oracle_id") == c.get("oracle_id"))
-             or ocr_card.get("name_en", "").lower() == c.get("name_en", "").lower()),
-            None,
-        )
-        if conf:
-            match_note += f'  •  visual confirmed (d={conf["hash_distance"]})'
-        elif hash_candidates:
-            top = hash_candidates[0]
-            if top["hash_distance"] <= card_index.MATCH_THRESHOLD:
-                match_note += f'  •  visual: {top.get("name_en", "?")} (d={top["hash_distance"]}, mismatch)'
-                logger.info("OCR/hash mismatch: OCR=%s, hash=%s → keeping OCR result",
-                            ocr_card.get("name_en"), top.get("name_en"))
-
-    elif hash_candidates:
-        top = hash_candidates[0]
-        if top["hash_distance"] <= card_index.MATCH_THRESHOLD:
-            hash_card = await bot.scryfall.get_by_id(top["scryfall_id"])
-            if hash_card:
-                card = hash_card
-                detected_lang_final = footer_lang or top.get("lang", "en")
-                match_note = f"visual (d={top['hash_distance']})"
-                if footer_lang:
-                    match_note += f'  •  lang: {footer_lang} (footer)'
-                if extracted_name:
-                    match_note += f'  •  OCR: "{extracted_name}" (no Scryfall match)'
-
-    if not card:
+    if not m.card:
         if not scanner.ocr_available() and not bot.hash_cache:
             await interaction.followup.send(
                 "OCR is not available and no hash index loaded. Use `/add` instead.", ephemeral=True
             )
-        elif collector_info.get("set_code") and collector_info.get("collector_number"):
+        elif m.collector_info.get("set_code") and m.collector_info.get("collector_number"):
             await interaction.followup.send(
-                f'Collector info read ({collector_info["set_code"]} '
-                f'#{collector_info["collector_number"]}) but no Scryfall match. '
+                f'Collector info read ({m.collector_info["set_code"]} '
+                f'#{m.collector_info["collector_number"]}) but no Scryfall match. '
                 f'Try `/add <name>`.',
                 ephemeral=True,
             )
-        elif extracted_name:
+        elif m.extracted_name:
             await interaction.followup.send(
-                f'Could not match **"{extracted_name}"** on Scryfall. '
-                f'Try `/add {extracted_name}` with the exact name.',
+                f'Could not match **"{m.extracted_name}"** on Scryfall. '
+                f'Try `/add {m.extracted_name}` with the exact name.',
                 ephemeral=True,
             )
         else:
@@ -934,7 +970,8 @@ async def cmd_scan(
             )
         return
 
-    card["language"] = language or detected_lang_final or "en"
+    card = m.card
+    card["language"] = language or m.detected_lang or "en"
     card["condition"] = condition
     card["foil"] = foil
     card["quantity"] = 1
@@ -948,6 +985,7 @@ async def cmd_scan(
     lang_flag = LANG_EMOJI.get(card["language"], card["language"].upper())
     embed = card_embed(card, title_prefix="Scanned ✅  ")
     id_range = f"IDs **{ids[0]}–{ids[-1]}**" if len(ids) > 1 else f"ID **{ids[0]}**"
+    match_note = "  •  ".join(m.method_parts)
     embed.description = (
         f"Saved as {id_range} ({len(ids)} cop{'y' if len(ids)==1 else 'ies'}) | Language {lang_flag}"
         + (f"\n*{match_note}*" if match_note else "")
@@ -1664,168 +1702,65 @@ async def _do_scan_and_confirm(
                 ephemeral=True,
             )
 
-    # ── Steps 1–2: hash candidates + name OCR + footer OCR — all concurrent ─
-    async def _no_hash() -> list:
-        logger.warning("Hash match skipped: cache empty — run /index update first")
-        return []
+    m = await _resolve_scan(image_bytes)
 
-    hash_candidates, extracted, collector_info = await asyncio.gather(
-        card_index.find_top_candidates(image_bytes, bot.hash_cache) if bot.hash_cache
-        else _no_hash(),
-        asyncio.to_thread(scanner.extract_name, image_bytes),
-        asyncio.to_thread(scanner.extract_collector_info, image_bytes),
-    )
-    collector_info = collector_info or {}
     if bot.hash_cache:
         logger.info("Hash candidates: %d (cache: %d entries)",
-                    len(hash_candidates), len(bot.hash_cache))
-    if extracted:
-        logger.info("OCR name: '%s'", extracted)
+                    len(m.hash_candidates), len(bot.hash_cache))
+    else:
+        logger.warning("Hash match skipped: cache empty — run /index update first")
+    if m.extracted_name:
+        logger.info("OCR name: '%s'", m.extracted_name)
     else:
         logger.info("OCR: no name extracted")
-    if collector_info:
-        logger.info("OCR footer: %s", collector_info)
+    if m.collector_info:
+        logger.info("OCR footer: %s", m.collector_info)
 
-    # Debug text: show all raw extraction results
     if DEBUG_SCAN_PREVIEW:
-        ci = collector_info
+        ci = m.collector_info
         dbg = []
-        if extracted:
-            dbg.append(f"**OCR Name:** `{extracted}`")
+        if m.extracted_name:
+            dbg.append(f"**OCR Name:** `{m.extracted_name}`")
         dbg.append(
             f"**Footer:** set=`{ci.get('set_code') or '—'}` "
             f"#=`{ci.get('collector_number') or '—'}` "
             f"lang=`{ci.get('language') or '—'}`"
         )
-        if hash_candidates:
+        if m.hash_candidates:
             dbg.append("**Hash top-3:** " + "  •  ".join(
                 f"`{c.get('name_en', '?')}` d={c['hash_distance']}"
-                for c in hash_candidates[:3]
+                for c in m.hash_candidates[:3]
             ))
         await interaction.followup.send(
             "🔍 **Debug — OCR results:**\n" + "\n".join(dbg),
             ephemeral=True,
         )
 
-    # ── Collector match: set code + number → exact Scryfall lookup ───────────
-    # Most precise method: bypasses all fuzzy matching.
-    collector_card: Optional[dict] = None
-    if collector_info.get("set_code") and collector_info.get("collector_number"):
-        _clang = collector_info.get("language", "en")
-        collector_card = await bot.scryfall.get_by_collector(
-            collector_info["set_code"], collector_info["collector_number"], _clang
-        )
-        if not collector_card and _clang != "en":
-            collector_card = await bot.scryfall.get_by_collector(
-                collector_info["set_code"], collector_info["collector_number"], "en"
-            )
-
-    # ── OCR name match — set code (if read) narrows the Scryfall search ───────
-    ocr_card: Optional[dict] = None
-    ocr_lang = "unknown"
-    if extracted and not collector_card:
-        set_hint = collector_info.get("set_code")
-        ocr_card, ocr_lang = await bot.scryfall.resolve_card(extracted, set_code=set_hint)
-        # If set-scoped search failed, retry globally
-        if not ocr_card and set_hint:
-            ocr_card, ocr_lang = await bot.scryfall.resolve_card(extracted)
-
-    # Footer language is the most reliable indicator — the card explicitly prints
-    # "EN", "DE", etc. in the copyright footer next to the collector number.
-    footer_lang = collector_info.get("language")
-
-    # ── Step 3: combine — collector > OCR > hash ──────────────────────────────
-    card: Optional[dict] = None
-    detected_lang = "en"
-    method_parts: list[str] = []
-
-    if collector_card:
-        card = collector_card
-        detected_lang = footer_lang or "en"
-        set_info = f'{collector_info["set_code"]} #{collector_info["collector_number"]}'
-        method_parts.append(f"collector [{set_info}]")
-        conf = next(
-            (c for c in hash_candidates
-             if (bool(collector_card.get("oracle_id")) and collector_card.get("oracle_id") == c.get("oracle_id"))
-             or collector_card.get("name_en", "").lower() == c.get("name_en", "").lower()),
-            None,
-        )
-        if conf:
-            method_parts.append(f"visual confirmed (d={conf['hash_distance']})")
-        # Cross-validate with OCR name (fuzzy match — no extra Scryfall call)
-        if extracted:
-            en_name = collector_card.get("name_en", "")
-            de_name = collector_card.get("name_de") or collector_card.get("printed_name", "")
-            ratio = max(
-                difflib.SequenceMatcher(None, extracted.lower(), en_name.lower()).ratio(),
-                difflib.SequenceMatcher(None, extracted.lower(), de_name.lower()).ratio() if de_name else 0,
-            )
-            if ratio >= 0.55:
-                method_parts.append(f'name confirmed: "{extracted}" ({ratio:.0%})')
-            else:
-                logger.info("Collector/name mismatch: OCR='%s' vs '%s' (ratio=%.2f)",
-                            extracted, en_name, ratio)
-                method_parts.append(f'OCR: "{extracted}" (differs {ratio:.0%})')
-
-    elif ocr_card:
-        card = ocr_card
-        detected_lang = footer_lang or (ocr_lang if ocr_lang != "unknown" else "en")
-        method_parts.append(f'OCR [{ocr_lang}]: "{extracted}"')
-        if footer_lang:
-            method_parts.append(f"lang: {footer_lang} (footer)")
-        conf = next(
-            (c for c in hash_candidates
-             if (bool(ocr_card.get("oracle_id")) and ocr_card.get("oracle_id") == c.get("oracle_id"))
-             or ocr_card.get("name_en", "").lower() == c.get("name_en", "").lower()),
-            None,
-        )
-        if conf:
-            method_parts.append(f"visual confirmed (d={conf['hash_distance']})")
-        elif hash_candidates:
-            top = hash_candidates[0]
-            if top["hash_distance"] <= card_index.MATCH_THRESHOLD:
-                logger.info(
-                    "OCR/hash mismatch: OCR=%s, hash=%s → keeping OCR result",
-                    ocr_card.get("name_en"), top.get("name_en"),
-                )
-                method_parts.append(f"visual: {top.get('name_en', '?')} (d={top['hash_distance']}, mismatch)")
-
-    elif hash_candidates:
-        top = hash_candidates[0]
-        if top["hash_distance"] <= card_index.MATCH_THRESHOLD:
-            hash_card = await bot.scryfall.get_by_id(top["scryfall_id"])
-            if hash_card:
-                card = hash_card
-                detected_lang = footer_lang or top.get("lang", "en")
-                method_parts.append(f"visual (d={top['hash_distance']})")
-                if footer_lang:
-                    method_parts.append(f"lang: {footer_lang} (footer)")
-                if extracted:
-                    method_parts.append(f'OCR: "{extracted}" (no Scryfall match)')
-
-    if not card:
+    if not m.card:
         view = _ManualNameView(image_bytes, source_message, container_id, container_name)
+        ci = m.collector_info
         if not scanner.ocr_available() and not bot.hash_cache:
             msg = "OCR not available and no hash index loaded. Use `/add <name>` instead."
-        elif collector_info.get("set_code") and collector_info.get("collector_number"):
+        elif ci.get("set_code") and ci.get("collector_number"):
             msg = (
-                f'Collector info read ({collector_info["set_code"]} '
-                f'#{collector_info["collector_number"]}) but no Scryfall match. '
+                f'Collector info read ({ci["set_code"]} '
+                f'#{ci["collector_number"]}) but no Scryfall match. '
                 f'Enter the name manually.'
             )
-        elif extracted:
-            msg = f'Could not match **"{extracted}"** on Scryfall. Enter the name manually.'
+        elif m.extracted_name:
+            msg = f'Could not match **"{m.extracted_name}"** on Scryfall. Enter the name manually.'
         else:
             msg = "Could not read the card. Enter the name manually."
         await interaction.followup.send(msg, view=view, ephemeral=True)
         return
 
-    card["language"] = detected_lang or "en"
+    card = m.card
+    card["language"] = m.detected_lang or "en"
     card["container_id"] = container_id
     card["container_name"] = container_name
     lang_flag = LANG_EMOJI.get(card["language"], card["language"].upper())
     embed = card_embed(card, title_prefix="Found — confirm?  ")
-    match_method = "  •  ".join(method_parts)
+    match_method = "  •  ".join(m.method_parts)
     embed.description = (
         f"Language: {lang_flag}  |  Container: 📦 **{container_name}**"
         + (f"\n*{match_method}*" if match_method else "")

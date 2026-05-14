@@ -87,6 +87,7 @@ class ScryfallClient:
     def __init__(self):
         self._session: Optional[aiohttp.ClientSession] = None
         self._last_request = 0.0
+        self._semaphore = asyncio.Semaphore(5)
 
     async def _session_get(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -94,20 +95,21 @@ class ScryfallClient:
         return self._session
 
     async def _get(self, url: str, **params) -> Optional[dict]:
-        await asyncio.sleep(max(0, 0.1 - (asyncio.get_event_loop().time() - self._last_request)))
-        session = await self._session_get()
-        try:
-            async with session.get(url, params=params, timeout=_REQUEST_TIMEOUT) as resp:
-                self._last_request = asyncio.get_event_loop().time()
-                if resp.status == 200:
-                    return await resp.json()
-                if resp.status == 404:
+        async with self._semaphore:
+            await asyncio.sleep(max(0, 0.1 - (asyncio.get_event_loop().time() - self._last_request)))
+            session = await self._session_get()
+            try:
+                async with session.get(url, params=params, timeout=_REQUEST_TIMEOUT) as resp:
+                    self._last_request = asyncio.get_event_loop().time()
+                    if resp.status == 200:
+                        return await resp.json()
+                    if resp.status == 404:
+                        return None
+                    logger.warning("Scryfall %s → %s", url, resp.status)
                     return None
-                logger.warning("Scryfall %s → %s", url, resp.status)
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                logger.error("Scryfall request failed: %s", e)
                 return None
-        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-            logger.error("Scryfall request failed: %s", e)
-            return None
 
     async def close(self):
         if self._session and not self._session.closed:
@@ -179,6 +181,8 @@ class ScryfallClient:
                     card["price_eur"] = en_card.get("price_eur")
                 if not card.get("price_usd"):
                     card["price_usd"] = en_card.get("price_usd")
+            else:
+                logger.warning("resolve_card: English lookup failed for '%s' — oracle_text may be in German", card["name_en"])
             card["language"] = "de"
             return card, "de"
 
