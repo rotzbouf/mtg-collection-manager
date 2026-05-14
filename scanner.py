@@ -363,13 +363,16 @@ def _parse_footer(text: str) -> dict:
 
     # ── Set code: first valid token on the line that contains the language code
     # e.g. "NEO · DE" → everything before "DE" → first clean token = "NEO"
+    def _valid_set_token(t: str) -> bool:
+        return 2 <= len(t) <= 5 and t not in _BLOCKLIST and any(c.isalpha() for c in t)
+
     set_code = None
     for line in lines:
         lm = _FOOTER_LANG_RE.search(line)
         if lm:
             for token in line[:lm.start()].split():
                 token = re.sub(r"[^A-Z0-9]", "", token)
-                if 2 <= len(token) <= 5 and token not in _BLOCKLIST:
+                if _valid_set_token(token):
                     set_code = token
                     break
             break
@@ -380,7 +383,7 @@ def _parse_footer(text: str) -> dict:
         before_lang = upper[:lang_m.start()].rstrip(" ·-—·")
         for token in reversed(before_lang.split()):
             token = re.sub(r"[^A-Z0-9]", "", token)
-            if 2 <= len(token) <= 5 and token not in _BLOCKLIST:
+            if _valid_set_token(token):
                 set_code = token
                 break
 
@@ -411,7 +414,7 @@ def extract_collector_info(image_bytes: bytes) -> dict:
         if _easyocr_reader:
             results = _easyocr_reader.readtext(np.array(zone), detail=1, paragraph=False)
             logger.info("Footer EasyOCR raw: %s", [(r[1], round(r[2], 2)) for r in results])
-            text = " ".join(r[1] for r in results if r[2] >= 0.15)
+            text = "\n".join(r[1] for r in results if r[2] >= 0.15)
             info = _parse_footer(text)
             if info.get("collector_number") or info.get("language"):
                 logger.info("Footer parsed (EasyOCR): %s", info)
