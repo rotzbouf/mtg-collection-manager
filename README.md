@@ -21,6 +21,7 @@ search and export your collection, and generate deck proposals — all from Disc
 | **Deckbuilder** | Auto-generates Commander (100-card) or 60-card (Timeless/Standard) proposals |
 | **Showcase** | `/showcase` displays the 5 most valuable cards with image, details, and a price-history chart |
 | **Price history** | Prices are snapshotted daily; history chart auto-appears once 2+ data points exist |
+| **Backup & restore** | `/backup create` downloads a `.db` snapshot; `/backup restore` replaces the database from a file |
 
 ---
 
@@ -378,6 +379,28 @@ Downloads your entire collection as a file attachment.
 | `JSON` | `collection.json` | Full record per card including all Scryfall metadata |
 
 **Moxfield import:** go to your Moxfield collection → *Import* → upload `collection_moxfield.csv`.
+
+---
+
+### Backup & Restore
+
+Backup and restore commands are admin-only.
+
+#### `/backup create`
+
+Creates a consistent snapshot of the current database and sends it as an ephemeral file attachment (e.g. `mtg_collection_20260514_143022.db`).
+The snapshot is taken online — no downtime or connection interruption required.
+
+#### `/backup restore`
+
+Restores the database from a previously created backup file.
+
+1. Attach the `.db` file produced by `/backup create`
+2. The bot validates the file and shows a confirmation embed with the card and container counts found in the backup
+3. Confirm to replace the current database — all changes made after the backup was created will be lost
+4. The bot reinitialises the database and applies any pending migrations automatically
+
+> **Tip:** Run `/backup create` before a bulk import or any other operation you may want to undo.
 
 ---
 
