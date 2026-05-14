@@ -11,7 +11,7 @@ search and export your collection, and generate deck proposals — all from Disc
 | Category | What it does |
 |---|---|
 | **Add by name** | Resolves English or German card names via Scryfall; auto-detects language |
-| **Add by photo** | Runs visual hash matching and OCR simultaneously; hash = card identity, OCR = language |
+| **Add by photo** | OCR reads card name, set code, collector number, and language from the photo; matched via Scryfall |
 | **Auto-scan channel** | Drop any image in the configured channel — the bot processes it instantly |
 | **Containers** | Organise cards into named binders, boxes, decks, trade piles, etc. |
 | **Full-text search** | SQLite FTS5 across name, type, oracle text, set, flavour text, notes |
@@ -19,8 +19,6 @@ search and export your collection, and generate deck proposals — all from Disc
 | **Statistics** | Totals by language, foil/non-foil, rarity breakdown, top-5 by value |
 | **Export** | Moxfield CSV (default), Excel CSV, or JSON |
 | **Deckbuilder** | Auto-generates Commander (100-card) or 60-card (Timeless/Standard) proposals |
-| **Hash index** | Perceptual hash index built concurrently with downloads; GPU or CPU |
-| **Daily set check** | Notifies you when Scryfall has new sets not yet in the hash index |
 | **Showcase** | `/showcase` displays the 5 most valuable cards with image, details, and a price-history chart |
 | **Price history** | Prices are snapshotted daily; history chart auto-appears once 2+ data points exist |
 
@@ -50,25 +48,12 @@ python-dotenv>=1.0.0
 Pillow>=10.0.0
 pytesseract>=0.3.10
 easyocr>=1.7.0
-imagehash>=4.3.1
 numpy>=1.24.0
 opencv-python-headless>=4.8.0
 matplotlib>=3.7.0
 ```
 
-### GPU support (optional)
-
-When an NVIDIA GPU is present the install script automatically installs PyTorch with CUDA support.
-
-| Component | GPU effect |
-|---|---|
-| **EasyOCR** | OCR inference 3–10× faster |
-| **pHash index build** | Card images hashed in GPU batches of 64 (DCT on GPU), pipelined with downloads |
-| **pHash query** | Query hashes computed on GPU |
-
-By default the bot pins itself to **GPU 0**. Override via `CUDA_VISIBLE_DEVICES` in `.env` (see Configuration).
-
-Without a GPU everything falls back to CPU automatically — no configuration needed.
+No GPU required. EasyOCR runs on CPU; the scan rate of a Discord bot makes CPU inference fast enough.
 
 ---
 
@@ -87,10 +72,9 @@ The install script:
 
 1. Checks for Python 3.10+
 2. Installs `tesseract-ocr`, the German language pack, and OpenCV system libraries (`apt`, `dnf`, or `pacman`)
-3. Detects NVIDIA GPU via `nvidia-smi` and installs PyTorch with the best available CUDA wheel; falls back to CPU PyTorch if no GPU is found
-4. Creates a virtual environment at `./venv`
-5. Installs all Python dependencies from `requirements.txt`
-6. Copies `.env.example` → `.env` if no `.env` exists yet
+3. Creates a virtual environment at `./venv`
+4. Installs all Python dependencies from `requirements.txt`
+5. Copies `.env.example` → `.env` if no `.env` exists yet
 
 > **Note:** On the very first run EasyOCR downloads its language models (~150 MB). This is cached automatically.
 
@@ -133,10 +117,6 @@ DISCORD_SCAN_CHANNEL_ID=
 # Channel where /deck commands work
 DISCORD_DECKBUILDER_CHANNEL_ID=
 
-# GPU — which CUDA device(s) PyTorch may use (default: 0 only)
-# Use "0,1" to allow both GPUs, or "1" to use only GPU 1.
-CUDA_VISIBLE_DEVICES=0
-
 # Role-based access control (role name or role ID; leave blank = everyone)
 DISCORD_GUEST_ROLE=
 DISCORD_COLLECTOR_ROLE=
@@ -151,7 +131,7 @@ DEBUG_SCAN_PREVIEW=0
 
 | Setting | Restricted commands | Available everywhere |
 |---|---|---|
-| `DISCORD_SCAN_CHANNEL_ID` | `/add`, `/scan`, `/update`, `/remove`, `/container create/rename/delete`, `/index update/rebuild`, auto-scan image drops | `/search`, `/list`, `/card`, `/stats`, `/export`, `/container list`, `/index status/check`, `/help`, `/showcase` |
+| `DISCORD_SCAN_CHANNEL_ID` | `/add`, `/scan`, `/update`, `/remove`, `/container create/rename/delete`, auto-scan image drops | `/search`, `/list`, `/card`, `/stats`, `/export`, `/container list`, `/help`, `/showcase` |
 | `DISCORD_DECKBUILDER_CHANNEL_ID` | `/deck propose` | — |
 | `DISCORD_SHOWCASE_CHANNEL_ID` | `/showcase` | — |
 
@@ -167,9 +147,9 @@ Admin  ≥  Collector  ≥  Guest
 
 | Role variable | Tier | Commands |
 |---|---|---|
-| `DISCORD_GUEST_ROLE` | Guest (read-only) | `/list`, `/card`, `/search`, `/stats`, `/export`, `/index status`, `/index check`, `/container list`, `/deck propose` |
+| `DISCORD_GUEST_ROLE` | Guest (read-only) | `/list`, `/card`, `/search`, `/stats`, `/export`, `/container list`, `/deck propose` |
 | `DISCORD_COLLECTOR_ROLE` | Collector | `/add`, `/scan`, `/update`, `/container create` + all Guest commands |
-| `DISCORD_ADMIN_ROLE` | Admin | `/remove`, `/container delete`, `/container rename`, `/index update`, `/index rebuild` + all Collector commands |
+| `DISCORD_ADMIN_ROLE` | Admin | `/remove`, `/container delete`, `/container rename` + all Collector commands |
 
 Each variable accepts a **role name** (e.g. `Guest`) or a **role ID** (e.g. `123456789`).
 
@@ -197,9 +177,7 @@ On first start the bot:
 
 - Initialises the SQLite database (`mtg_collection.db`)
 - Syncs slash commands (instantly to the configured guild, or globally within ~1 hour)
-- Pins the pHash engine and EasyOCR to GPU 0 (or CPU if no GPU is available)
 - Loads the EasyOCR model in the background (may take a minute on the very first run)
-- Starts a daily background check for new Scryfall sets
 
 ---
 
@@ -229,7 +207,7 @@ Add a card by name. Scryfall is queried automatically.
 
 #### `/scan`
 
-Add a card by attaching a photo. Uses visual hash matching and OCR simultaneously.
+Add a card by attaching a photo. OCR reads the card name and footer (set code, collector number, language) and matches via Scryfall.
 
 | Parameter | Required | Default | Description |
 |---|---|---|---|
@@ -253,13 +231,12 @@ You drop image
 Container picker  ──── select existing / create new
       │
       ▼
-Visual hash match  ──────────────────────┐
-OCR → Scryfall lookup (runs in parallel) │
-      │                                  │
-      │  hash  →  card identity          │
-      │  OCR   →  language (EN/DE)       │
-      │                                  │
-      └──────────── combine ─────────────┘
+OCR name + footer (set code, collector #, language) — run in parallel
+      │
+      ▼
+Collector match (set code + number → Scryfall)
+      │  if no match ▼
+      OCR name → Scryfall (with set code hint)
       │
       ▼
 Confirmation embed  ──── Add  /  Add as foil  /  Wrong card?  /  Skip
@@ -404,48 +381,6 @@ Downloads your entire collection as a file attachment.
 
 ---
 
-### Visual hash index
-
-The hash index stores perceptual hashes (pHash) of card images downloaded from Scryfall.
-When you drop a photo, the bot compares it against the entire index in milliseconds.
-
-Building the index uses a producer-consumer pipeline: image downloads and GPU hashing run
-concurrently, so the GPU starts working as soon as the first batch of images arrives.
-
-#### `/index status`
-
-Shows indexed card count, in-memory cache size, and when the index was last built.
-
-#### `/index check`
-
-Lists all Scryfall sets not yet present in the hash index.
-
-#### `/index update`
-
-Downloads card images for any unindexed sets and adds them to the index.
-A live progress bar shows download progress (MB) and hashing status.
-
-#### `/index rebuild`
-
-Wipes the entire index and re-downloads all card images from scratch.
-Use this after changing GPU availability or if the index appears corrupted.
-
-#### Pause, Resume, and Cancel
-
-Both `/index update` and `/index rebuild` attach control buttons directly to the progress message — no extra commands needed:
-
-| Button | Effect |
-|---|---|
-| **⏸ Pause** | Suspends new downloads and GPU hashing; in-flight downloads finish gracefully |
-| **▶ Resume** | Continues from where it left off |
-| **⏹ Cancel** | Stops the build immediately; already-committed batches are kept in the index |
-
-Only one build can run at a time. Starting a second one while a build is active returns an ephemeral error pointing to the existing progress message.
-
-> **Note:** The first `/index update` or rebuild can take a long time depending on how many sets are missing. The bot remains fully usable during the process.
-
----
-
 ### Deckbuilder
 
 Deckbuilder commands are restricted to `DISCORD_DECKBUILDER_CHANNEL_ID` (if configured).
@@ -509,8 +444,7 @@ Within each type group: ascending CMC, then alphabetical by name.
 ```
 bot.py          — Discord bot, all slash commands, UI views, auto-scan handler
 database.py     — Async SQLite via aiosqlite; schema, migrations, all queries
-scanner.py      — Card isolation (OpenCV), OCR (EasyOCR on GPU → pytesseract fallback)
-card_index.py   — Perceptual hash index: GPU-batched build, vectorised matching
+scanner.py      — Card isolation (OpenCV), OCR (EasyOCR CPU → pytesseract fallback)
 scryfall.py     — Scryfall API client: card lookup, EN/DE name resolution
 sorting.py      — Chaos sort key computation
 deckbuilder.py  — Synergy scoring, deck construction, deck list formatting
@@ -524,8 +458,6 @@ exporter.py     — Moxfield CSV, full CSV, and JSON serialisation
 | `collection` | One row per physical card |
 | `containers` | Named storage locations |
 | `collection_fts` | FTS5 virtual table, auto-synced via triggers |
-| `card_hashes` | Perceptual hash index (scryfall_id → pHash) |
-| `index_meta` | Key/value store for index metadata |
 | `price_history` | Daily EUR price snapshots per scryfall_id (for `/showcase` charts) |
 
 The database is created automatically on first run at `./mtg_collection.db`.
@@ -538,7 +470,6 @@ Schema migrations run automatically on startup.
 ```
 mtg_collection_manager/
 ├── bot.py
-├── card_index.py
 ├── database.py
 ├── deckbuilder.py
 ├── exporter.py
