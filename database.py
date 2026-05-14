@@ -129,25 +129,6 @@ CREATE TRIGGER IF NOT EXISTS collection_au AFTER UPDATE ON collection BEGIN
         new.keywords, new.notes);
 END;
 
--- Perceptual hash index for visual card matching
-CREATE TABLE IF NOT EXISTS card_hashes (
-    scryfall_id      TEXT PRIMARY KEY,
-    name_en          TEXT NOT NULL,
-    set_code         TEXT,
-    collector_number TEXT,
-    lang             TEXT DEFAULT 'en',
-    phash            TEXT NOT NULL,
-    indexed_at       TEXT DEFAULT (datetime('now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_card_hashes_set ON card_hashes(set_code);
-
--- Key/value store for index metadata
-CREATE TABLE IF NOT EXISTS index_meta (
-    key   TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-);
-
 -- Daily price snapshots for price-history charts
 CREATE TABLE IF NOT EXISTS price_history (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -194,16 +175,6 @@ class Database:
             )
             await self._db.commit()
             logger.info("Migrated: added container_id to collection")
-
-        # Add normalized phash column for improved lighting-invariant matching
-        async with self._db.execute("PRAGMA table_info(card_hashes)") as cur:
-            hash_cols = {row[1] for row in await cur.fetchall()}
-        if "phash_norm" not in hash_cols:
-            await self._db.execute(
-                "ALTER TABLE card_hashes ADD COLUMN phash_norm TEXT"
-            )
-            await self._db.commit()
-            logger.info("Migrated: added phash_norm to card_hashes (run /index rebuild to populate)")
 
         # Each row must represent exactly one physical card (quantity → individual rows)
         async with self._db.execute(
@@ -619,77 +590,6 @@ class Database:
         await self._db.commit()
         return updated
 
-    # ------------------------------------------------------------------ #
-    # Hash index operations                                                 #
-    # ------------------------------------------------------------------ #
-
-    async def upsert_card_hash(
-        self,
-        scryfall_id: str,
-        name_en: str,
-        set_code: str,
-        collector_number: str,
-        lang: str,
-        phash: str,
-        phash_norm: Optional[str] = None,
-    ):
-        await self._db.execute(
-            """
-            INSERT INTO card_hashes
-                (scryfall_id, name_en, set_code, collector_number, lang, phash, phash_norm)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(scryfall_id) DO UPDATE SET
-                phash=excluded.phash,
-                phash_norm=excluded.phash_norm,
-                indexed_at=datetime('now')
-            """,
-            (scryfall_id, name_en, set_code, collector_number, lang, phash, phash_norm),
-        )
-
-    async def get_all_hashes(self) -> list[dict]:
-        async with self._db.execute(
-            """
-            SELECT scryfall_id, name_en, set_code, collector_number,
-                   lang, phash, phash_norm
-            FROM card_hashes
-            """
-        ) as cur:
-            rows = await cur.fetchall()
-        return [dict(r) for r in rows]
-
-    async def get_indexed_scryfall_ids(self) -> set:
-        async with self._db.execute("SELECT scryfall_id FROM card_hashes") as cur:
-            rows = await cur.fetchall()
-        return {r[0] for r in rows}
-
-    async def get_indexed_set_codes(self) -> set:
-        async with self._db.execute("SELECT DISTINCT set_code FROM card_hashes") as cur:
-            rows = await cur.fetchall()
-        return {r[0] for r in rows if r[0]}
-
-    async def get_hash_count(self) -> int:
-        async with self._db.execute("SELECT COUNT(*) FROM card_hashes") as cur:
-            row = await cur.fetchone()
-        return row[0] if row else 0
-
     async def commit(self):
         await self._db.commit()
 
-    async def clear_card_hashes(self):
-        await self._db.execute("DELETE FROM card_hashes")
-        await self._db.execute("DELETE FROM index_meta WHERE key = 'last_built_at'")
-        await self._db.commit()
-
-    async def get_index_meta(self, key: str) -> Optional[str]:
-        async with self._db.execute(
-            "SELECT value FROM index_meta WHERE key = ?", (key,)
-        ) as cur:
-            row = await cur.fetchone()
-        return row[0] if row else None
-
-    async def set_index_meta(self, key: str, value: str):
-        await self._db.execute(
-            "INSERT INTO index_meta(key, value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            (key, value),
-        )
-        await self._db.commit()

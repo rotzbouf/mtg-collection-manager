@@ -22,7 +22,6 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
-import card_index
 import deckbuilder
 import exporter as exp
 import scanner
@@ -57,8 +56,6 @@ ADMIN_ROLE        = os.getenv("DISCORD_ADMIN_ROLE",     "")   # remove / contain
 DEBUG_SCAN_PREVIEW = os.getenv("DEBUG_SCAN_PREVIEW", "0") == "1"  # send processed image for debugging
 
 # Running index-build task (update or rebuild); None when idle
-_index_task: Optional[asyncio.Task] = None
-
 CONDITIONS = ["NM", "LP", "MP", "HP", "DMG"]
 LANG_EMOJI = {
     "en": "🇬🇧", "de": "🇩🇪", "fr": "🇫🇷", "it": "🇮🇹",
@@ -82,34 +79,17 @@ RARITY_COLOR = {
 # Scan helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
-async def _no_hash() -> list:
-    return []
-
-
-def _oracle_match(a: dict, b: dict) -> bool:
-    oid = a.get("oracle_id")
-    return bool(oid) and oid == b.get("oracle_id")
-
-
-def _name_match(a: dict, b: dict) -> bool:
-    na = (a.get("name_en") or "").lower()
-    nb = (b.get("name_en") or "").lower()
-    return bool(na) and na == nb
-
-
 class _ScanMatch(NamedTuple):
     card: Optional[dict]
     detected_lang: str
     method_parts: list
-    hash_candidates: list
     extracted_name: Optional[str]
     collector_info: dict
 
 
 async def _resolve_scan(image_bytes: bytes) -> _ScanMatch:
-    """Run hash + OCR + footer concurrently and return the best card match."""
-    hash_candidates, extracted_name, collector_info = await asyncio.gather(
-        card_index.find_top_candidates(image_bytes, bot.hash_cache) if bot.hash_cache else _no_hash(),
+    """Run name OCR and footer OCR concurrently and return the best card match."""
+    extracted_name, collector_info = await asyncio.gather(
         asyncio.to_thread(scanner.extract_name, image_bytes),
         asyncio.to_thread(scanner.extract_collector_info, image_bytes),
     )
@@ -147,12 +127,6 @@ async def _resolve_scan(image_bytes: bytes) -> _ScanMatch:
         detected_lang = footer_lang or "en"
         set_info = f'{collector_info["set_code"]} #{collector_info["collector_number"]}'
         method_parts.append(f"collector [{set_info}]")
-        conf = next(
-            (c for c in hash_candidates if _oracle_match(collector_card, c) or _name_match(collector_card, c)),
-            None,
-        )
-        if conf:
-            method_parts.append(f"visual confirmed (d={conf['hash_distance']})")
         if extracted_name:
             en_name = collector_card.get("name_en", "")
             de_name = collector_card.get("name_de") or collector_card.get("printed_name", "")
@@ -173,37 +147,11 @@ async def _resolve_scan(image_bytes: bytes) -> _ScanMatch:
         method_parts.append(f'OCR [{ocr_lang}]: "{extracted_name}"')
         if footer_lang:
             method_parts.append(f"lang: {footer_lang} (footer)")
-        conf = next(
-            (c for c in hash_candidates if _oracle_match(ocr_card, c) or _name_match(ocr_card, c)),
-            None,
-        )
-        if conf:
-            method_parts.append(f"visual confirmed (d={conf['hash_distance']})")
-        elif hash_candidates:
-            top = hash_candidates[0]
-            if top["hash_distance"] <= card_index.MATCH_THRESHOLD:
-                logger.info("OCR/hash mismatch: OCR=%s, hash=%s → keeping OCR result",
-                            ocr_card.get("name_en"), top.get("name_en"))
-                method_parts.append(f"visual: {top.get('name_en', '?')} (d={top['hash_distance']}, mismatch)")
-
-    elif hash_candidates:
-        top = hash_candidates[0]
-        if top["hash_distance"] <= card_index.MATCH_THRESHOLD:
-            hash_card = await bot.scryfall.get_by_id(top["scryfall_id"])
-            if hash_card:
-                card = hash_card
-                detected_lang = footer_lang or top.get("lang", "en")
-                method_parts.append(f"visual (d={top['hash_distance']})")
-                if footer_lang:
-                    method_parts.append(f"lang: {footer_lang} (footer)")
-                if extracted_name:
-                    method_parts.append(f'OCR: "{extracted_name}" (no Scryfall match)')
 
     return _ScanMatch(
         card=card,
         detected_lang=detected_lang,
         method_parts=method_parts,
-        hash_candidates=hash_candidates,
         extracted_name=extracted_name,
         collector_info=collector_info,
     )
@@ -370,8 +318,7 @@ def paginate_embeds(cards: list[dict], page: int, per_page: int = 10) -> tuple[d
 
 _READ_ONLY_COMMANDS = {
     "search", "list", "card", "stats", "export", "help",
-    "container list", "index status", "index check",
-    "showcase",
+    "container list", "showcase",
 }
 
 class MTGCommandTree(app_commands.CommandTree):
@@ -408,12 +355,9 @@ class MTGBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents, tree_cls=MTGCommandTree)
         self.db = Database()
         self.scryfall = ScryfallClient()
-        self.hash_cache: list[dict] = []
 
     async def setup_hook(self):
         await self.db.initialize()
-        self.hash_cache = await self.db.get_all_hashes()
-        logger.info("Hash index loaded: %d entries", len(self.hash_cache))
 
         # Sync commands before anything slow (OCR model load can take minutes on first run)
         if GUILD_ID:
@@ -430,7 +374,6 @@ class MTGBot(commands.Bot):
             await self.tree.sync()
             logger.info("Slash commands synced globally (may take up to 1 hour to appear)")
 
-        new_set_check.start()
         record_prices_task.start()
         # Load OCR models in background — slow on first run, must not block the sync
         asyncio.create_task(self._init_ocr())
@@ -452,43 +395,6 @@ class MTGBot(commands.Bot):
 
 
 bot = MTGBot()
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Background: daily new-set check
-# ──────────────────────────────────────────────────────────────────────────────
-
-@tasks.loop(hours=24)
-async def new_set_check():
-    if not SCAN_CHANNEL_ID:
-        return
-    try:
-        new_sets = await card_index.check_new_sets(bot.db)
-    except Exception as e:
-        logger.error("New-set check failed: %s", e)
-        return
-    if not new_sets:
-        return
-    channel = bot.get_channel(SCAN_CHANNEL_ID)
-    if not channel:
-        return
-    shown = new_sets[:20]
-    extra = len(new_sets) - len(shown)
-    lines = "\n".join(
-        f"• **{s['name']}** (`{s['code']}`) — released {s['released_at']}"
-        for s in shown
-    )
-    suffix = f"\n…and {extra} more." if extra else ""
-    msg = (
-        f"**{len(new_sets)} new MTG set(s)** found on Scryfall not yet in the hash index:\n"
-        f"{lines}{suffix}\nRun `/index update` to add them."
-    )
-    await channel.send(msg[:1990])
-
-
-@new_set_check.before_loop
-async def _before_new_set_check():
-    await bot.wait_until_ready()
 
 
 @tasks.loop(hours=24)
@@ -613,222 +519,6 @@ bot.tree.add_command(container_group)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# /index  (status / update / check / rebuild)
-# ──────────────────────────────────────────────────────────────────────────────
-
-class IndexProgressView(discord.ui.View):
-    """Pause/Resume toggle + Cancel button attached to the live progress message."""
-
-    def __init__(self, pause_event: asyncio.Event):
-        super().__init__(timeout=None)
-        self.pause_event = pause_event
-        self.task: Optional[asyncio.Task] = None   # set after task creation
-        self._paused = False
-        self._last_content = "Starting…"
-
-    def record_content(self, content: str) -> None:
-        self._last_content = content
-
-    @discord.ui.button(label="⏸ Pause", style=discord.ButtonStyle.secondary, custom_id="idx_pause")
-    async def pause_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self._paused:
-            self._paused = False
-            self.pause_event.set()
-            button.label = "⏸ Pause"
-            button.style = discord.ButtonStyle.secondary
-            await interaction.response.edit_message(content=self._last_content, view=self)
-        else:
-            self._paused = True
-            self.pause_event.clear()
-            button.label = "▶ Resume"
-            button.style = discord.ButtonStyle.success
-            await interaction.response.edit_message(
-                content=f"⏸ **Paused**\n{self._last_content}", view=self
-            )
-
-    @discord.ui.button(label="⏹ Cancel", style=discord.ButtonStyle.danger, custom_id="idx_cancel")
-    async def cancel_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.task and not self.task.done():
-            self.pause_event.set()   # unblock any waiting coroutines so they can be cancelled
-            self.task.cancel()
-        self.clear_items()
-        await interaction.response.edit_message(view=self)
-        self.stop()
-
-
-index_group = app_commands.Group(name="index", description="Manage the visual card hash index")
-
-
-@index_group.command(name="status", description="Show hash index statistics")
-async def index_status(interaction: discord.Interaction):
-    if not await require_guest(interaction):
-        return
-    count = await bot.db.get_hash_count()
-    last = await bot.db.get_index_meta("last_built_at") or "never"
-    embed = discord.Embed(title="Card Hash Index", color=0x9B59B6)
-    embed.add_field(name="Indexed cards", value=str(count), inline=True)
-    embed.add_field(name="In-memory cache", value=str(len(bot.hash_cache)), inline=True)
-    embed.add_field(name="Last built", value=last[:19] if last != "never" else "never", inline=False)
-    await interaction.response.send_message(embed=embed)
-
-
-def _as_editable_message(interaction: discord.Interaction, webhook_msg) -> discord.PartialMessage:
-    """
-    Wrap a WebhookMessage as a PartialMessage editable via the bot token.
-    Unlike WebhookMessage.edit() (15-min interaction token), PartialMessage.edit()
-    uses the bot token and never expires — critical for long-running index builds.
-    get_partial_message() constructs the object locally; no API call, no extra perms.
-    """
-    return interaction.channel.get_partial_message(webhook_msg.id)
-
-
-@index_group.command(name="update", description="Download new card images and update the hash index")
-async def index_update(interaction: discord.Interaction):
-    global _index_task
-    if not await require_admin(interaction):
-        return
-    if _index_task and not _index_task.done():
-        await interaction.response.send_message(
-            "An index build is already running. Use the ⏸/⏹ buttons on the progress message.",
-            ephemeral=True,
-        )
-        return
-    await interaction.response.defer(thinking=True)
-
-    pause_event = asyncio.Event()
-    pause_event.set()
-    view = IndexProgressView(pause_event)
-
-    # Send initial message with the control buttons; re-fetch as plain Message
-    # so subsequent content edits use the bot token (never expires).
-    webhook_msg = await interaction.followup.send("Starting index build…", view=view, wait=True)
-    progress_msg = _as_editable_message(interaction, webhook_msg)
-
-    async def progress(done, total, indexed, status):
-        pct = int(done / total * 100) if total else 0
-        bar = "█" * (pct // 10) + "░" * (10 - pct // 10)
-        content = f"`[{bar}]` {pct}%  —  {status}\n{indexed} new cards indexed so far."
-        view.record_content(content)
-        try:
-            await progress_msg.edit(content=content)
-        except discord.errors.HTTPException:
-            pass
-
-    _index_task = asyncio.create_task(
-        card_index.build_index(bot.db, progress_cb=progress, pause_event=pause_event)
-    )
-    view.task = _index_task
-    try:
-        newly = await _index_task
-    except asyncio.CancelledError:
-        await progress_msg.edit(content="⏹ Index build cancelled.")
-        view.stop()
-        return
-    except Exception as e:
-        await progress_msg.edit(content=f"Index build failed: {e}")
-        view.stop()
-        return
-    finally:
-        _index_task = None
-
-    view.stop()
-    bot.hash_cache = await bot.db.get_all_hashes()
-    await progress_msg.edit(
-        content=(
-            f"✅ Index build complete. **{newly}** new card(s) indexed.\n"
-            f"Cache reloaded — {len(bot.hash_cache)} total entries."
-        ),
-        view=None,
-    )
-
-
-@index_group.command(name="check", description="List Scryfall sets not yet in the hash index")
-async def index_check(interaction: discord.Interaction):
-    if not await require_guest(interaction):
-        return
-    await interaction.response.defer(thinking=True)
-    new_sets = await card_index.check_new_sets(bot.db)
-    if not new_sets:
-        await interaction.followup.send("All known sets are already indexed.", ephemeral=True)
-        return
-    shown = new_sets[:20]
-    extra = len(new_sets) - len(shown)
-    lines = "\n".join(
-        f"• **{s['name']}** (`{s['code']}`) — released {s['released_at']}"
-        for s in shown
-    )
-    suffix = f"\n…and {extra} more." if extra else ""
-    msg = f"**{len(new_sets)} set(s) not yet indexed:**\n{lines}{suffix}\n\nRun `/index update` to add them."
-    await interaction.followup.send(msg[:1990])
-
-
-@index_group.command(name="rebuild", description="Wipe the hash index and re-download all card images from scratch")
-async def index_rebuild(interaction: discord.Interaction):
-    global _index_task
-    if not await require_admin(interaction):
-        return
-    if _index_task and not _index_task.done():
-        await interaction.response.send_message(
-            "An index build is already running. Use the ⏸/⏹ buttons on the progress message.",
-            ephemeral=True,
-        )
-        return
-    await interaction.response.defer(thinking=True)
-    old_count = await bot.db.get_hash_count()
-    await bot.db.clear_card_hashes()
-    bot.hash_cache = []
-
-    pause_event = asyncio.Event()
-    pause_event.set()
-    view = IndexProgressView(pause_event)
-
-    webhook_msg = await interaction.followup.send(
-        f"Cleared {old_count} existing entries. Rebuilding from scratch…", view=view, wait=True
-    )
-    progress_msg = _as_editable_message(interaction, webhook_msg)
-
-    async def progress(done, total, indexed, status):
-        pct = int(done / total * 100) if total else 0
-        bar = "█" * (pct // 10) + "░" * (10 - pct // 10)
-        content = f"`[{bar}]` {pct}%  —  {status}\n{indexed} cards indexed so far."
-        view.record_content(content)
-        try:
-            await progress_msg.edit(content=content)
-        except discord.errors.HTTPException:
-            pass
-
-    _index_task = asyncio.create_task(
-        card_index.build_index(bot.db, progress_cb=progress, pause_event=pause_event)
-    )
-    view.task = _index_task
-    try:
-        newly = await _index_task
-    except asyncio.CancelledError:
-        await progress_msg.edit(content="⏹ Rebuild cancelled.")
-        view.stop()
-        return
-    except Exception as e:
-        await progress_msg.edit(content=f"Rebuild failed: {e}")
-        view.stop()
-        return
-    finally:
-        _index_task = None
-
-    view.stop()
-    bot.hash_cache = await bot.db.get_all_hashes()
-    await progress_msg.edit(
-        content=(
-            f"✅ Rebuild complete. **{newly}** card(s) indexed.\n"
-            f"Cache reloaded — {len(bot.hash_cache)} total entries."
-        ),
-        view=None,
-    )
-
-
-bot.tree.add_command(index_group)
-
-
-# ──────────────────────────────────────────────────────────────────────────────
 # /add
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -946,9 +636,9 @@ async def cmd_scan(
     m = await _resolve_scan(image_bytes)
 
     if not m.card:
-        if not scanner.ocr_available() and not bot.hash_cache:
+        if not scanner.ocr_available():
             await interaction.followup.send(
-                "OCR is not available and no hash index loaded. Use `/add` instead.", ephemeral=True
+                "OCR is not available. Use `/add` instead.", ephemeral=True
             )
         elif m.collector_info.get("set_code") and m.collector_info.get("collector_number"):
             await interaction.followup.send(
@@ -1582,7 +1272,7 @@ async def cmd_help(interaction: discord.Interaction):
         name="➕ Adding cards",
         value=(
             "`/add <name>` — add by name, auto-detects EN/DE; `quantity` creates N separate entries\n"
-            "`/scan <image>` — attach a photo; visual hash match first, OCR fallback\n"
+            "`/scan <image>` — attach a photo; auto-detects card via OCR\n"
             "Drop an image in this channel — bot scans it instantly (no command needed)\n"
         ),
         inline=False,
@@ -1619,16 +1309,6 @@ async def cmd_help(interaction: discord.Interaction):
     embed.add_field(
         name="📤 Export",
         value="`/export` — download as **Moxfield CSV** (default), Excel CSV, or JSON\n",
-        inline=False,
-    )
-    embed.add_field(
-        name="🖼️ Visual hash index",
-        value=(
-            "`/index status` — indexed card count, cache size, last build date\n"
-            "`/index check` — list Scryfall sets not yet in the index\n"
-            "`/index update` — download images for new sets and add them to the index\n"
-            "`/index rebuild` — wipe the index and re-download everything from scratch\n"
-        ),
         inline=False,
     )
     embed.add_field(
@@ -1704,11 +1384,6 @@ async def _do_scan_and_confirm(
 
     m = await _resolve_scan(image_bytes)
 
-    if bot.hash_cache:
-        logger.info("Hash candidates: %d (cache: %d entries)",
-                    len(m.hash_candidates), len(bot.hash_cache))
-    else:
-        logger.warning("Hash match skipped: cache empty — run /index update first")
     if m.extracted_name:
         logger.info("OCR name: '%s'", m.extracted_name)
     else:
@@ -1726,11 +1401,6 @@ async def _do_scan_and_confirm(
             f"#=`{ci.get('collector_number') or '—'}` "
             f"lang=`{ci.get('language') or '—'}`"
         )
-        if m.hash_candidates:
-            dbg.append("**Hash top-3:** " + "  •  ".join(
-                f"`{c.get('name_en', '?')}` d={c['hash_distance']}"
-                for c in m.hash_candidates[:3]
-            ))
         await interaction.followup.send(
             "🔍 **Debug — OCR results:**\n" + "\n".join(dbg),
             ephemeral=True,
@@ -1739,8 +1409,8 @@ async def _do_scan_and_confirm(
     if not m.card:
         view = _ManualNameView(image_bytes, source_message, container_id, container_name)
         ci = m.collector_info
-        if not scanner.ocr_available() and not bot.hash_cache:
-            msg = "OCR not available and no hash index loaded. Use `/add <name>` instead."
+        if not scanner.ocr_available():
+            msg = "OCR not available. Use `/add <name>` instead."
         elif ci.get("set_code") and ci.get("collector_number"):
             msg = (
                 f'Collector info read ({ci["set_code"]} '
