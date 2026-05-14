@@ -124,7 +124,7 @@ def _best_quad_in_contours(
             if len(approx) == 4:
                 pts = approx.reshape(4, 2).astype(np.float32)
                 if _is_card_shaped(_order_quad(pts)):
-                    logger.info(
+                    logger.debug(
                         "CV card detection: approxPolyDP (%s) eps=%.2f area=%.0f",
                         retr_label, eps, cv2.contourArea(cnt),
                     )
@@ -244,17 +244,17 @@ def _isolate_card_cv(img: Image.Image) -> Optional[Image.Image]:
     # ── Warp ─────────────────────────────────────────────────────────────────
     chosen = quad if quad is not None else best_rect
     if chosen is None:
-        logger.info("CV card detection: no card-shaped quad found (all passes exhausted)")
+        logger.debug("CV card detection: no card-shaped quad found (all passes exhausted)")
         return None
 
     method = "approxPolyDP" if quad is not None else "minAreaRect-fallback"
     try:
         warped = _warp_quad(img_bgr, chosen)
     except Exception as e:
-        logger.info("CV card detection: warp failed (%s)", e)
+        logger.debug("CV card detection: warp failed (%s)", e)
         return None
 
-    logger.info("Card isolated via CV %s → %dx%d", method, warped.shape[1], warped.shape[0])
+    logger.debug("Card isolated via CV %s → %dx%d", method, warped.shape[1], warped.shape[0])
     return Image.fromarray(cv2.cvtColor(warped, cv2.COLOR_BGR2RGB))
 
 
@@ -446,18 +446,18 @@ def extract_collector_info(image_bytes: bytes) -> dict:
         # footer text is inherently smaller and noisier in photos.
         if _easyocr_reader:
             results = _easyocr_reader.readtext(np.array(zone), detail=1, paragraph=False)
-            logger.info("Footer EasyOCR raw: %s", [(r[1], round(r[2], 2)) for r in results])
+            logger.debug("Footer EasyOCR raw: %s", [(r[1], round(r[2], 2)) for r in results])
             text = "\n".join(r[1] for r in results if r[2] >= 0.15)
             info = _parse_footer(text)
             if info.get("collector_number") or info.get("language"):
-                logger.info("Footer parsed (EasyOCR): %s", info)
+                logger.debug("Footer parsed (EasyOCR): %s", info)
                 return info
 
         # Tesseract fallback
         if _tesseract_available:
             raw = _pytesseract.image_to_string(zone, config="--psm 6 --oem 3").strip()
             info = _parse_footer(raw)
-            logger.info("Footer parsed (Tesseract): %s", info)
+            logger.debug("Footer parsed (Tesseract): %s", info)
             return info
 
     except Exception as e:
@@ -500,7 +500,7 @@ def _easyocr_extract(image_bytes: bytes) -> Optional[str]:
         img = _ensure_min_width(img)
         zone = _crop_name_zone(img)
         results = _easyocr_reader.readtext(np.array(zone), detail=1, paragraph=False)
-        logger.info("EasyOCR raw: %s", [(r[1], round(r[2], 2)) for r in results])
+        logger.debug("EasyOCR raw: %s", [(r[1], round(r[2], 2)) for r in results])
         if not results:
             return None
         # Collect all segments above the confidence floor, ordered left-to-right.

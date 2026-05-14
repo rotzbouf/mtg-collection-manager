@@ -32,7 +32,7 @@ from scryfall import ScryfallClient
 logger = logging.getLogger(__name__)
 
 
-def _configure_logging() -> None:
+def _configure_logging(debug: bool = False) -> None:
     # Under systemd, journald adds timestamps and log level — keep the format minimal.
     # For manual terminal runs, include them so the output is self-contained.
     under_systemd = "JOURNAL_STREAM" in os.environ
@@ -43,7 +43,8 @@ def _configure_logging() -> None:
     )
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(logging.Formatter(fmt))
-    logging.getLogger().setLevel(logging.INFO)
+    level = logging.DEBUG if debug else logging.INFO
+    logging.getLogger().setLevel(level)
     logging.getLogger().addHandler(handler)
 
 TOKEN = os.environ["DISCORD_TOKEN"]
@@ -139,8 +140,8 @@ async def _resolve_scan(image_bytes: bytes) -> _ScanMatch:
             if ratio >= 0.55:
                 method_parts.append(f'name confirmed: "{extracted_name}" ({ratio:.0%})')
             else:
-                logger.info("Collector/name mismatch: OCR='%s' vs '%s' (ratio=%.2f)",
-                            extracted_name, en_name, ratio)
+                logger.debug("Collector/name mismatch: OCR='%s' vs '%s' (ratio=%.2f)",
+                             extracted_name, en_name, ratio)
                 method_parts.append(f'OCR: "{extracted_name}" (differs {ratio:.0%})')
 
     elif ocr_card:
@@ -1580,11 +1581,11 @@ async def _do_scan_and_confirm(
     m = await _resolve_scan(image_bytes)
 
     if m.extracted_name:
-        logger.info("OCR name: '%s'", m.extracted_name)
+        logger.debug("OCR name: '%s'", m.extracted_name)
     else:
-        logger.info("OCR: no name extracted")
+        logger.debug("OCR: no name extracted")
     if m.collector_info:
-        logger.info("OCR footer: %s", m.collector_info)
+        logger.debug("OCR footer: %s", m.collector_info)
 
     if DEBUG_SCAN_PREVIEW:
         ci = m.collector_info
@@ -1859,5 +1860,5 @@ async def on_message(message: discord.Message):
 # ──────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    _configure_logging()
+    _configure_logging(debug=DEBUG_SCAN_PREVIEW)
     bot.run(TOKEN)
