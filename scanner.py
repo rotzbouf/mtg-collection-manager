@@ -13,6 +13,7 @@ Pipeline per image:
 import asyncio
 import io
 import logging
+import re
 from typing import Optional
 
 import numpy as np
@@ -269,6 +270,19 @@ _NAME_TOP    = 0.03
 _NAME_RIGHT  = 0.80   # wider: captures full name incl. long German titles
 _NAME_BOTTOM = 0.10   # narrower: excludes the top of the art zone
 
+_FOOTER_TOP    = 0.89  # bottom strip: copyright / set / collector / language
+_FOOTER_BOTTOM = 0.97
+
+# Language codes printed on MTG cards → Scryfall language identifiers
+_CARD_LANG_MAP: dict[str, str] = {
+    "EN": "en", "DE": "de", "FR": "fr", "IT": "it",
+    "ES": "es", "PT": "pt", "JA": "ja", "JP": "ja",
+    "KO": "ko", "RU": "ru", "ZHS": "zhs", "ZHT": "zht",
+    "CS": "zhs", "CT": "zht",   # older print abbreviations for Chinese
+}
+_FOOTER_LANG_RE = re.compile(r'\b(EN|DE|FR|IT|ES|PT|JA|JP|KO|RU|ZHS|ZHT|CS|CT)\b')
+_FOOTER_COLL_RE = re.compile(r'\b(\d{1,4})\s*/\s*\d{1,4}\b')
+
 
 def _crop_name_zone(img: Image.Image) -> Image.Image:
     """Crop and enhance the card-name area for better OCR."""
@@ -278,8 +292,118 @@ def _crop_name_zone(img: Image.Image) -> Image.Image:
         int(w * _NAME_RIGHT), int(h * _NAME_BOTTOM),
     ))
     zone = zone.resize((zone.width * 3, zone.height * 3), Image.LANCZOS)
-    zone = ImageEnhance.Contrast(zone).enhance(2.5)
+
+    # CLAHE on the L-channel of LAB color space: boosts local contrast while
+    # preserving hue, handling variable metallic/colored name bars on MTG cards.
+    # Global contrast enhancement (the previous approach) can clip highlights on
+    # light name bars and crush shadows on dark ones — CLAHE avoids both.
+    try:
+        import cv2
+        lab = cv2.cvtColor(np.array(zone), cv2.COLOR_RGB2LAB)
+        l_ch, a_ch, b_ch = cv2.split(lab)
+        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(4, 4))
+        lab = cv2.merge([clahe.apply(l_ch), a_ch, b_ch])
+        zone = Image.fromarray(cv2.cvtColor(lab, cv2.COLOR_LAB2RGB))
+    except Exception:
+        zone = ImageEnhance.Contrast(zone).enhance(2.5)
+
     return zone.filter(ImageFilter.SHARPEN)
+
+
+def _crop_footer_zone(img: Image.Image) -> Image.Image:
+    """Crop and preprocess the card-footer strip for set/collector/language OCR."""
+    w, h = img.size
+    zone = img.crop((int(w * 0.02), int(h * _FOOTER_TOP), int(w * 0.98), int(h * _FOOTER_BOTTOM)))
+    # 5× upscale — footer text is much smaller than the card name
+    zone = zone.resize((zone.width * 5, zone.height * 5), Image.LANCZOS)
+    # Grayscale + CLAHE: footer text is black-on-white/cream, so grayscale is fine;
+    # CLAHE handles any shadow or uneven illumination from the photo.
+    try:
+        import cv2
+        gray = cv2.cvtColor(np.array(zone), cv2.COLOR_RGB2GRAY)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        zone = Image.fromarray(clahe.apply(gray))
+    except Exception:
+        zone = zone.convert("L")
+        zone = ImageEnhance.Contrast(zone).enhance(2.0)
+    return zone
+
+
+def _parse_footer(text: str) -> dict:
+    """
+    Extract set_code, collector_number, language from raw OCR footer text.
+
+    Typical footer line: "™ & © 2022 Wizards of the Coast LLC NEO · DE 042/270"
+    All returned values may be None if the OCR text is too noisy.
+    """
+    upper = text.upper()
+
+    # Language code (2–3 uppercase letters explicitly printed on every modern card)
+    lang_m = _FOOTER_LANG_RE.search(upper)
+    language = _CARD_LANG_MAP.get(lang_m.group(1)) if lang_m else None
+
+    # Collector number: prefer "X/Y" format over a bare number
+    coll_m = _FOOTER_COLL_RE.search(upper)
+    collector_number = coll_m.group(1).lstrip("0") or "0" if coll_m else None
+
+    # Set code: last 2–5-char alphanumeric word just before the language code.
+    # In "... LLC NEO · DE 042/270" → set_code = "NEO".
+    set_code = None
+    if lang_m:
+        before_lang = upper[:lang_m.start()].rstrip(" ·-—·")
+        for token in reversed(before_lang.split()):
+            token = re.sub(r"[^A-Z0-9]", "", token)
+            if 2 <= len(token) <= 5 and token not in {
+                "LLC", "INC", "LTD", "THE", "AND", "FOR", "ART",
+                "COAST", "WIZARDS", "HASBRO",
+            }:
+                set_code = token
+                break
+
+    return {"set_code": set_code, "collector_number": collector_number, "language": language}
+
+
+def extract_collector_info(image_bytes: bytes) -> dict:
+    """
+    OCR the card footer to extract set code, collector number, and card language.
+
+    Returns a dict with keys (all may be None):
+      set_code         — Scryfall set code, e.g. "NEO", "M21"
+      collector_number — collector number string, e.g. "42"
+      language         — Scryfall language code, e.g. "de", "en"
+
+    Primary engine: EasyOCR.  Fallback: Tesseract (--psm 6).
+    """
+    try:
+        img = _open_image_safe(image_bytes)
+        if img is None:
+            return {}
+        card = isolate_card(img)
+        card = _ensure_min_width(card)
+        zone = _crop_footer_zone(card)
+
+        # EasyOCR path — use a lower confidence floor than the name zone because
+        # footer text is inherently smaller and noisier in photos.
+        if _easyocr_reader:
+            results = _easyocr_reader.readtext(np.array(zone), detail=1, paragraph=False)
+            logger.info("Footer EasyOCR raw: %s", [(r[1], round(r[2], 2)) for r in results])
+            text = " ".join(r[1] for r in results if r[2] >= 0.15)
+            info = _parse_footer(text)
+            if info.get("collector_number") or info.get("language"):
+                logger.info("Footer parsed (EasyOCR): %s", info)
+                return info
+
+        # Tesseract fallback
+        if _tesseract_available:
+            raw = _pytesseract.image_to_string(zone, config="--psm 6 --oem 3").strip()
+            info = _parse_footer(raw)
+            logger.info("Footer parsed (Tesseract): %s", info)
+            return info
+
+    except Exception as e:
+        logger.error("extract_collector_info error: %s", e)
+
+    return {}
 
 
 def _open_image_safe(image_bytes: bytes) -> Optional[Image.Image]:
@@ -321,7 +445,7 @@ def _easyocr_extract(image_bytes: bytes) -> Optional[str]:
             return None
         # Collect all segments above the confidence floor, ordered left-to-right.
         # This handles multi-word names that EasyOCR splits into separate boxes.
-        MIN_CONF = 0.35
+        MIN_CONF = 0.45
         confident = sorted(
             [r for r in results if r[2] >= MIN_CONF],
             key=lambda r: r[0][0][0],  # sort by left-x of bounding box

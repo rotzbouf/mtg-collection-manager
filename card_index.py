@@ -250,7 +250,6 @@ def _compute_query_hashes(image_bytes: bytes) -> tuple[list[str], list[str]]:
         if h_raw:
             raw.append(h_raw)
         if h_norm:
-            raw.append(h_norm)   # normalised card vs. raw index (fallback)
             norm.append(h_norm)  # normalised card vs. normalised index
     except Exception as e:
         logger.warning("Query hash (isolated) failed: %s", e)
@@ -267,24 +266,25 @@ def _compute_query_hashes(image_bytes: bytes) -> tuple[list[str], list[str]]:
     return raw, norm
 
 
-async def find_best_match(image_bytes: bytes, hash_rows: list[dict]) -> Optional[dict]:
+async def _find_candidates(
+    image_bytes: bytes,
+    hash_rows: list[dict],
+    max_dist: int,
+) -> list[dict]:
     """
-    Compare image against all cached hashes using two parallel lanes:
-      • raw   query vs. phash      (always available)
-      • norm  query vs. phash_norm (available after /index rebuild)
-    Both lanes use vectorised Hamming distance over numpy uint64 arrays.
-    Returns the closest row (with added 'hash_distance' key) or None.
+    Core matching: compare query image against hash_rows and return all
+    candidates with Hamming distance ≤ max_dist, sorted ascending by distance.
+    Used by both find_best_match and find_top_candidates.
     """
     if not hash_rows:
         logger.warning("Hash match skipped: cache is empty — run /index update")
-        return None
+        return []
 
     raw_queries, norm_queries = await asyncio.to_thread(_compute_query_hashes, image_bytes)
     if not raw_queries and not norm_queries:
         logger.warning("Hash match skipped: could not compute any query hash")
-        return None
+        return []
 
-    # Build uint64 arrays once; reused across all queries
     phash_ints = np.array(
         [_hex_to_uint64(r["phash"]) for r in hash_rows], dtype=np.uint64
     )
@@ -294,44 +294,65 @@ async def find_best_match(image_bytes: bytes, hash_rows: list[dict]) -> Optional
         if norm_pairs else np.array([], dtype=np.uint64)
     )
 
-    best_idx:  Optional[int] = None
-    best_dist: int           = 999
+    best_dists = np.full(len(hash_rows), 999, dtype=np.int32)
 
     for query in raw_queries:
         q = _hex_to_uint64(query)
         if q < 0:
             continue
-        dists = _hamming_vectorized(q, phash_ints)
-        i = int(np.argmin(dists))
-        if dists[i] < best_dist:
-            best_dist = int(dists[i])
-            best_idx  = i
+        dists = _hamming_vectorized(q, phash_ints).astype(np.int32)
+        np.minimum(best_dists, dists, out=best_dists)
 
     for query in norm_queries:
         q = _hex_to_uint64(query)
         if q < 0 or not norm_pairs:
             continue
-        dists    = _hamming_vectorized(q, phash_norm_ints)
-        local_i  = int(np.argmin(dists))
-        if dists[local_i] < best_dist:
-            best_dist = int(dists[local_i])
-            best_idx  = norm_pairs[local_i][0]
+        dists = _hamming_vectorized(q, phash_norm_ints).astype(np.int32)
+        for local_i, (global_i, _) in enumerate(norm_pairs):
+            if dists[local_i] < best_dists[global_i]:
+                best_dists[global_i] = int(dists[local_i])
 
-    if best_idx is not None and best_dist <= MATCH_THRESHOLD:
-        best_row = hash_rows[best_idx]
-        logger.info(
-            "Hash match: '%s' d=%d/%d",
-            best_row.get("name_en", "?"), best_dist, MATCH_THRESHOLD,
-        )
-        return {**best_row, "hash_distance": best_dist}
+    candidates = [
+        {**hash_rows[i], "hash_distance": int(best_dists[i])}
+        for i in range(len(hash_rows))
+        if int(best_dists[i]) <= max_dist
+    ]
+    candidates.sort(key=lambda c: c["hash_distance"])
+    return candidates
 
-    logger.info(
-        "Hash match: no result within threshold (best d=%d for '%s', threshold=%d)",
-        best_dist,
-        hash_rows[best_idx].get("name_en", "?") if best_idx is not None else "—",
-        MATCH_THRESHOLD,
+
+async def find_best_match(image_bytes: bytes, hash_rows: list[dict]) -> Optional[dict]:
+    """Returns the single closest hash match within MATCH_THRESHOLD, or None."""
+    candidates = await _find_candidates(image_bytes, hash_rows, max_dist=MATCH_THRESHOLD)
+    if not candidates:
+        logger.info("Hash match: no result within threshold %d", MATCH_THRESHOLD)
+        return None
+    best = candidates[0]
+    logger.info("Hash match: '%s' d=%d/%d", best.get("name_en", "?"), best["hash_distance"], MATCH_THRESHOLD)
+    return best
+
+
+async def find_top_candidates(
+    image_bytes: bytes,
+    hash_rows: list[dict],
+    top_n: int = 5,
+) -> list[dict]:
+    """
+    Return the top_n closest hash matches within an expanded threshold
+    (MATCH_THRESHOLD + 6).  Use this when OCR cross-validation is available:
+    the OCR result can confirm the correct card even if it ranks 2nd or 3rd by
+    hash distance, recovering from near-miss hashes caused by photo noise or
+    partial card isolation failure.
+    """
+    candidates = await _find_candidates(
+        image_bytes, hash_rows, max_dist=MATCH_THRESHOLD + 6
     )
-    return None
+    if candidates:
+        logger.info(
+            "Top hash candidates: %s",
+            [(c.get("name_en", "?"), c["hash_distance"]) for c in candidates[:top_n]],
+        )
+    return candidates[:top_n]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
