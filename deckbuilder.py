@@ -219,24 +219,25 @@ def build_60_deck(pool: list[dict], fmt: str) -> dict:
     themed.sort(key=lambda c: int(c.get("cmc") or 0))
     others.sort(key=lambda c: int(c.get("cmc") or 0))
 
-    name_used: Counter = Counter()
-    name_first: dict[str, dict] = {}   # first physical copy per card name
-    total = 0
+    # Pre-count physical copies per card name — this is the true availability.
+    # Themed cards are iterated first so they fill name_first before others.
+    available: Counter = Counter()
+    name_first: dict[str, dict] = {}
     for card in (themed + others):
-        if total >= 36:
-            break
         name = (card.get("name_en") or "").lower()
-        if name_used[name] >= 4:
-            continue
-        take = min(4 - name_used[name], 36 - total)
+        available[name] += 1
         if name not in name_first:
             name_first[name] = card
-        name_used[name] += take
-        total += take
 
-    deck_cards: list[tuple[dict, int]] = [
-        (name_first[n], cnt) for n, cnt in name_used.items()
-    ]
+    # Build deck: themed-first order; copies capped by owned count and format limit (4).
+    deck_cards: list[tuple[dict, int]] = []
+    total = 0
+    for name, card in name_first.items():
+        if total >= 36:
+            break
+        take = min(available[name], 4, 36 - total)
+        deck_cards.append((card, take))
+        total += take
 
     colors_used: set[str] = set()
     for card, _ in deck_cards:
