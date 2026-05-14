@@ -980,6 +980,52 @@ async def cmd_stats(interaction: discord.Interaction):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# /overcount  —  cards with more than 4 copies
+# ──────────────────────────────────────────────────────────────────────────────
+
+@bot.tree.command(name="overcount", description="Show cards that appear more than 4 times in your collection")
+async def cmd_overcount(interaction: discord.Interaction):
+    if not await require_guest(interaction):
+        return
+    await interaction.response.defer(thinking=True)
+    cards = await bot.db.get_overcount_cards(threshold=4)
+    if not cards:
+        await interaction.followup.send(
+            "No card appears more than 4 times in your collection.", ephemeral=True
+        )
+        return
+
+    lines = []
+    for card in cards:
+        name = card["name_en"]
+        total = card["total"]
+        parts = []
+        for c in card["containers"]:
+            label = f"📦 {c['name']}" if c["name"] else "_(no container)_"
+            parts.append(f"{label}: {c['count']}")
+        lines.append(f"**{name}** — {total}×\n  " + "  ·  ".join(parts))
+
+    # Discord embed description is capped at 4096 chars; chunk if needed
+    chunks: list[list[str]] = [[]]
+    length = 0
+    for line in lines:
+        if length + len(line) + 1 > 3900:
+            chunks.append([])
+            length = 0
+        chunks[-1].append(line)
+        length += len(line) + 1
+
+    title = f"Cards with more than 4 copies ({len(cards)} found)"
+    for i, chunk in enumerate(chunks):
+        embed = discord.Embed(
+            title=title if i == 0 else f"{title} (cont.)",
+            description="\n\n".join(chunk),
+            color=0xE67E22,
+        )
+        await interaction.followup.send(embed=embed)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # /deck  — deckbuilder
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -1350,6 +1396,7 @@ async def cmd_help(interaction: discord.Interaction):
             "`/card <id>` — full details for one card\n"
             "`/search <query>` — full-text search across name, type, oracle text, set, notes, …\n"
             "`/stats` — cards by language & foil, rarity breakdown, value, top 5 most valuable\n"
+            "`/overcount` — list cards that appear more than 4 times (with container breakdown)\n"
         ),
         inline=False,
     )

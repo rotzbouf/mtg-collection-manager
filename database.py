@@ -595,6 +595,48 @@ class Database:
         await self._db.commit()
         return updated
 
+    async def get_overcount_cards(self, threshold: int = 4) -> list[dict]:
+        """Return cards that appear more than *threshold* times in the collection.
+
+        Basic lands are excluded (they have no copy limit).
+        Each entry contains name_en, total count, and a per-container breakdown.
+        """
+        async with self._db.execute(
+            """
+            WITH counts AS (
+                SELECT name_en, container_id, COUNT(*) AS cnt
+                FROM collection
+                WHERE COALESCE(type_line, '') NOT LIKE 'Basic Land%'
+                GROUP BY name_en, container_id
+            ),
+            totals AS (
+                SELECT name_en, SUM(cnt) AS total
+                FROM counts
+                GROUP BY name_en
+                HAVING total > ?
+            )
+            SELECT c.name_en, c.container_id, cont.name AS container_name,
+                   c.cnt, t.total
+            FROM counts c
+            JOIN totals t ON c.name_en = t.name_en
+            LEFT JOIN containers cont ON c.container_id = cont.id
+            ORDER BY t.total DESC, c.name_en, c.cnt DESC
+            """,
+            (threshold,),
+        ) as cur:
+            rows = await cur.fetchall()
+
+        # Group per-card rows into a single dict with container breakdown
+        cards: dict[str, dict] = {}
+        for row in rows:
+            name = row["name_en"]
+            if name not in cards:
+                cards[name] = {"name_en": name, "total": row["total"], "containers": []}
+            cards[name]["containers"].append(
+                {"name": row["container_name"], "count": row["cnt"]}
+            )
+        return list(cards.values())
+
     async def commit(self):
         await self._db.commit()
 
