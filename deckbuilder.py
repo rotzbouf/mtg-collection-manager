@@ -298,6 +298,40 @@ def build_60_deck(pool: list[dict], fmt: str) -> dict:
 
 # ── Deck list formatting ───────────────────────────────────────────────────────
 
+def _location_manifest(cards: list[dict]) -> str:
+    """Tabular manifest: card ID, container ID, container name, card name.
+
+    Used as a picking reference — records where each card lives at proposal
+    time so the location is known after cards are moved to a deck container.
+    """
+    rows = [
+        (
+            str(c.get("id") or "—"),
+            str(c.get("container_id") or "—"),
+            c.get("container_name") or "—",
+            c.get("name_en") or "?",
+        )
+        for c in cards
+        if c.get("id")
+    ]
+    if not rows:
+        return ""
+    w_cid  = max(len(r[0]) for r in rows)
+    w_ctid = max(len(r[1]) for r in rows)
+    w_ct   = max(len(r[2]) for r in rows)
+    header = (
+        f"{'Card ID':<{w_cid}}  {'Cont. ID':<{w_ctid}}  {'Container':<{w_ct}}  Card"
+    )
+    sep = "-" * (w_cid + 2 + w_ctid + 2 + w_ct + 2 + 30)
+    lines = ["", "// --- Location Manifest ---",
+             "// Original card locations at time of proposal", header, sep]
+    for card_id, cont_id, cont_name, name in rows:
+        lines.append(
+            f"{card_id:<{w_cid}}  {cont_id:<{w_ctid}}  {cont_name:<{w_ct}}  {name}"
+        )
+    return "\n".join(lines)
+
+
 def format_commander_decklist(result: dict) -> str:
     cmd = result["commander"]
     cmd_container = cmd.get("container_name") or "—"
@@ -317,6 +351,13 @@ def format_commander_decklist(result: dict) -> str:
             lines.append(f"1 {c.get('name_en', '?')}  // 📦 {container}")
         for land, n in sorted(text_basics.items()):
             lines.append(f"{n} {land}")
+
+    all_cards = (
+        [result["commander"]] if result["commander"].get("id") else []
+    ) + result["deck"] + coll_basics
+    manifest = _location_manifest(all_cards)
+    if manifest:
+        lines.append(manifest)
     return "\n".join(lines)
 
 
@@ -335,4 +376,9 @@ def format_60_decklist(result: dict) -> str:
             lines.append(f"1 {c.get('name_en', '?')}  // 📦 {container}")
         for land, n in sorted(text_basics.items()):
             lines.append(f"{n} {land}")
+
+    all_cards = [c for c, _ in result["deck"]] + coll_basics
+    manifest = _location_manifest(all_cards)
+    if manifest:
+        lines.append(manifest)
     return "\n".join(lines)
