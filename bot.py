@@ -1846,7 +1846,8 @@ async def cmd_showcase(interaction: discord.Interaction):
     }
 
     for rank, card in enumerate(cards, start=1):
-        name       = card.get("name_en") or "Unknown"
+        name_en    = card.get("name_en") or "Unknown"
+        loc_name   = card.get("printed_name") or card.get("name_de") or name_en
         price_eur  = card.get("price_eur") or 0.0
         price_usd  = card.get("price_usd")
         rarity     = (card.get("rarity") or "").lower()
@@ -1861,6 +1862,9 @@ async def cmd_showcase(interaction: discord.Interaction):
         image_url  = card.get("image_url") or ""
         scryfall_id = card.get("scryfall_id") or ""
 
+        display_name = loc_name if loc_name != name_en else name_en
+        title_name = display_name if display_name == name_en else f"{display_name} ({name_en})"
+
         colour = RARITY_COLOUR.get(rarity, 0x5865f2)
         foil_tag = " ✨" if foil else ""
         price_str = f"**€{price_eur:.2f}**"
@@ -1868,7 +1872,7 @@ async def cmd_showcase(interaction: discord.Interaction):
             price_str += f"  ·  ${price_usd:.2f}"
 
         embed = discord.Embed(
-            title=f"#{rank} — {name}{foil_tag}",
+            title=f"#{rank} — {title_name}{foil_tag}",
             colour=colour,
         )
         embed.add_field(name="Price", value=price_str, inline=True)
@@ -1886,7 +1890,7 @@ async def cmd_showcase(interaction: discord.Interaction):
         if scryfall_id:
             history = await bot.db.get_price_history(scryfall_id)
 
-        chart_bytes = await asyncio.to_thread(_make_price_chart, history, name)
+        chart_bytes = await asyncio.to_thread(_make_price_chart, history, display_name)
         if chart_bytes:
             file = discord.File(io.BytesIO(chart_bytes), filename=f"chart_{rank}.png")
             embed.set_image(url=f"attachment://chart_{rank}.png")
