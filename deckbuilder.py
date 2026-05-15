@@ -298,31 +298,47 @@ def build_60_deck(pool: list[dict], fmt: str) -> dict:
 
 # ── Deck list formatting ───────────────────────────────────────────────────────
 
+def _display_name(card: dict) -> str:
+    """Return the card's localized name with English fallback annotation.
+
+    If the card has a non-English printed name, show that as the primary name
+    and append '// EN: <english>' so the line stays importable into other apps.
+    """
+    en   = card.get("name_en") or "?"
+    loc  = card.get("printed_name") or card.get("name_de") or en
+    if loc and loc != en:
+        return f"{loc}  // EN: {en}"
+    return en
+
+
 def _location_manifest(cards: list[dict]) -> str:
     """Tabular manifest: card ID, container ID, container name, card name.
 
     Used as a picking reference — records where each card lives at proposal
     time so the location is known after cards are moved to a deck container.
     """
-    rows = [
-        (
+    rows = []
+    for c in cards:
+        if not c.get("id"):
+            continue
+        en  = c.get("name_en") or "?"
+        loc = c.get("printed_name") or c.get("name_de") or en
+        name_col = f"{loc} / {en}" if loc != en else en
+        rows.append((
             str(c.get("id") or "—"),
             str(c.get("container_id") or "—"),
             c.get("container_name") or "—",
-            c.get("name_en") or "?",
-        )
-        for c in cards
-        if c.get("id")
-    ]
+            name_col,
+        ))
     if not rows:
         return ""
     w_cid  = max(len(r[0]) for r in rows)
     w_ctid = max(len(r[1]) for r in rows)
     w_ct   = max(len(r[2]) for r in rows)
     header = (
-        f"{'Card ID':<{w_cid}}  {'Cont. ID':<{w_ctid}}  {'Container':<{w_ct}}  Card"
+        f"{'Card ID':<{w_cid}}  {'Cont. ID':<{w_ctid}}  {'Container':<{w_ct}}  Card (localized / EN)"
     )
-    sep = "-" * (w_cid + 2 + w_ctid + 2 + w_ct + 2 + 30)
+    sep = "-" * (w_cid + 2 + w_ctid + 2 + w_ct + 2 + 40)
     lines = ["", "// --- Location Manifest ---",
              "// Original card locations at time of proposal", header, sep]
     for card_id, cont_id, cont_name, name in rows:
@@ -335,12 +351,12 @@ def _location_manifest(cards: list[dict]) -> str:
 def format_commander_decklist(result: dict) -> str:
     cmd = result["commander"]
     cmd_container = cmd.get("container_name") or "—"
-    lines = ["Commander", f"1 {cmd.get('name_en', '?')}  // 📦 {cmd_container}", ""]
+    lines = ["Commander", f"1 {_display_name(cmd)}  // 📦 {cmd_container}", ""]
     for group, cards in sorted(result["groups"].items()):
         lines.append(group)
         for c in cards:
             container = c.get("container_name") or "—"
-            lines.append(f"1 {c.get('name_en', '?')}  // 📦 {container}")
+            lines.append(f"1 {_display_name(c)}  // 📦 {container}")
         lines.append("")
     coll_basics = result.get("basics_from_collection") or []
     text_basics = result.get("basics") or {}
@@ -348,7 +364,7 @@ def format_commander_decklist(result: dict) -> str:
         lines.append("Basic Lands")
         for c in coll_basics:
             container = c.get("container_name") or "—"
-            lines.append(f"1 {c.get('name_en', '?')}  // 📦 {container}")
+            lines.append(f"1 {_display_name(c)}  // 📦 {container}")
         for land, n in sorted(text_basics.items()):
             lines.append(f"{n} {land}")
 
@@ -366,14 +382,14 @@ def format_60_decklist(result: dict) -> str:
     lines = [f"// {fmt} — Strategy: {result['strategy']}", ""]
     for card, n in result["deck"]:
         container = card.get("container_name") or "—"
-        lines.append(f"{n} {card.get('name_en', '?')}  // 📦 {container}")
+        lines.append(f"{n} {_display_name(card)}  // 📦 {container}")
     coll_basics = result.get("basics_from_collection") or []
     text_basics = result.get("basics") or {}
     if coll_basics or text_basics:
         lines.append("")
         for c in coll_basics:
             container = c.get("container_name") or "—"
-            lines.append(f"1 {c.get('name_en', '?')}  // 📦 {container}")
+            lines.append(f"1 {_display_name(c)}  // 📦 {container}")
         for land, n in sorted(text_basics.items()):
             lines.append(f"{n} {land}")
 
