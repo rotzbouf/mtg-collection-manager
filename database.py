@@ -719,6 +719,18 @@ class Database:
             row = await cur.fetchone()
         return dict(row) if row else None
 
+    async def move_cards_to_container(self, card_ids: list[int], container_id: Optional[int]) -> int:
+        """Move a list of collection entries to a container. Returns number of rows updated."""
+        if not card_ids:
+            return 0
+        placeholders = ",".join("?" * len(card_ids))
+        result = await self._db.execute(
+            f"UPDATE collection SET container_id = ?, updated_at = datetime('now') WHERE id IN ({placeholders})",
+            [container_id, *card_ids],
+        )
+        await self._db.commit()
+        return result.rowcount
+
     async def delete_container(self, container_id: int) -> bool:
         async with self._db.execute(
             "DELETE FROM containers WHERE id = ?", (container_id,)

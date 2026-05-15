@@ -579,6 +579,62 @@ async def container_rename(interaction: discord.Interaction, id: int, name: str)
         await interaction.response.send_message(f"No container with ID {id}.", ephemeral=True)
 
 
+@container_group.command(name="move", description="Move all cards from one container to another")
+@app_commands.describe(source="Source container", destination="Destination container")
+@app_commands.autocomplete(source=container_autocomplete, destination=container_autocomplete)
+async def container_move(interaction: discord.Interaction, source: str, destination: str):
+    if not await require_collector(interaction):
+        return
+    try:
+        src_id, dst_id = int(source), int(destination)
+    except ValueError:
+        await interaction.response.send_message("Invalid container selection.", ephemeral=True)
+        return
+    if src_id == dst_id:
+        await interaction.response.send_message("Source and destination must be different.", ephemeral=True)
+        return
+    src = await bot.db.get_container(src_id)
+    dst = await bot.db.get_container(dst_id)
+    if not src or not dst:
+        await interaction.response.send_message("Container not found.", ephemeral=True)
+        return
+    count = await bot.db.count_cards(container_id=src_id)
+    if count == 0:
+        await interaction.response.send_message(f"📦 **{src['name']}** is empty.", ephemeral=True)
+        return
+    view = _ContainerMoveConfirmView(src_id, src["name"], dst_id, dst["name"], count)
+    await interaction.response.send_message(
+        f"Move **{count}** card(s) from 📦 **{src['name']}** → 📦 **{dst['name']}**?",
+        view=view, ephemeral=True,
+    )
+
+
+class _ContainerMoveConfirmView(discord.ui.View):
+    def __init__(self, src_id: int, src_name: str, dst_id: int, dst_name: str, count: int):
+        super().__init__(timeout=60)
+        self._src_id   = src_id
+        self._src_name = src_name
+        self._dst_id   = dst_id
+        self._dst_name = dst_name
+        self._count    = count
+
+    @discord.ui.button(label="Move", style=discord.ButtonStyle.primary, emoji="📦")
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.stop()
+        cards = await bot.db.list_cards(limit=self._count + 100, container_id=self._src_id)
+        card_ids = [c["id"] for c in cards]
+        n = await bot.db.move_cards_to_container(card_ids, self._dst_id)
+        await interaction.response.edit_message(
+            content=f"Moved **{n}** card(s) from 📦 **{self._src_name}** to 📦 **{self._dst_name}**.",
+            view=None,
+        )
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.stop()
+        await interaction.response.edit_message(content="Cancelled.", view=None)
+
+
 bot.tree.add_command(container_group)
 
 
@@ -1404,16 +1460,46 @@ def _60_embed(result: dict) -> discord.Embed:
     return embed
 
 
+class SaveDeckModal(discord.ui.Modal, title="Save deck to container"):
+    def __init__(self, card_ids: list[int], default_name: str):
+        super().__init__()
+        self._card_ids = card_ids
+        self._name_input = discord.ui.TextInput(
+            label="Container name",
+            default=default_name[:100],
+            max_length=100,
+            placeholder="e.g. My Commander Deck",
+        )
+        self.add_item(self._name_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        name = self._name_input.value.strip()
+        container_id = await _get_or_create_container(name)
+        n = await bot.db.move_cards_to_container(self._card_ids, container_id)
+        await interaction.response.send_message(
+            f"Moved **{n}** card(s) to 📦 **{name}**.", ephemeral=True
+        )
+
+
 class DeckResultView(discord.ui.View):
-    """Shown after a deck proposal — lets the user accept or decline it."""
-    def __init__(self):
+    """Shown after a deck proposal — lets the user accept, save, or decline it."""
+    def __init__(self, card_ids: list[int] = None, deck_name: str = "Deck"):
         super().__init__(timeout=600)
+        self._card_ids = card_ids or []
+        self._deck_name = deck_name
 
     @discord.ui.button(label="Accept", style=discord.ButtonStyle.success, emoji="✅")
     async def accept(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.stop()
         self.clear_items()
         await interaction.response.edit_message(view=self)
+
+    @discord.ui.button(label="Save to Container", style=discord.ButtonStyle.primary, emoji="📦")
+    async def save_to_container(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self._card_ids:
+            await interaction.response.send_message("No collection cards to move.", ephemeral=True)
+            return
+        await interaction.response.send_modal(SaveDeckModal(self._card_ids, self._deck_name))
 
     @discord.ui.button(label="Decline", style=discord.ButtonStyle.danger, emoji="🗑️")
     async def decline(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -1446,9 +1532,17 @@ class CommanderPickView(discord.ui.View):
         result = deckbuilder.build_commander_deck(commander, self._pool)
         embed = _commander_embed(result)
         decklist = deckbuilder.format_commander_decklist(result).encode("utf-8")
-        fname = (commander.get("name_en") or "commander").replace(" ", "_").replace(",", "").lower()
+        cmd_name = commander.get("name_en") or "Commander"
+        fname = cmd_name.replace(" ", "_").replace(",", "").lower()
         file = discord.File(io.BytesIO(decklist), filename=f"{fname}_deck.txt")
-        await interaction.edit_original_response(embed=embed, view=DeckResultView(), attachments=[file])
+        card_ids = (
+            [result["commander"]["id"]] if result["commander"].get("id") else []
+        ) + [c["id"] for c in result["deck"] if c.get("id")]
+        await interaction.edit_original_response(
+            embed=embed,
+            view=DeckResultView(card_ids=card_ids, deck_name=cmd_name),
+            attachments=[file],
+        )
 
 
 deck_group = app_commands.Group(name="deck", description="Build decks from your collection")
@@ -1506,7 +1600,12 @@ async def deck_propose(interaction: discord.Interaction, format: str = "commande
         embed = _60_embed(result)
         decklist = deckbuilder.format_60_decklist(result).encode("utf-8")
         file = discord.File(io.BytesIO(decklist), filename=f"{format}_deck.txt")
-        await interaction.followup.send(embed=embed, file=file, view=DeckResultView())
+        card_ids = [c["id"] for c, _ in result["deck"] if c.get("id")]
+        deck_name = f"{result['strategy']} {format.capitalize()}"
+        await interaction.followup.send(
+            embed=embed, file=file,
+            view=DeckResultView(card_ids=card_ids, deck_name=deck_name),
+        )
 
 
 bot.tree.add_command(deck_group)
