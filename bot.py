@@ -522,6 +522,22 @@ async def container_create(
     )
 
 
+class _ContainerListView(discord.ui.View):
+    """Attaches a 'Browse' button to the /container list response."""
+    def __init__(self):
+        super().__init__(timeout=300)
+
+    @discord.ui.button(label="Browse", emoji="📦", style=discord.ButtonStyle.primary)
+    async def browse(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await require_guest(interaction):
+            return
+        containers = await bot.db.list_containers()
+        view = BrowseContainersView(containers)
+        await interaction.response.send_message(
+            "Select a container to browse:", view=view, ephemeral=True
+        )
+
+
 @container_group.command(name="list", description="List all containers")
 async def container_list(interaction: discord.Interaction):
     if not await require_guest(interaction):
@@ -543,7 +559,7 @@ async def container_list(interaction: discord.Interaction):
         if c.get("description"):
             val += f"\n{c['description']}"
         embed.add_field(name=f"[{c['id']}] {c['name']}", value=val, inline=False)
-    await interaction.response.send_message(embed=embed)
+    await interaction.response.send_message(embed=embed, view=_ContainerListView())
 
 
 @container_group.command(name="delete", description="Delete a container (cards are kept, container link is removed)")
@@ -638,6 +654,26 @@ class _ContainerMoveConfirmView(discord.ui.View):
 bot.tree.add_command(container_group)
 
 
+class _AddAnotherView(discord.ui.View):
+    """Shown after /add — lets the user add one more copy of the same card."""
+    def __init__(self, card: dict, added_by: str, count: int, base_desc: str):
+        super().__init__(timeout=120)
+        self._card = card
+        self._added_by = added_by
+        self._count = count
+        self._base_desc = base_desc
+
+    @discord.ui.button(label="➕ Noch eine Kopie", style=discord.ButtonStyle.success)
+    async def add_another(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await require_collector(interaction):
+            return
+        new_id = await bot.db.add_card(self._card, added_by=self._added_by)
+        self._count += 1
+        embed = card_embed(self._card, title_prefix="Added ✅  ")
+        embed.description = self._base_desc + f"\n➕ +{self._count - 1} weitere Kopi{'e' if self._count - 1 == 1 else 'en'} hinzugefügt (letzte ID: **{new_id}**)"
+        await interaction.response.edit_message(embed=embed, view=self)
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # /add
 # ──────────────────────────────────────────────────────────────────────────────
@@ -718,11 +754,13 @@ async def cmd_add(
 
     card["id"] = ids[0]
     lang_flag = LANG_EMOJI.get(card["language"], card["language"].upper())
-    embed = card_embed(card, title_prefix="Added ✅  ")
     new_tag = "  *(container created)*" if container and not container.isdigit() and container_name == container else ""
     id_range = f"IDs **{ids[0]}–{ids[-1]}**" if len(ids) > 1 else f"ID **{ids[0]}**"
-    embed.description = f"Saved as {id_range} ({len(ids)} cop{'y' if len(ids)==1 else 'ies'}) | Language {lang_flag}{new_tag}"
-    await interaction.followup.send(embed=embed)
+    desc = f"Saved as {id_range} ({len(ids)} cop{'y' if len(ids)==1 else 'ies'}) | Language {lang_flag}{new_tag}"
+    embed = card_embed(card, title_prefix="Added ✅  ")
+    embed.description = desc
+    view = _AddAnotherView(card, str(interaction.user.id), len(ids), desc)
+    await interaction.followup.send(embed=embed, view=view)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -835,16 +873,63 @@ def _nav_buttons(view: discord.ui.View, page: int, pages: int,
         view.add_item(btn)
 
 
+def _card_select_label(c: dict) -> str:
+    name = (c.get("printed_name") or c.get("name_en") or "Unknown")[:80]
+    foil = " ✨" if c.get("foil") else ""
+    lang = f" [{(c.get('language') or 'en').upper()}]" if c.get("language") != "en" else ""
+    return f"{name}{foil}{lang}"[:100]
+
+
+def _card_select_desc(c: dict) -> str:
+    parts = [(c.get("set_code") or "?").upper(), c.get("condition", "NM")]
+    if c.get("price_eur"):
+        parts.append(f"€{c['price_eur']:.2f}")
+    if c.get("container_name"):
+        parts.append(f"📦 {c['container_name']}")
+    return "  ·  ".join(parts)[:100]
+
+
+def _add_card_select(view: discord.ui.View, cards: list[dict], row: int = 0) -> None:
+    """Add a card picker Select to a view. Selecting opens the card manage panel."""
+    if not cards:
+        return
+    options = [
+        discord.SelectOption(
+            label=_card_select_label(c),
+            value=str(c["id"]),
+            description=_card_select_desc(c),
+        )
+        for c in cards[:25]
+    ]
+    sel = discord.ui.Select(placeholder="Karte öffnen…", options=options, row=row)
+
+    async def _on_card(interaction: discord.Interaction):
+        card_id = int(interaction.data["values"][0])
+        card = await bot.db.get_card(card_id)
+        if not card:
+            await interaction.response.send_message("Karte nicht gefunden.", ephemeral=True)
+            return
+        await interaction.response.send_message(
+            embed=_card_manage_embed(card),
+            view=CardManageView(card, None, 0),
+            ephemeral=True,
+        )
+
+    sel.callback = _on_card
+    view.add_item(sel)
+
+
 class ListPageView(discord.ui.View):
     def __init__(self, page: int, pages: int, total: int,
-                 sort: str, language: str):
+                 sort: str, language: str, cards: list[dict]):
         super().__init__(timeout=300)
         self._page = page
         self._pages = pages
         self._total = total
         self._sort = sort
         self._language = language
-        _nav_buttons(self, page, pages, self._prev, self._next)
+        _add_card_select(self, cards, row=0)
+        _nav_buttons(self, page, pages, self._prev, self._next, row=1)
 
     async def _go(self, interaction: discord.Interaction, page: int):
         cards = await bot.db.list_cards(
@@ -854,7 +939,7 @@ class ListPageView(discord.ui.View):
             language=self._language or None,
         )
         embed, _ = paginate_embeds(cards, page, per_page=_LIST_PER_PAGE, total=self._total)
-        view = ListPageView(page, self._pages, self._total, self._sort, self._language)
+        view = ListPageView(page, self._pages, self._total, self._sort, self._language, cards)
         await interaction.response.edit_message(embed=embed, view=view)
 
     async def _prev(self, interaction: discord.Interaction):
@@ -865,13 +950,14 @@ class ListPageView(discord.ui.View):
 
 
 class SearchPageView(discord.ui.View):
-    def __init__(self, query: str, page: int, pages: int, total: int):
+    def __init__(self, query: str, page: int, pages: int, total: int, cards: list[dict]):
         super().__init__(timeout=300)
         self._query = query
         self._page = page
         self._pages = pages
         self._total = total
-        _nav_buttons(self, page, pages, self._prev, self._next)
+        _add_card_select(self, cards, row=0)
+        _nav_buttons(self, page, pages, self._prev, self._next, row=1)
 
     async def _go(self, interaction: discord.Interaction, page: int):
         results = await bot.db.search(
@@ -880,7 +966,7 @@ class SearchPageView(discord.ui.View):
         )
         embed, _ = paginate_embeds(results, page, per_page=_SEARCH_PER_PAGE, total=self._total)
         embed.title = f'Search: "{self._query}"  —  {self._total} result(s)'
-        view = SearchPageView(self._query, page, self._pages, self._total)
+        view = SearchPageView(self._query, page, self._pages, self._total, results)
         await interaction.response.edit_message(embed=embed, view=view)
 
     async def _prev(self, interaction: discord.Interaction):
@@ -912,7 +998,7 @@ async def cmd_search(interaction: discord.Interaction, query: str):
     results = await bot.db.search(query, limit=_SEARCH_PER_PAGE, offset=0)
     embed, _ = paginate_embeds(results, 1, per_page=_SEARCH_PER_PAGE, total=total)
     embed.title = f'Search: "{query}"  —  {total} result(s)'
-    view = SearchPageView(query, 1, pages, total) if pages > 1 else None
+    view = SearchPageView(query, 1, pages, total, results)
     await interaction.followup.send(embed=embed, view=view)
 
 
@@ -960,7 +1046,7 @@ async def cmd_list(
         language=language or None,
     )
     embed, _ = paginate_embeds(cards, page, per_page=_LIST_PER_PAGE, total=total)
-    view = ListPageView(page, pages, total, sort, language) if pages > 1 else None
+    view = ListPageView(page, pages, total, sort, language, cards)
     await interaction.followup.send(embed=embed, view=view)
 
 
@@ -977,7 +1063,11 @@ async def cmd_card(interaction: discord.Interaction, id: int):
     if not card:
         await interaction.response.send_message(f"No card with ID {id}.", ephemeral=True)
         return
-    await interaction.response.send_message(embed=card_embed(card))
+    await interaction.response.send_message(
+        embed=_card_manage_embed(card),
+        view=CardManageView(card, None, 0),
+        ephemeral=True,
+    )
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -2228,17 +2318,14 @@ class BrowseCardsView(discord.ui.View):
 
     @staticmethod
     def _label(c: dict) -> str:
-        name = ((c.get("printed_name") or c.get("name_en") or "Unknown"))[:80]
-        foil = " ✨" if c.get("foil") else ""
-        lang = f" [{(c.get('language') or 'en').upper()}]" if c.get("language") != "en" else ""
-        return f"{name}{foil}{lang}"[:100]
+        return _card_select_label(c)
 
     @staticmethod
     def _desc(c: dict) -> str:
         parts = [(c.get("set_code") or "?").upper(), c.get("condition", "NM")]
         if c.get("price_eur"):
             parts.append(f"€{c['price_eur']:.2f}")
-        return " · ".join(parts)[:100]
+        return "  ·  ".join(parts)[:100]
 
     def make_embed(self) -> discord.Embed:
         c = self._container
@@ -2279,11 +2366,16 @@ class BrowseCardsView(discord.ui.View):
 
 
 class CardManageView(discord.ui.View):
-    def __init__(self, card: dict, container: dict, page: int):
+    def __init__(self, card: dict, container: Optional[dict], page: int):
         super().__init__(timeout=300)
         self._card = card
         self._container = container
         self._page = page
+        if container is None:
+            for item in self.children:
+                if isinstance(item, discord.ui.Button) and item.label == "◀ Back":
+                    item.label = "✕ Close"
+                    break
 
     @discord.ui.button(label="Move", style=discord.ButtonStyle.primary, emoji="📦", row=0)
     async def move(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -2334,6 +2426,9 @@ class CardManageView(discord.ui.View):
 
     @discord.ui.button(label="◀ Back", style=discord.ButtonStyle.secondary, row=1)
     async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self._container is None:
+            await interaction.response.edit_message(embed=None, view=None)
+            return
         total = await bot.db.count_cards(container_id=self._container["id"])
         page = min(self._page, max(0, (total - 1) // _BROWSE_PAGE_SIZE)) if total else 0
         cards = await bot.db.list_cards(limit=_BROWSE_PAGE_SIZE, offset=page * _BROWSE_PAGE_SIZE, container_id=self._container["id"])
@@ -2387,6 +2482,9 @@ class _BrowseDeleteConfirmView(discord.ui.View):
         self.stop()
         name = self._card.get("name_en") or "Card"
         await bot.db.remove_card(self._card["id"])
+        if self._container is None:
+            await interaction.response.edit_message(content=f"**{name}** removed.", embed=None, view=None)
+            return
         total = await bot.db.count_cards(container_id=self._container["id"])
         page = min(self._page, max(0, (total - 1) // _BROWSE_PAGE_SIZE)) if total else 0
         cards = await bot.db.list_cards(limit=_BROWSE_PAGE_SIZE, offset=page * _BROWSE_PAGE_SIZE, container_id=self._container["id"])
