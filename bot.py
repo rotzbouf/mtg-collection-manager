@@ -27,6 +27,7 @@ from discord.ext import commands, tasks
 
 import deckbuilder
 import exporter as exp
+import importer as imp
 import scanner
 from database import Database
 from scryfall import ScryfallClient
@@ -1026,6 +1027,156 @@ async def cmd_export(interaction: discord.Interaction, format: str = "moxfield")
         f"Exported **{len(cards)}** entries as `{filename}`.",
         file=file,
     )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# /import
+# ──────────────────────────────────────────────────────────────────────────────
+
+async def _get_or_create_container(name: str) -> int:
+    containers = await bot.db.list_containers()
+    match = next((c for c in containers if c["name"].lower() == name.lower()), None)
+    if match:
+        return match["id"]
+    return await bot.db.create_container(name)
+
+
+class ImportConfirmView(discord.ui.View):
+    def __init__(self, rows: list[dict], fmt: str, container_id: Optional[int], added_by: str):
+        super().__init__(timeout=120)
+        self._rows = rows
+        self._fmt = fmt
+        self._container_id = container_id
+        self._added_by = added_by
+
+    @discord.ui.button(label="Import", style=discord.ButtonStyle.success, emoji="📥")
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.stop()
+        await interaction.response.defer()
+
+        if self._fmt == "moxfield_csv":
+            total = sum(r["count"] for r in self._rows)
+        else:
+            total = len(self._rows)
+
+        added = skipped = 0
+        await interaction.edit_original_response(content=f"Importing… 0 / {total}", view=None)
+
+        if self._fmt == "moxfield_csv":
+            for row in self._rows:
+                card = None
+                if row["collector_number"] and row["set_code"]:
+                    card = await bot.scryfall.get_by_collector(
+                        row["set_code"], row["collector_number"], row["language"]
+                    )
+                    # Fallback: EN print (prices are there even for DE cards)
+                    if not card and row["language"] != "en":
+                        card = await bot.scryfall.get_by_collector(
+                            row["set_code"], row["collector_number"], "en"
+                        )
+                if not card:
+                    card = await bot.scryfall.get_by_name(row["name"], fuzzy=True, set_code=row["set_code"])
+                if not card:
+                    skipped += row["count"]
+                    continue
+                card["condition"] = row["condition"]
+                card["language"] = row["language"]
+                card["foil"] = 1 if row["foil"] else 0
+                card["container_id"] = self._container_id
+                for _ in range(row["count"]):
+                    await bot.db.add_card(card, added_by=self._added_by)
+                    added += 1
+                if added % 10 == 0 or skipped:
+                    await interaction.edit_original_response(
+                        content=f"Importing… {added + skipped} / {total}"
+                    )
+        else:
+            for row in self._rows:
+                try:
+                    card, container_name = imp.normalize_row(row)
+                    if container_name:
+                        card["container_id"] = await _get_or_create_container(container_name)
+                    await bot.db.add_card(card, added_by=self._added_by)
+                    added += 1
+                except Exception as exc:
+                    logger.warning("Import: skipped row — %s", exc)
+                    skipped += 1
+                if (added + skipped) % 10 == 0:
+                    await interaction.edit_original_response(
+                        content=f"Importing… {added + skipped} / {total}"
+                    )
+
+        msg = f"Import complete — **{added}** card(s) added."
+        if skipped:
+            msg += f" {skipped} could not be resolved and were skipped."
+        await interaction.edit_original_response(content=msg)
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.stop()
+        await interaction.response.edit_message(content="Import cancelled.", view=None)
+
+
+@bot.tree.command(name="import", description="Import cards from a Moxfield CSV or bot export file")
+@app_commands.describe(
+    file="Moxfield CSV, bot full CSV export, or bot JSON export",
+    container="Assign all cards to this container (Moxfield CSV only; leave blank to keep original containers)",
+)
+@app_commands.autocomplete(container=container_autocomplete)
+async def cmd_import(
+    interaction: discord.Interaction,
+    file: discord.Attachment,
+    container: Optional[str] = None,
+):
+    if not await require_collector(interaction):
+        return
+    await interaction.response.defer(thinking=True, ephemeral=True)
+    await interaction.edit_original_response(content="Reading file…")
+
+    raw = await file.read()
+    try:
+        fmt = imp.detect_format(file.filename, raw)
+    except ValueError as exc:
+        await interaction.edit_original_response(content=str(exc))
+        return
+
+    await interaction.edit_original_response(content="Parsing…")
+    try:
+        if fmt == "moxfield_csv":
+            rows = imp.parse_moxfield_csv(raw)
+        elif fmt == "full_csv":
+            rows = imp.parse_full_csv(raw)
+        else:
+            rows = imp.parse_json(raw)
+    except Exception as exc:
+        await interaction.edit_original_response(content=f"Could not parse file: {exc}")
+        return
+
+    if not rows:
+        await interaction.edit_original_response(content="No cards found in the file.")
+        return
+
+    # Resolve target container (Moxfield CSV only)
+    container_id: Optional[int] = None
+    container_label = ""
+    if container and fmt == "moxfield_csv":
+        container_id = await _get_or_create_container(container)
+        containers = await bot.db.list_containers()
+        c = next((c for c in containers if c["id"] == container_id), None)
+        container_label = f" into 📦 **{c['name']}**" if c else ""
+
+    total_cards = sum(r["count"] for r in rows) if fmt == "moxfield_csv" else len(rows)
+    unique_rows = len(rows)
+
+    lines = [
+        f"**{unique_rows}** unique entr{'y' if unique_rows == 1 else 'ies'} → **{total_cards}** card(s) to import{container_label}",
+        f"Format: `{fmt}`",
+    ]
+    if fmt == "moxfield_csv":
+        lines.append("Each card will be looked up on Scryfall — large imports may take a moment.")
+
+    view = ImportConfirmView(rows, fmt, container_id, interaction.user.display_name)
+    await interaction.edit_original_response(content="\n".join(lines), view=view)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
