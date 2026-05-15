@@ -810,6 +810,87 @@ async def cmd_scan(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Paginated list / search views
+# ──────────────────────────────────────────────────────────────────────────────
+
+_LIST_PER_PAGE = 10
+_SEARCH_PER_PAGE = 10
+
+
+def _nav_buttons(view: discord.ui.View, page: int, pages: int,
+                 prev_cb, next_cb, *, row: int = 0) -> None:
+    """Add ◀ [page/pages] ▶ buttons to a view."""
+    if page > 1:
+        btn = discord.ui.Button(label="◀ Prev", style=discord.ButtonStyle.secondary, row=row)
+        btn.callback = prev_cb
+        view.add_item(btn)
+    indicator = discord.ui.Button(
+        label=f"{page} / {pages}", style=discord.ButtonStyle.secondary,
+        disabled=True, row=row,
+    )
+    view.add_item(indicator)
+    if page < pages:
+        btn = discord.ui.Button(label="Next ▶", style=discord.ButtonStyle.secondary, row=row)
+        btn.callback = next_cb
+        view.add_item(btn)
+
+
+class ListPageView(discord.ui.View):
+    def __init__(self, page: int, pages: int, total: int,
+                 sort: str, language: str):
+        super().__init__(timeout=300)
+        self._page = page
+        self._pages = pages
+        self._total = total
+        self._sort = sort
+        self._language = language
+        _nav_buttons(self, page, pages, self._prev, self._next)
+
+    async def _go(self, interaction: discord.Interaction, page: int):
+        cards = await bot.db.list_cards(
+            limit=_LIST_PER_PAGE,
+            offset=(page - 1) * _LIST_PER_PAGE,
+            sort=self._sort,
+            language=self._language or None,
+        )
+        embed, _ = paginate_embeds(cards, page, per_page=_LIST_PER_PAGE, total=self._total)
+        view = ListPageView(page, self._pages, self._total, self._sort, self._language)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+    async def _prev(self, interaction: discord.Interaction):
+        await self._go(interaction, self._page - 1)
+
+    async def _next(self, interaction: discord.Interaction):
+        await self._go(interaction, self._page + 1)
+
+
+class SearchPageView(discord.ui.View):
+    def __init__(self, query: str, page: int, pages: int, total: int):
+        super().__init__(timeout=300)
+        self._query = query
+        self._page = page
+        self._pages = pages
+        self._total = total
+        _nav_buttons(self, page, pages, self._prev, self._next)
+
+    async def _go(self, interaction: discord.Interaction, page: int):
+        results = await bot.db.search(
+            self._query, limit=_SEARCH_PER_PAGE,
+            offset=(page - 1) * _SEARCH_PER_PAGE,
+        )
+        embed, _ = paginate_embeds(results, page, per_page=_SEARCH_PER_PAGE, total=self._total)
+        embed.title = f'Search: "{self._query}"  —  {self._total} result(s)'
+        view = SearchPageView(self._query, page, self._pages, self._total)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+    async def _prev(self, interaction: discord.Interaction):
+        await self._go(interaction, self._page - 1)
+
+    async def _next(self, interaction: discord.Interaction):
+        await self._go(interaction, self._page + 1)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # /search
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -823,13 +904,16 @@ async def cmd_search(interaction: discord.Interaction, query: str):
         await interaction.response.send_message("Please enter a search term.", ephemeral=True)
         return
     await interaction.response.defer(thinking=True)
-    results = await bot.db.search(query, limit=15)
-    if not results:
+    total = await bot.db.count_search(query)
+    if not total:
         await interaction.followup.send(f"No results for **{query}**.", ephemeral=True)
         return
-    embed, _ = paginate_embeds(results, 1, per_page=15)
-    embed.title = f'Search: "{query}"  —  {len(results)} result(s)'
-    await interaction.followup.send(embed=embed)
+    pages = max(1, (total + _SEARCH_PER_PAGE - 1) // _SEARCH_PER_PAGE)
+    results = await bot.db.search(query, limit=_SEARCH_PER_PAGE, offset=0)
+    embed, _ = paginate_embeds(results, 1, per_page=_SEARCH_PER_PAGE, total=total)
+    embed.title = f'Search: "{query}"  —  {total} result(s)'
+    view = SearchPageView(query, 1, pages, total) if pages > 1 else None
+    await interaction.followup.send(embed=embed, view=view)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -863,21 +947,21 @@ async def cmd_list(
     if not await require_guest(interaction):
         return
     await interaction.response.defer(thinking=True)
-    per_page = 10
     total = await bot.db.count_cards(language=language or None)
     if not total:
         await interaction.followup.send("Your collection is empty.", ephemeral=True)
         return
-    pages = max(1, (total + per_page - 1) // per_page)
+    pages = max(1, (total + _LIST_PER_PAGE - 1) // _LIST_PER_PAGE)
     page = max(1, min(page, pages))
     cards = await bot.db.list_cards(
-        limit=per_page,
-        offset=(page - 1) * per_page,
+        limit=_LIST_PER_PAGE,
+        offset=(page - 1) * _LIST_PER_PAGE,
         sort=sort,
         language=language or None,
     )
-    embed, _ = paginate_embeds(cards, page, per_page=per_page, total=total)
-    await interaction.followup.send(embed=embed)
+    embed, _ = paginate_embeds(cards, page, per_page=_LIST_PER_PAGE, total=total)
+    view = ListPageView(page, pages, total, sort, language) if pages > 1 else None
+    await interaction.followup.send(embed=embed, view=view)
 
 
 # ──────────────────────────────────────────────────────────────────────────────

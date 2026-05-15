@@ -425,6 +425,18 @@ class Database:
             row = await cur.fetchone()
         return _row_to_dict(row) if row else None
 
+    async def count_search(self, query: str) -> int:
+        async with self._db.execute(
+            """
+            SELECT COUNT(*) FROM collection c
+            JOIN collection_fts fts ON c.id = fts.rowid
+            WHERE collection_fts MATCH ?
+            """,
+            (query,),
+        ) as cur:
+            row = await cur.fetchone()
+        return row[0] if row else 0
+
     async def search(self, query: str, limit: int = 20, offset: int = 0) -> list[dict]:
         async with self._db.execute(
             """
