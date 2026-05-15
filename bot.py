@@ -2431,7 +2431,7 @@ class CardManageView(discord.ui.View):
     @discord.ui.button(label="◀ Back", style=discord.ButtonStyle.secondary, row=1)
     async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self._container is None:
-            await interaction.response.edit_message(embed=None, view=None)
+            await interaction.response.edit_message(content="✕", embed=None, view=None)
             return
         total = await bot.db.count_cards(container_id=self._container["id"])
         page = min(self._page, max(0, (total - 1) // _BROWSE_PAGE_SIZE)) if total else 0
