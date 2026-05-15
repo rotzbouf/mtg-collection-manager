@@ -13,6 +13,7 @@ search and export your collection, and generate deck proposals — all from Disc
 | **Add by name** | Resolves English or German card names via Scryfall; auto-detects language |
 | **Add by photo** | OCR reads card name, set code, collector number, and language from the photo; matched via Scryfall |
 | **Auto-scan channel** | Drop any image in the configured channel — the bot processes it instantly |
+| **Localised card text** | Type line, oracle text, and flavour text are stored in the card's own language (DE cards get German text) |
 | **Containers** | Organise cards into named binders, boxes, decks, trade piles, etc. |
 | **Full-text search** | SQLite FTS5 across name, type, oracle text, set, flavour text, notes |
 | **Chaos sort** | MTG-native sort: W→U→B→R→G→Multi→Colourless→Land, then type, then CMC |
@@ -21,8 +22,10 @@ search and export your collection, and generate deck proposals — all from Disc
 | **Deckbuilder** | Auto-generates Commander (100-card) or 60-card (Timeless/Standard) proposals |
 | **Showcase** | `/showcase` displays the 5 most valuable cards with image, details, and a price-history chart |
 | **Price history** | Prices are snapshotted daily; history chart auto-appears once 2+ data points exist |
+| **Null-price refresh** | Cards added without a EUR price are automatically re-checked against Scryfall daily |
 | **Overcount** | `/overcount` lists every non-basic-land card that appears more than 4 times, with per-container breakdown |
-| **Backup & restore** | `/backup create` downloads a `.db` snapshot; `/backup restore` replaces the database from a file |
+| **Backup & restore** | `/backup create` saves a copy on the server and sends a compressed `.db.gz`; `/backup restore` accepts both formats |
+| **Resync** | `/resync` re-fetches fresh Scryfall data (text, prices, image) for one or all cards |
 
 ---
 
@@ -122,6 +125,9 @@ DISCORD_DECKBUILDER_CHANNEL_ID=
 # Channel where /search works (leave blank = any channel)
 DISCORD_SEARCH_CHANNEL_ID=
 
+# Directory for server-side backup copies (relative or absolute path)
+BACKUP_DIR=backups
+
 # Role-based access control (role name or role ID; leave blank = everyone)
 DISCORD_GUEST_ROLE=
 DISCORD_COLLECTOR_ROLE=
@@ -155,7 +161,7 @@ Admin  ≥  Collector  ≥  Guest
 |---|---|---|
 | `DISCORD_GUEST_ROLE` | Guest (read-only) | `/list`, `/card`, `/search`, `/stats`, `/export`, `/container list`, `/deck propose` |
 | `DISCORD_COLLECTOR_ROLE` | Collector | `/add`, `/scan`, `/update`, `/container create` + all Guest commands |
-| `DISCORD_ADMIN_ROLE` | Admin | `/remove`, `/container delete`, `/container rename` + all Collector commands |
+| `DISCORD_ADMIN_ROLE` | Admin | `/remove`, `/container delete`, `/container rename`, `/resync`, `/backup create`, `/backup restore` + all Collector commands |
 
 Each variable accepts a **role name** (e.g. `Guest`) or a **role ID** (e.g. `123456789`).
 
@@ -318,6 +324,8 @@ Displays the 5 most valuable cards in your collection, one embed per card:
 
 Prices are recorded automatically once per day in the background. The chart appears without any manual action after the bot has been running for two days.
 
+A second background task runs daily to back-fill EUR prices for cards that had no price when they were first added (e.g. older or niche printings). No manual action needed.
+
 If `DISCORD_SHOWCASE_CHANNEL_ID` is set, this command is restricted to that channel.
 
 ---
@@ -339,6 +347,21 @@ Change a single field on an existing entry.
 /update id:42 field:foil value:1
 /update id:42 field:notes value:"signed by artist"
 ```
+
+#### `/resync`
+
+Re-fetches fresh data from Scryfall and updates all Scryfall-sourced fields: card text, type line, flavour text, prices, and image URL. Sort keys are recomputed. Collection metadata (condition, foil, language, notes, container) is preserved.
+
+| Parameter | Required | Description |
+|---|---|---|
+| `id` | no | Collection ID of the card to resync; omit to resync every card in the collection |
+
+```
+/resync             ← refreshes all cards (shows progress every 25 cards)
+/resync id:42       ← refreshes this entry and all copies sharing the same Scryfall ID
+```
+
+> **Use case:** After the bot update that introduced localised card text, run `/resync` once to backfill German text for all existing DE cards.
 
 #### `/remove`
 
@@ -405,14 +428,18 @@ Backup and restore commands are admin-only.
 
 #### `/backup create`
 
-Creates a consistent snapshot of the current database and sends it as an ephemeral file attachment (e.g. `mtg_collection_20260514_143022.db`).
+Creates a consistent snapshot of the current database:
+
+1. Saves an uncompressed `.db` copy in `BACKUP_DIR` on the server (default: `./backups/`)
+2. Sends a gzip-compressed `.db.gz` as an ephemeral Discord attachment for download
+
 The snapshot is taken online — no downtime or connection interruption required.
 
 #### `/backup restore`
 
 Restores the database from a previously created backup file.
 
-1. Attach the `.db` file produced by `/backup create`
+1. Attach a `.db` or `.db.gz` file (both formats accepted)
 2. The bot validates the file and shows a confirmation embed with the card and container counts found in the backup
 3. Confirm to replace the current database — all changes made after the backup was created will be lost
 4. The bot reinitialises the database and applies any pending migrations automatically
