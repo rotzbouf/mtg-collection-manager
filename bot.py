@@ -13,8 +13,10 @@ warnings.filterwarnings("ignore", message=".*pin_memory.*")
 
 import asyncio
 import difflib
+import gzip
 import io
 import logging
+import pathlib
 import sys
 from datetime import datetime, timezone
 from typing import NamedTuple, Optional
@@ -57,6 +59,7 @@ GUEST_ROLE        = os.getenv("DISCORD_GUEST_ROLE",     "")   # read-only comman
 COLLECTOR_ROLE    = os.getenv("DISCORD_COLLECTOR_ROLE", "")   # add / scan / update
 ADMIN_ROLE        = os.getenv("DISCORD_ADMIN_ROLE",     "")   # remove / container mgmt / index rebuild
 DEBUG_SCAN_PREVIEW = os.getenv("DEBUG_SCAN_PREVIEW", "0") == "1"  # send processed image for debugging
+BACKUP_DIR = pathlib.Path(os.getenv("BACKUP_DIR", "backups"))
 
 # Running index-build task (update or rebuild); None when idle
 CONDITIONS = ["NM", "LP", "MP", "HP", "DMG"]
@@ -1371,11 +1374,26 @@ async def backup_create(interaction: discord.Interaction):
         await interaction.edit_original_response(content=f"Backup failed: {exc}")
         return
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    filename = f"mtg_collection_{ts}.db"
-    size_kb = len(data) / 1024
+    base_filename = f"mtg_collection_{ts}.db"
+
+    # Save uncompressed copy to server
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    local_path = BACKUP_DIR / base_filename
+    await asyncio.to_thread(local_path.write_bytes, data)
+
+    # Compress for Discord upload
+    await interaction.edit_original_response(content="Compressing for upload...")
+    gz_data = await asyncio.to_thread(gzip.compress, data, compresslevel=6)
+    gz_filename = base_filename + ".gz"
+    size_raw_mb = len(data) / 1024 / 1024
+    size_gz_kb = len(gz_data) / 1024
+
+    await interaction.edit_original_response(
+        content=f"Backup saved on server: `{local_path}` ({size_raw_mb:.1f} MB)"
+    )
     await interaction.followup.send(
-        content=f"Backup created — `{filename}` ({size_kb:.1f} KB). Download the attached file to keep a local copy.",
-        file=discord.File(io.BytesIO(data), filename=filename),
+        content=f"Compressed backup for download — `{gz_filename}` ({size_gz_kb:.1f} KB).",
+        file=discord.File(io.BytesIO(gz_data), filename=gz_filename),
         ephemeral=True,
     )
 
@@ -1386,11 +1404,16 @@ async def backup_restore(interaction: discord.Interaction, file: discord.Attachm
     if not await require_admin(interaction):
         return
     await interaction.response.defer(thinking=True, ephemeral=True)
-    if not file.filename.endswith(".db"):
-        await interaction.followup.send("Please attach a `.db` backup file.", ephemeral=True)
+    if not (file.filename.endswith(".db") or file.filename.endswith(".db.gz")):
+        await interaction.followup.send("Please attach a `.db` or `.db.gz` backup file.", ephemeral=True)
         return
     await interaction.edit_original_response(content="Reading backup file...")
-    data = await file.read()
+    raw = await file.read()
+    if file.filename.endswith(".gz"):
+        await interaction.edit_original_response(content="Decompressing backup...")
+        data = await asyncio.to_thread(gzip.decompress, raw)
+    else:
+        data = raw
     await interaction.edit_original_response(content="Validating backup...")
     try:
         counts = await Database.inspect_backup(data)
