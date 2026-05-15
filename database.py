@@ -314,6 +314,85 @@ class Database:
         "price_usd", "price_eur", "container_id",
     })
 
+    async def get_distinct_scryfall_ids(self) -> list[str]:
+        """Return all distinct scryfall_ids present in the collection."""
+        async with self._db.execute(
+            "SELECT DISTINCT scryfall_id FROM collection WHERE scryfall_id IS NOT NULL"
+        ) as cur:
+            return [row[0] for row in await cur.fetchall()]
+
+    async def resync_card(self, scryfall_id: str, card: dict) -> int:
+        """Overwrite all Scryfall-sourced fields for every row with this scryfall_id.
+
+        Preserves collection metadata (language, condition, foil, notes, container_id).
+        Recomputes sort keys. Returns number of rows updated.
+        """
+        colors = card.get("colors", [])
+        type_line = card.get("type_line", "")
+        cmc = card.get("cmc", 0) or 0
+        chaos_key = compute_chaos_key(colors, type_line, cmc, card.get("name_en", ""))
+        c_order = color_sort_order(colors, type_line)
+        t_order = type_sort_order(type_line)
+
+        result = await self._db.execute(
+            """
+            UPDATE collection SET
+                name_en        = :name_en,
+                name_de        = COALESCE(:name_de, name_de),
+                printed_name   = :printed_name,
+                set_name       = :set_name,
+                rarity         = :rarity,
+                colors         = :colors,
+                color_identity = :color_identity,
+                mana_cost      = :mana_cost,
+                cmc            = :cmc,
+                type_line      = :type_line,
+                oracle_text    = :oracle_text,
+                flavor_text    = :flavor_text,
+                power          = :power,
+                toughness      = :toughness,
+                loyalty        = :loyalty,
+                keywords       = :keywords,
+                legalities     = :legalities,
+                price_usd      = COALESCE(:price_usd, price_usd),
+                price_eur      = COALESCE(:price_eur, price_eur),
+                image_url      = :image_url,
+                chaos_key      = :chaos_key,
+                color_order    = :color_order,
+                type_order     = :type_order,
+                updated_at     = datetime('now')
+            WHERE scryfall_id = :scryfall_id
+            """,
+            {
+                "scryfall_id": scryfall_id,
+                "name_en": card.get("name_en", ""),
+                "name_de": card.get("name_de"),
+                "printed_name": card.get("printed_name"),
+                "set_name": card.get("set_name"),
+                "rarity": card.get("rarity"),
+                "colors": json.dumps(colors),
+                "color_identity": json.dumps(card.get("color_identity", [])),
+                "mana_cost": card.get("mana_cost"),
+                "cmc": cmc,
+                "type_line": type_line,
+                "oracle_text": card.get("oracle_text"),
+                "flavor_text": card.get("flavor_text"),
+                "power": card.get("power"),
+                "toughness": card.get("toughness"),
+                "loyalty": card.get("loyalty"),
+                "keywords": json.dumps(card.get("keywords", [])),
+                "legalities": json.dumps(card.get("legalities", {})),
+                "price_usd": card.get("price_usd"),
+                "price_eur": card.get("price_eur"),
+                "image_url": card.get("image_url"),
+                "chaos_key": chaos_key,
+                "color_order": c_order,
+                "type_order": t_order,
+            },
+        )
+        await self._db.commit()
+        return result.rowcount
+
     async def update_card(self, card_id: int, field: str, value: Any) -> bool:
         if field not in self._UPDATABLE_FIELDS:
             return False
