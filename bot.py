@@ -1374,8 +1374,11 @@ async def backup_create(interaction: discord.Interaction):
     filename = f"mtg_collection_{ts}.db"
     size_kb = len(data) / 1024
     await interaction.edit_original_response(
-        content=f"Backup created — `{filename}` ({size_kb:.1f} KB). Download the attached file to keep a local copy.",
-        attachments=[discord.File(io.BytesIO(data), filename=filename)],
+        content=f"Backup created — `{filename}` ({size_kb:.1f} KB). Download the attached file to keep a local copy."
+    )
+    await interaction.followup.send(
+        file=discord.File(io.BytesIO(data), filename=filename),
+        ephemeral=True,
     )
 
 
