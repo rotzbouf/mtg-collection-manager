@@ -30,8 +30,9 @@ def _extract_card(data: dict, preferred_lang: Optional[str] = None) -> dict:
 
     # Image
     images = data.get("image_uris", {})
-    if not images and data.get("card_faces"):
-        images = data["card_faces"][0].get("image_uris", {})
+    faces = data.get("card_faces")
+    if not images and faces:
+        images = faces[0].get("image_uris", {})
     image_url = images.get("normal") or images.get("small")
 
     # English vs German name
@@ -42,6 +43,19 @@ def _extract_card(data: dict, preferred_lang: Optional[str] = None) -> dict:
     else:
         name_en = data.get("name", "")  # Scryfall always gives oracle name
         name_de = data.get("printed_name") if lang == "de" else None
+
+    # For non-English cards use the localized printed fields when available
+    if lang != "en":
+        type_line = data.get("printed_type_line") or data.get("type_line", "")
+        oracle_text = (
+            data.get("printed_text")
+            or (faces[0].get("printed_text") if faces else None)
+            or data.get("oracle_text")
+            or (faces[0].get("oracle_text") if faces else None)
+        )
+    else:
+        type_line = data.get("type_line", "")
+        oracle_text = data.get("oracle_text") or (faces[0].get("oracle_text") if faces else None)
 
     return {
         "scryfall_id": data.get("id"),
@@ -58,10 +72,8 @@ def _extract_card(data: dict, preferred_lang: Optional[str] = None) -> dict:
         "color_identity": data.get("color_identity", []),
         "mana_cost": data.get("mana_cost"),
         "cmc": data.get("cmc", 0),
-        "type_line": data.get("type_line", ""),
-        "oracle_text": data.get("oracle_text") or (
-            data["card_faces"][0].get("oracle_text") if data.get("card_faces") else None
-        ),
+        "type_line": type_line,
+        "oracle_text": oracle_text,
         "flavor_text": data.get("flavor_text"),
         "power": data.get("power"),
         "toughness": data.get("toughness"),
@@ -177,13 +189,12 @@ class ScryfallClient:
             if en_card:
                 card["name_de"] = card.get("printed_name")
                 card["name_en"] = en_card["name_en"]
-                card["oracle_text"] = en_card["oracle_text"]
                 if not card.get("price_eur"):
                     card["price_eur"] = en_card.get("price_eur")
                 if not card.get("price_usd"):
                     card["price_usd"] = en_card.get("price_usd")
             else:
-                logger.warning("resolve_card: English lookup failed for '%s' — oracle_text may be in German", card["name_en"])
+                logger.warning("resolve_card: English lookup failed for '%s'", card["name_en"])
             card["language"] = "de"
             return card, "de"
 
