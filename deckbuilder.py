@@ -104,6 +104,30 @@ def _type_group(card: dict) -> str:
     return "Other"
 
 
+# ── Basic land allocation ─────────────────────────────────────────────────────
+
+def _take_basics_from_pool(pool: list[dict], needed: dict[str, int]) -> tuple[list[dict], dict[str, int]]:
+    """Pull basic land cards from the pool to fill *needed* slots.
+
+    Returns (taken_cards, still_needed) where still_needed holds counts
+    for basics the collection could not fully supply.
+    Each entry in *pool* represents one physical card, so iterating once
+    naturally caps at the owned quantity.
+    """
+    still_needed = {k: v for k, v in needed.items() if v > 0}
+    taken: list[dict] = []
+    for card in pool:
+        if not still_needed:
+            break
+        name = card.get("name_en") or ""
+        if name in still_needed:
+            taken.append(card)
+            still_needed[name] -= 1
+            if still_needed[name] == 0:
+                del still_needed[name]
+    return taken, still_needed
+
+
 # ── Commander ─────────────────────────────────────────────────────────────────
 
 def rank_commanders(pool: list[dict]) -> list[tuple[dict, int]]:
@@ -161,9 +185,9 @@ def build_commander_deck(commander: dict, pool: list[dict]) -> dict:
         if len(deck) >= target_nonland:
             break
 
-    # Fill remaining 99 slots with basic lands (Wastes for colorless commanders)
+    # Compute desired basics split
     basics_needed = 99 - len(deck)
-    basics: dict[str, int] = {}
+    desired_basics: dict[str, int] = {}
     if basics_needed > 0:
         colors = sorted(ci) if ci else []
         if colors:
@@ -172,9 +196,12 @@ def build_commander_deck(commander: dict, pool: list[dict]) -> dict:
             for i, col in enumerate(colors):
                 land = COLOR_BASICS.get(col)
                 if land:
-                    basics[land] = per + (1 if i < rem else 0)
+                    desired_basics[land] = per + (1 if i < rem else 0)
         else:
-            basics["Wastes"] = basics_needed
+            desired_basics["Wastes"] = basics_needed
+
+    # Fill from collection first, fall back to text-only entries
+    basics_from_collection, basics_text = _take_basics_from_pool(pool, desired_basics)
 
     # Identify top themes present in the selected cards
     theme_counts: Counter = Counter()
@@ -187,14 +214,16 @@ def build_commander_deck(commander: dict, pool: list[dict]) -> dict:
     for c in deck:
         groups.setdefault(_type_group(c), []).append(c)
 
+    total_basics = len(basics_from_collection) + sum(basics_text.values())
     return {
-        "commander":        commander,
-        "deck":             deck,
-        "basics":           basics,
-        "groups":           groups,
-        "themes":           top_themes,
-        "collection_count": len(deck),
-        "value_eur":        round(sum(c.get("price_eur") or 0 for c in deck), 2),
+        "commander":              commander,
+        "deck":                   deck,
+        "basics":                 basics_text,
+        "basics_from_collection": basics_from_collection,
+        "groups":                 groups,
+        "themes":                 top_themes,
+        "collection_count":       len(deck) + len(basics_from_collection),
+        "value_eur":              round(sum(c.get("price_eur") or 0 for c in deck), 2),
     }
 
 
@@ -243,24 +272,27 @@ def build_60_deck(pool: list[dict], fmt: str) -> dict:
     for card, _ in deck_cards:
         colors_used |= color_identity(card)
 
-    basics: dict[str, int] = {}
+    desired_basics: dict[str, int] = {}
     if colors_used:
         per = 24 // len(colors_used)
         rem = 24 % len(colors_used)
         for i, col in enumerate(sorted(colors_used)):
             land = COLOR_BASICS.get(col)
             if land:
-                basics[land] = per + (1 if i < rem else 0)
+                desired_basics[land] = per + (1 if i < rem else 0)
     else:
-        basics["Wastes"] = 24
+        desired_basics["Wastes"] = 24
+
+    basics_from_collection, basics_text = _take_basics_from_pool(pool, desired_basics)
 
     return {
-        "deck":             deck_cards,
-        "basics":           basics,
-        "strategy":         strategy.replace("tribal_", "").title(),
-        "format":           fmt,
-        "collection_count": sum(n for _, n in deck_cards),
-        "value_eur":        round(sum((c.get("price_eur") or 0) * n for c, n in deck_cards), 2),
+        "deck":                   deck_cards,
+        "basics":                 basics_text,
+        "basics_from_collection": basics_from_collection,
+        "strategy":               strategy.replace("tribal_", "").title(),
+        "format":                 fmt,
+        "collection_count":       sum(n for _, n in deck_cards) + len(basics_from_collection),
+        "value_eur":              round(sum((c.get("price_eur") or 0) * n for c, n in deck_cards), 2),
     }
 
 
@@ -276,9 +308,14 @@ def format_commander_decklist(result: dict) -> str:
             container = c.get("container_name") or "—"
             lines.append(f"1 {c.get('name_en', '?')}  // 📦 {container}")
         lines.append("")
-    if result["basics"]:
+    coll_basics = result.get("basics_from_collection") or []
+    text_basics = result.get("basics") or {}
+    if coll_basics or text_basics:
         lines.append("Basic Lands")
-        for land, n in sorted(result["basics"].items()):
+        for c in coll_basics:
+            container = c.get("container_name") or "—"
+            lines.append(f"1 {c.get('name_en', '?')}  // 📦 {container}")
+        for land, n in sorted(text_basics.items()):
             lines.append(f"{n} {land}")
     return "\n".join(lines)
 
@@ -289,8 +326,13 @@ def format_60_decklist(result: dict) -> str:
     for card, n in result["deck"]:
         container = card.get("container_name") or "—"
         lines.append(f"{n} {card.get('name_en', '?')}  // 📦 {container}")
-    if result["basics"]:
+    coll_basics = result.get("basics_from_collection") or []
+    text_basics = result.get("basics") or {}
+    if coll_basics or text_basics:
         lines.append("")
-        for land, n in sorted(result["basics"].items()):
+        for c in coll_basics:
+            container = c.get("container_name") or "—"
+            lines.append(f"1 {c.get('name_en', '?')}  // 📦 {container}")
+        for land, n in sorted(text_basics.items()):
             lines.append(f"{n} {land}")
     return "\n".join(lines)

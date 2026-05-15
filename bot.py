@@ -1537,7 +1537,9 @@ class CommanderPickView(discord.ui.View):
         file = discord.File(io.BytesIO(decklist), filename=f"{fname}_deck.txt")
         card_ids = (
             [result["commander"]["id"]] if result["commander"].get("id") else []
-        ) + [c["id"] for c in result["deck"] if c.get("id")]
+        ) + [c["id"] for c in result["deck"] if c.get("id")] + [
+            c["id"] for c in result.get("basics_from_collection", []) if c.get("id")
+        ]
         await interaction.edit_original_response(
             embed=embed,
             view=DeckResultView(card_ids=card_ids, deck_name=cmd_name),
@@ -1600,7 +1602,9 @@ async def deck_propose(interaction: discord.Interaction, format: str = "commande
         embed = _60_embed(result)
         decklist = deckbuilder.format_60_decklist(result).encode("utf-8")
         file = discord.File(io.BytesIO(decklist), filename=f"{format}_deck.txt")
-        card_ids = [c["id"] for c, _ in result["deck"] if c.get("id")]
+        card_ids = [c["id"] for c, _ in result["deck"] if c.get("id")] + [
+            c["id"] for c in result.get("basics_from_collection", []) if c.get("id")
+        ]
         deck_name = f"{result['strategy']} {format.capitalize()}"
         await interaction.followup.send(
             embed=embed, file=file,
