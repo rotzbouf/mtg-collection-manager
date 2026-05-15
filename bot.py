@@ -1919,15 +1919,6 @@ class ScanConfirmView(discord.ui.View):
     async def add_foil(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._save(interaction, foil=True)
 
-    @discord.ui.button(label="Wrong card?", style=discord.ButtonStyle.secondary, emoji="🔍")
-    async def wrong_card(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(
-            NameCorrectionModal(
-                self._image_bytes, self._source,
-                self._card.get("container_id"), self._card.get("container_name", "—"),
-            )
-        )
-
     @discord.ui.button(label="Skip", style=discord.ButtonStyle.danger, emoji="✖")
     async def skip(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.clear_items()
