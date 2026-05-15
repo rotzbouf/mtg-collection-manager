@@ -510,15 +510,6 @@ class Database:
             rows = await cur.fetchall()
         return [_row_to_dict(r) for r in rows]
 
-    async def count_cards(self, container_id: Optional[int] = None) -> int:
-        if container_id is not None:
-            async with self._db.execute(
-                "SELECT COUNT(*) FROM collection WHERE container_id = ?", (container_id,)
-            ) as cur:
-                return (await cur.fetchone())[0]
-        async with self._db.execute("SELECT COUNT(*) FROM collection") as cur:
-            return (await cur.fetchone())[0]
-
     async def stats(self) -> dict:
         async with self._db.execute(
             """
