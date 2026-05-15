@@ -1363,20 +1363,19 @@ async def backup_create(interaction: discord.Interaction):
     if not await require_admin(interaction):
         return
     await interaction.response.defer(thinking=True, ephemeral=True)
+    await interaction.edit_original_response(content="Creating backup, please wait...")
     try:
         data = await bot.db.backup_bytes()
     except Exception as exc:
         logger.exception("Backup failed")
-        await interaction.followup.send(f"Backup failed: {exc}", ephemeral=True)
+        await interaction.edit_original_response(content=f"Backup failed: {exc}")
         return
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     filename = f"mtg_collection_{ts}.db"
-    file = discord.File(io.BytesIO(data), filename=filename)
     size_kb = len(data) / 1024
-    await interaction.followup.send(
-        f"Backup created — `{filename}` ({size_kb:.1f} KB).",
-        file=file,
-        ephemeral=True,
+    await interaction.edit_original_response(
+        content=f"Backup created — `{filename}` ({size_kb:.1f} KB). Download the attached file to keep a local copy.",
+        attachments=[discord.File(io.BytesIO(data), filename=filename)],
     )
 
 
@@ -1389,7 +1388,9 @@ async def backup_restore(interaction: discord.Interaction, file: discord.Attachm
     if not file.filename.endswith(".db"):
         await interaction.followup.send("Please attach a `.db` backup file.", ephemeral=True)
         return
+    await interaction.edit_original_response(content="Reading backup file...")
     data = await file.read()
+    await interaction.edit_original_response(content="Validating backup...")
     try:
         counts = await Database.inspect_backup(data)
     except ValueError as exc:
@@ -1532,6 +1533,9 @@ class RestoreConfirmView(discord.ui.View):
                 content="A restore is already in progress. Please wait.", embed=None, view=None
             )
             return
+        await interaction.edit_original_response(
+            content="Restoring database, please wait...", embed=None, view=None
+        )
         try:
             await bot.db.restore_from_bytes(self._data)
         except Exception as exc:
