@@ -2441,7 +2441,7 @@ class CardManageView(discord.ui.View):
 
 
 class MoveCardView(discord.ui.View):
-    def __init__(self, card: dict, containers: list[dict], current_container: dict, page: int):
+    def __init__(self, card: dict, containers: list[dict], current_container: Optional[dict], page: int):
         super().__init__(timeout=300)
         self._card = card
         self._current_container = current_container
@@ -2475,7 +2475,7 @@ class MoveCardView(discord.ui.View):
 
 
 class _BrowseDeleteConfirmView(discord.ui.View):
-    def __init__(self, card: dict, container: dict, page: int):
+    def __init__(self, card: dict, container: Optional[dict], page: int):
         super().__init__(timeout=60)
         self._card = card
         self._container = container
@@ -2503,7 +2503,7 @@ class _BrowseDeleteConfirmView(discord.ui.View):
 
 
 class EditCardModal(discord.ui.Modal, title="Edit card"):
-    def __init__(self, card: dict, container: dict, page: int):
+    def __init__(self, card: dict, container: Optional[dict], page: int):
         super().__init__()
         self._card = card
         self._container = container

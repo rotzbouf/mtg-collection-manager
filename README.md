@@ -11,15 +11,18 @@ search and export your collection, and generate deck proposals — all from Disc
 | Category | What it does |
 |---|---|
 | **Add by name** | Resolves English or German card names via Scryfall; auto-detects language |
-| **Add by photo** | OCR reads card name, set code, collector number, and language from the photo; matched via Scryfall |
+| **Add by photo** | OCR reads card name, set code, collector number, and language; matched via Scryfall |
 | **Auto-scan channel** | Drop any image in the configured channel — the bot processes it instantly |
-| **Localised card text** | Type line, oracle text, and flavour text are stored in the card's own language (DE cards get German text) |
+| **Localised card text & names** | Type line, oracle text, flavour text, and display names are stored in the card's own language |
 | **Containers** | Organise cards into named binders, boxes, decks, trade piles, etc. |
-| **Full-text search** | SQLite FTS5 across name, type, oracle text, set, flavour text, notes |
+| **Full-text search** | SQLite FTS5 across name, type, oracle text, set, flavour text, notes — paginated with card picker |
+| **Interactive browsing** | `/browse` opens a container-and-card browser; click any card to edit, move, resync, or delete it |
 | **Chaos sort** | MTG-native sort: W→U→B→R→G→Multi→Colourless→Land, then type, then CMC |
 | **Statistics** | Totals by language, foil/non-foil, rarity breakdown, top-5 by value |
 | **Export** | Moxfield CSV (default), Excel CSV, or JSON |
-| **Deckbuilder** | Auto-generates Commander (100-card) or 60-card (Timeless/Standard) proposals |
+| **Import** | Moxfield CSV, bot-export CSV, or bot-export JSON |
+| **Deckbuilder** | Auto-generates Commander (100-card) or 60-card (Timeless/Standard) proposals; saves the deck to a container |
+| **Deck list** | Every proposed card shows its storage location; a location manifest at the end records original container IDs |
 | **Showcase** | `/showcase` displays the 5 most valuable cards with image, details, and a price-history chart |
 | **Price history** | Prices are snapshotted daily; history chart auto-appears once 2+ data points exist |
 | **Null-price refresh** | Cards added without a EUR price are automatically re-checked against Scryfall daily |
@@ -122,6 +125,9 @@ DISCORD_SCAN_CHANNEL_ID=
 # Channel where /deck commands work
 DISCORD_DECKBUILDER_CHANNEL_ID=
 
+# Channel where /showcase works (leave blank = any channel)
+DISCORD_SHOWCASE_CHANNEL_ID=
+
 # Channel where /search works (leave blank = any channel)
 DISCORD_SEARCH_CHANNEL_ID=
 
@@ -159,9 +165,9 @@ Admin  ≥  Collector  ≥  Guest
 
 | Role variable | Tier | Commands |
 |---|---|---|
-| `DISCORD_GUEST_ROLE` | Guest (read-only) | `/list`, `/card`, `/search`, `/stats`, `/export`, `/container list`, `/deck propose` |
-| `DISCORD_COLLECTOR_ROLE` | Collector | `/add`, `/scan`, `/update`, `/container create` + all Guest commands |
-| `DISCORD_ADMIN_ROLE` | Admin | `/remove`, `/container delete`, `/container rename`, `/resync`, `/backup create`, `/backup restore` + all Collector commands |
+| `DISCORD_GUEST_ROLE` | Guest (read-only) | `/list`, `/card`, `/search`, `/stats`, `/export`, `/container list`, `/browse`, `/deck propose` |
+| `DISCORD_COLLECTOR_ROLE` | Collector | `/add`, `/scan`, `/update`, `/import`, `/container create` + all Guest commands |
+| `DISCORD_ADMIN_ROLE` | Admin | `/remove`, `/container delete`, `/container rename`, `/container move`, `/resync`, `/backup create`, `/backup restore` + all Collector commands |
 
 Each variable accepts a **role name** (e.g. `Guest`) or a **role ID** (e.g. `123456789`).
 
@@ -204,7 +210,7 @@ Add a card by name. Scryfall is queried automatically.
 | Parameter | Required | Default | Description |
 |---|---|---|---|
 | `name` | yes | — | English or German card name |
-| `container` | no | — | Container name (created automatically if new) or numeric container ID (must exist; use `/container list` to find IDs) |
+| `container` | no | — | Container name (created automatically if new) or numeric container ID |
 | `set_code` | no | — | Narrow to a specific set, e.g. `MH3` |
 | `language` | no | auto | Override detected language (`en` / `de`) |
 | `condition` | no | `NM` | `NM` · `LP` · `MP` · `HP` · `DMG` |
@@ -216,6 +222,8 @@ Add a card by name. Scryfall is queried automatically.
 /add name:Lightning Bolt set_code:M10 condition:NM quantity:4
 /add name:Blitz der Unmöglichkeit language:de container:Binder 1
 ```
+
+After adding, a **➕ Noch eine Kopie** button lets you add further copies of the same card (same set, condition, container) without retyping the command.
 
 #### `/scan`
 
@@ -251,10 +259,8 @@ Collector match (set code + number → Scryfall)
       OCR name → Scryfall (with set code hint)
       │
       ▼
-Confirmation embed  ──── Add  /  Add as foil  /  Wrong card?  /  Skip
+Confirmation embed  ──── Add  /  Add as foil  /  Skip
 ```
-
-If the bot misidentifies the card, tap **Wrong card?** to type the correct name and set code.
 
 ---
 
@@ -262,7 +268,8 @@ If the bot misidentifies the card, tap **Wrong card?** to type the correct name 
 
 #### `/list`
 
-Browse the full collection with pagination (10 cards per page).
+Browse the full collection with pagination (10 cards per page). Navigation buttons (◀ / ▶) appear when there is more than one page.
+A **card picker dropdown** is shown on every page — select any card to open its full action panel without leaving the list.
 
 | Parameter | Default | Options |
 |---|---|---|
@@ -272,11 +279,13 @@ Browse the full collection with pagination (10 cards per page).
 
 #### `/card`
 
-Show full details for a single entry by its collection ID.
+Show full details for a single entry by its collection ID and open the action panel directly.
 
 ```
 /card id:42
 ```
+
+The action panel provides: **✏️ Edit** (condition, language, foil, notes) · **📦 Move** (to another container) · **🔄 Resync** (re-fetch from Scryfall) · **🗑️ Delete** · **✕ Close**.
 
 #### `/search`
 
@@ -289,7 +298,16 @@ set name, set code, collector number, rarity, mana cost, flavour text, and notes
 /search query:flying deathtouch
 ```
 
-Returns up to 15 results sorted by chaos order.
+Results are paginated (10 per page) with ◀ / ▶ navigation. A **card picker dropdown** lets you open any result's action panel directly.
+
+#### `/browse`
+
+Interactive container and card browser (ephemeral — only visible to you).
+
+1. A dropdown lists all containers; select one to enter it
+2. Inside a container, a dropdown lists the cards (25 per page, paginated)
+3. Select a card to open its action panel: **✏️ Edit** · **📦 Move** · **🔄 Resync** · **🗑️ Delete**
+4. Use **◀ Containers** to go back to the container list
 
 #### `/stats`
 
@@ -317,6 +335,7 @@ Useful for identifying surplus copies before trading or selling.
 
 Displays the 5 most valuable cards in your collection, one embed per card:
 
+- Card name in the card's own language (English name shown in parentheses when different)
 - Card image (thumbnail)
 - Current price (EUR and USD where available)
 - Set, collector number, rarity, condition, language, container location
@@ -389,6 +408,7 @@ Available types: `binder` · `box` · `deck` · `trade` · `other`
 #### `/container list`
 
 Lists all containers with card count and total EUR value.
+A **📦 Browse** button opens the interactive container browser (ephemeral).
 
 #### `/container rename`
 
@@ -404,9 +424,19 @@ Removes the container; cards are unlinked but kept in the collection.
 /container delete id:3
 ```
 
+#### `/container move`
+
+Moves all cards from one container to another in a single operation.
+
+```
+/container move source:Binder 1 destination:Trade Box
+```
+
+Both `source` and `destination` support autocomplete.
+
 ---
 
-### Export
+### Import / Export
 
 #### `/export`
 
@@ -419,6 +449,21 @@ Downloads your entire collection as a file attachment.
 | `JSON` | `collection.json` | Full record per card including all Scryfall metadata |
 
 **Moxfield import:** go to your Moxfield collection → *Import* → upload `collection_moxfield.csv`.
+
+#### `/import`
+
+Imports cards from an attached file into the collection.
+
+| Format | Description |
+|---|---|
+| Moxfield CSV | Each card is looked up on Scryfall by set code + collector number (falls back to name search) |
+| Bot export CSV | Direct import of a previously exported full CSV |
+| Bot export JSON | Direct import of a previously exported JSON |
+
+Optionally assign all imported cards to a specific container.
+A preview of the import (entry count, format detected) is shown before confirmation.
+
+> **Tip:** Run `/backup create` before a large import so you can roll back if needed.
 
 ---
 
@@ -460,17 +505,21 @@ Generates a deck proposal from your collection using synergy scoring.
 
 1. The bot scores every legendary creature in your collection by synergy with the rest of your cards
 2. A dropdown shows the top 10 candidates with colour identity and synergy score
-3. Pick a commander → the bot builds a 100-card list (up to 63 non-lands + basic lands)
+3. Pick a commander → the bot builds a 100-card list (up to 63 non-lands + basic lands from your collection)
 4. The result embed lists the top key cards with their **container location** (📦 binder / box)
 5. A `.txt` deck list is attached — every line includes the container where the card is stored
-6. Press **✅ Accept** to dismiss the proposal when you're done
 
 **Timeless / Standard formats**
 
-Automatically detects the dominant strategy in your legal cards (tokens, counters, graveyard, control, etc.) and builds a 60-card list (36 non-lands + 24 basic lands).
-The attached `.txt` file includes the container location per card, and a **✅ Accept** button lets you dismiss the result.
+Automatically detects the dominant strategy in your legal cards (tokens, counters, graveyard, control, etc.) and builds a 60-card list (36 non-lands + 24 basic lands). Basic lands are taken from your collection first; any shortfall is noted as plain text entries.
+
+**Saving a deck**
+
+Press **📦 Save to Container** after a deck proposal to move all suggested cards (including collection basics) into a new container named after the deck. The original container of each card is recorded in the `.txt` file's location manifest so you can trace every card back after the move.
 
 **Deck list format**
+
+Non-English cards show their printed name with the English name in parentheses:
 
 ```
 Commander
@@ -478,12 +527,21 @@ Commander
 
 Creatures
 1 Doubling Season  // 📦 Binder 1
-1 Vorinclex, Monstrous Raider  // 📦 Commander Box
+1 Blitzschlag (Lightning Bolt)  // EN: Lightning Bolt  // 📦 Rote Box
 ...
 
 Basic Lands
-20 Forest
-16 Plains
+1 Forest  // 📦 Binder 1
+4 Forest
+```
+
+A **location manifest** at the end of the `.txt` lists each card's collection ID, container ID, and container name at proposal time:
+
+```
+// --- Location Manifest ---
+Card ID  Cont. ID  Container   Card (localized / EN)
+1042     3         Rote Box    Blitzschlag / Lightning Bolt
+1095     7         Blue Box    Counterspell
 ```
 
 ---
@@ -516,6 +574,7 @@ scryfall.py     — Scryfall API client: card lookup, EN/DE name resolution
 sorting.py      — Chaos sort key computation
 deckbuilder.py  — Synergy scoring, deck construction, deck list formatting
 exporter.py     — Moxfield CSV, full CSV, and JSON serialisation
+importer.py     — Moxfield CSV, full CSV, and JSON parsing for /import
 ```
 
 ### Database schema (SQLite)
@@ -540,6 +599,7 @@ mtg_collection_manager/
 ├── database.py
 ├── deckbuilder.py
 ├── exporter.py
+├── importer.py
 ├── scanner.py
 ├── scryfall.py
 ├── sorting.py
