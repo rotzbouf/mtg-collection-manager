@@ -399,6 +399,7 @@ class MTGBot(commands.Bot):
             logger.info("Slash commands synced globally (may take up to 1 hour to appear)")
 
         record_prices_task.start()
+        refresh_null_prices_task.start()
         # Load OCR models in background — slow on first run, must not block the sync
         asyncio.create_task(self._init_ocr())
 
@@ -433,6 +434,44 @@ async def record_prices_task():
 @record_prices_task.before_loop
 async def _before_record_prices():
     await bot.wait_until_ready()
+
+
+@tasks.loop(hours=24)
+async def refresh_null_prices_task():
+    """Re-fetch prices from Scryfall for collection entries that have no EUR price."""
+    try:
+        cards = await bot.db.get_null_price_cards()
+        if not cards:
+            logger.info("Null-price refresh: all cards have a price, nothing to do")
+            return
+        logger.info("Null-price refresh: %d card(s) missing EUR price", len(cards))
+        updated = 0
+        for entry in cards:
+            scryfall_id = entry["scryfall_id"]
+            card = await bot.scryfall.get_by_id(scryfall_id)
+            price_eur = card.get("price_eur") if card else None
+            price_usd = card.get("price_usd") if card else None
+
+            # Fallback: look up the EN oracle card by name
+            if not price_eur and entry.get("name_en"):
+                en_card = await bot.scryfall.get_by_name(entry["name_en"], fuzzy=False)
+                if en_card:
+                    price_eur = price_eur or en_card.get("price_eur")
+                    price_usd = price_usd or en_card.get("price_usd")
+
+            if price_eur or price_usd:
+                await bot.db.update_card_prices(scryfall_id, price_eur, price_usd)
+                updated += 1
+
+        logger.info("Null-price refresh: updated %d/%d card(s)", updated, len(cards))
+    except Exception as e:
+        logger.error("Null-price refresh failed: %s", e)
+
+
+@refresh_null_prices_task.before_loop
+async def _before_refresh_null_prices():
+    await bot.wait_until_ready()
+    await asyncio.sleep(60)  # stagger after record_prices_task
 
 
 # ──────────────────────────────────────────────────────────────────────────────

@@ -514,6 +514,38 @@ class Database:
         await self._db.commit()
         return len(rows)
 
+    async def get_null_price_cards(self) -> list[dict]:
+        """Return distinct cards with price_eur IS NULL that have a known scryfall_id."""
+        async with self._db.execute(
+            """
+            SELECT DISTINCT scryfall_id, name_en
+            FROM collection
+            WHERE scryfall_id IS NOT NULL AND price_eur IS NULL AND name_en IS NOT NULL
+            """
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+    async def update_card_prices(
+        self,
+        scryfall_id: str,
+        price_eur: Optional[float],
+        price_usd: Optional[float],
+    ) -> None:
+        """Set price_eur / price_usd for all rows with this scryfall_id.
+
+        Uses COALESCE so a None value never overwrites an existing price.
+        """
+        await self._db.execute(
+            """
+            UPDATE collection
+            SET price_eur = COALESCE(?, price_eur),
+                price_usd = COALESCE(?, price_usd)
+            WHERE scryfall_id = ?
+            """,
+            (price_eur, price_usd, scryfall_id),
+        )
+        await self._db.commit()
+
     async def get_price_history(self, scryfall_id: str) -> list[dict]:
         async with self._db.execute(
             """
