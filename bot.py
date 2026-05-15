@@ -913,6 +913,25 @@ async def cmd_update(interaction: discord.Interaction, id: int, field: str, valu
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# /browse — interactive container & card manager
+# ──────────────────────────────────────────────────────────────────────────────
+
+@bot.tree.command(name="browse", description="Browse containers and manage cards interactively")
+async def cmd_browse(interaction: discord.Interaction):
+    if not await require_guest(interaction):
+        return
+    await interaction.response.defer(ephemeral=True)
+    containers = await bot.db.list_containers()
+    if not containers:
+        await interaction.edit_original_response(
+            content="No containers yet. Create one with `/container create`."
+        )
+        return
+    view = BrowseContainersView(containers)
+    await interaction.edit_original_response(content="Select a container to browse:", view=view)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # /resync — re-fetch Scryfall data for one or all cards  (admin only)
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -1760,6 +1779,345 @@ async def _do_scan_and_confirm(
     )
     view = ScanConfirmView(card, source_message, image_bytes)
     await interaction.followup.send(embed=embed, view=view)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# /browse — interactive container & card browser
+# ──────────────────────────────────────────────────────────────────────────────
+
+_BROWSE_PAGE_SIZE = 25
+
+
+def _card_manage_embed(card: dict) -> discord.Embed:
+    printed = card.get("printed_name") or card.get("name_en") or "Unknown"
+    name_en = card.get("name_en") or ""
+    title = printed if printed == name_en else f"{printed} ({name_en})"
+    embed = discord.Embed(title=title, color=0xE74C3C)
+    if card.get("image_url"):
+        embed.set_thumbnail(url=card["image_url"])
+    set_info = (
+        f"{card.get('set_name') or '—'} "
+        f"({(card.get('set_code') or '?').upper()}) "
+        f"#{card.get('collector_number') or '?'}"
+    )
+    embed.add_field(name="Set", value=set_info, inline=True)
+    embed.add_field(name="Type", value=card.get("type_line") or "—", inline=True)
+    foil_str = " · ✨ Foil" if card.get("foil") else ""
+    lang = (card.get("language") or "en").upper()
+    embed.add_field(name="Condition", value=f"{card.get('condition', 'NM')}{foil_str} · {lang}", inline=True)
+    embed.add_field(name="Price (EUR)", value=f"€{card['price_eur']:.2f}" if card.get("price_eur") else "—", inline=True)
+    embed.add_field(name="Container", value=f"📦 {card.get('container_name') or '—'}", inline=True)
+    if card.get("notes"):
+        embed.add_field(name="Notes", value=card["notes"], inline=False)
+    embed.set_footer(text=f"Collection ID: {card['id']}")
+    return embed
+
+
+class BrowseContainersView(discord.ui.View):
+    def __init__(self, containers: list[dict]):
+        super().__init__(timeout=300)
+        if not containers:
+            return
+        options = [
+            discord.SelectOption(
+                label=c["name"][:100],
+                value=str(c["id"]),
+                description=(
+                    f"{c.get('type', 'binder')} · {c['card_count']} cards"
+                    + (f" · €{c['total_value_eur']:.2f}" if c.get("total_value_eur") else "")
+                )[:100],
+                emoji="📦",
+            )
+            for c in containers[:25]
+        ]
+        sel = discord.ui.Select(placeholder="Select a container…", options=options, row=0)
+        sel.callback = self._on_select
+        self.add_item(sel)
+
+    async def _on_select(self, interaction: discord.Interaction):
+        container_id = int(interaction.data["values"][0])
+        container = await bot.db.get_container(container_id)
+        if not container:
+            await interaction.response.edit_message(content="Container no longer exists.", embed=None, view=None)
+            return
+        total = await bot.db.count_cards(container_id=container_id)
+        cards = await bot.db.list_cards(limit=_BROWSE_PAGE_SIZE, offset=0, container_id=container_id)
+        view = BrowseCardsView(container, cards, total, page=0)
+        await interaction.response.edit_message(content=None, embed=view.make_embed(), view=view)
+
+
+class BrowseCardsView(discord.ui.View):
+    def __init__(self, container: dict, cards: list[dict], total: int, page: int):
+        super().__init__(timeout=300)
+        self._container = container
+        self._total = total
+        self._page = page
+        self._pages = max(1, (total + _BROWSE_PAGE_SIZE - 1) // _BROWSE_PAGE_SIZE)
+
+        if cards:
+            options = [
+                discord.SelectOption(
+                    label=self._label(c),
+                    value=str(c["id"]),
+                    description=self._desc(c),
+                )
+                for c in cards
+            ]
+            sel = discord.ui.Select(
+                placeholder=f"Select a card… ({total} in container)",
+                options=options,
+                row=0,
+            )
+            sel.callback = self._on_card
+            self.add_item(sel)
+        else:
+            empty = discord.ui.Button(label="(empty container)", style=discord.ButtonStyle.secondary, disabled=True, row=0)
+            self.add_item(empty)
+
+        back_btn = discord.ui.Button(label="◀ Containers", style=discord.ButtonStyle.secondary, row=1)
+        back_btn.callback = self._back
+        self.add_item(back_btn)
+
+        if page > 0:
+            prev_btn = discord.ui.Button(label="◀ Prev", style=discord.ButtonStyle.secondary, row=1)
+            prev_btn.callback = self._prev
+            self.add_item(prev_btn)
+
+        if (page + 1) * _BROWSE_PAGE_SIZE < total:
+            next_btn = discord.ui.Button(label="Next ▶", style=discord.ButtonStyle.secondary, row=1)
+            next_btn.callback = self._next
+            self.add_item(next_btn)
+
+    @staticmethod
+    def _label(c: dict) -> str:
+        name = ((c.get("printed_name") or c.get("name_en") or "Unknown"))[:80]
+        foil = " ✨" if c.get("foil") else ""
+        lang = f" [{(c.get('language') or 'en').upper()}]" if c.get("language") != "en" else ""
+        return f"{name}{foil}{lang}"[:100]
+
+    @staticmethod
+    def _desc(c: dict) -> str:
+        parts = [(c.get("set_code") or "?").upper(), c.get("condition", "NM")]
+        if c.get("price_eur"):
+            parts.append(f"€{c['price_eur']:.2f}")
+        return " · ".join(parts)[:100]
+
+    def make_embed(self) -> discord.Embed:
+        c = self._container
+        embed = discord.Embed(
+            title=f"📦 {c['name']}",
+            description=f"{c.get('type', 'binder').capitalize()} · {self._total} card(s)",
+            color=0x5865F2,
+        )
+        if self._pages > 1:
+            embed.set_footer(text=f"Page {self._page + 1} / {self._pages}")
+        return embed
+
+    async def _on_card(self, interaction: discord.Interaction):
+        card_id = int(interaction.data["values"][0])
+        card = await bot.db.get_card(card_id)
+        if not card:
+            await interaction.response.edit_message(content="Card not found.", embed=None, view=None)
+            return
+        view = CardManageView(card, self._container, self._page)
+        await interaction.response.edit_message(content=None, embed=_card_manage_embed(card), view=view)
+
+    async def _back(self, interaction: discord.Interaction):
+        containers = await bot.db.list_containers()
+        view = BrowseContainersView(containers)
+        await interaction.response.edit_message(content="Select a container to browse:", embed=None, view=view)
+
+    async def _prev(self, interaction: discord.Interaction):
+        page = self._page - 1
+        cards = await bot.db.list_cards(limit=_BROWSE_PAGE_SIZE, offset=page * _BROWSE_PAGE_SIZE, container_id=self._container["id"])
+        view = BrowseCardsView(self._container, cards, self._total, page)
+        await interaction.response.edit_message(embed=view.make_embed(), view=view)
+
+    async def _next(self, interaction: discord.Interaction):
+        page = self._page + 1
+        cards = await bot.db.list_cards(limit=_BROWSE_PAGE_SIZE, offset=page * _BROWSE_PAGE_SIZE, container_id=self._container["id"])
+        view = BrowseCardsView(self._container, cards, self._total, page)
+        await interaction.response.edit_message(embed=view.make_embed(), view=view)
+
+
+class CardManageView(discord.ui.View):
+    def __init__(self, card: dict, container: dict, page: int):
+        super().__init__(timeout=300)
+        self._card = card
+        self._container = container
+        self._page = page
+
+    @discord.ui.button(label="Move", style=discord.ButtonStyle.primary, emoji="📦", row=0)
+    async def move(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await require_collector(interaction):
+            return
+        containers = await bot.db.list_containers()
+        others = [c for c in containers if c["id"] != self._card.get("container_id")]
+        if not others:
+            await interaction.response.send_message("No other containers available.", ephemeral=True)
+            return
+        view = MoveCardView(self._card, others, self._container, self._page)
+        await interaction.response.edit_message(content="Select destination container:", embed=None, view=view)
+
+    @discord.ui.button(label="Edit", style=discord.ButtonStyle.secondary, emoji="✏️", row=0)
+    async def edit(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await require_collector(interaction):
+            return
+        await interaction.response.send_modal(EditCardModal(self._card, self._container, self._page))
+
+    @discord.ui.button(label="Resync", style=discord.ButtonStyle.secondary, emoji="🔄", row=0)
+    async def resync(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await require_collector(interaction):
+            return
+        scryfall_id = self._card.get("scryfall_id")
+        if not scryfall_id:
+            await interaction.response.send_message("Card has no Scryfall ID.", ephemeral=True)
+            return
+        await interaction.response.defer()
+        fresh = await bot.scryfall.get_by_id(scryfall_id)
+        if not fresh:
+            await interaction.followup.send("Scryfall returned no data for this card.", ephemeral=True)
+            return
+        await bot.db.resync_card(scryfall_id, fresh)
+        card = await bot.db.get_card(self._card["id"])
+        self._card = card
+        await interaction.edit_original_response(embed=_card_manage_embed(card), view=self)
+
+    @discord.ui.button(label="Delete", style=discord.ButtonStyle.danger, emoji="🗑️", row=0)
+    async def delete(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await require_admin(interaction):
+            return
+        view = _BrowseDeleteConfirmView(self._card, self._container, self._page)
+        name = self._card.get("name_en") or "this card"
+        await interaction.response.edit_message(
+            content=f"Delete **{name}** (ID {self._card['id']}) from the collection?",
+            embed=None, view=view,
+        )
+
+    @discord.ui.button(label="◀ Back", style=discord.ButtonStyle.secondary, row=1)
+    async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
+        total = await bot.db.count_cards(container_id=self._container["id"])
+        page = min(self._page, max(0, (total - 1) // _BROWSE_PAGE_SIZE)) if total else 0
+        cards = await bot.db.list_cards(limit=_BROWSE_PAGE_SIZE, offset=page * _BROWSE_PAGE_SIZE, container_id=self._container["id"])
+        view = BrowseCardsView(self._container, cards, total, page)
+        await interaction.response.edit_message(content=None, embed=view.make_embed(), view=view)
+
+
+class MoveCardView(discord.ui.View):
+    def __init__(self, card: dict, containers: list[dict], current_container: dict, page: int):
+        super().__init__(timeout=300)
+        self._card = card
+        self._current_container = current_container
+        self._page = page
+        options = [
+            discord.SelectOption(
+                label=c["name"][:100],
+                value=str(c["id"]),
+                description=f"{c.get('type', 'binder')} · {c['card_count']} cards"[:100],
+                emoji="📦",
+            )
+            for c in containers[:25]
+        ]
+        sel = discord.ui.Select(placeholder="Move to…", options=options, row=0)
+        sel.callback = self._on_select
+        self.add_item(sel)
+        cancel = discord.ui.Button(label="Cancel", style=discord.ButtonStyle.secondary, row=1)
+        cancel.callback = self._cancel
+        self.add_item(cancel)
+
+    async def _on_select(self, interaction: discord.Interaction):
+        new_id = int(interaction.data["values"][0])
+        await bot.db.update_card(self._card["id"], "container_id", new_id)
+        card = await bot.db.get_card(self._card["id"])
+        view = CardManageView(card, self._current_container, self._page)
+        await interaction.response.edit_message(content=None, embed=_card_manage_embed(card), view=view)
+
+    async def _cancel(self, interaction: discord.Interaction):
+        view = CardManageView(self._card, self._current_container, self._page)
+        await interaction.response.edit_message(content=None, embed=_card_manage_embed(self._card), view=view)
+
+
+class _BrowseDeleteConfirmView(discord.ui.View):
+    def __init__(self, card: dict, container: dict, page: int):
+        super().__init__(timeout=60)
+        self._card = card
+        self._container = container
+        self._page = page
+
+    @discord.ui.button(label="Delete", style=discord.ButtonStyle.danger, emoji="🗑️")
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.stop()
+        name = self._card.get("name_en") or "Card"
+        await bot.db.remove_card(self._card["id"])
+        total = await bot.db.count_cards(container_id=self._container["id"])
+        page = min(self._page, max(0, (total - 1) // _BROWSE_PAGE_SIZE)) if total else 0
+        cards = await bot.db.list_cards(limit=_BROWSE_PAGE_SIZE, offset=page * _BROWSE_PAGE_SIZE, container_id=self._container["id"])
+        view = BrowseCardsView(self._container, cards, total, page)
+        await interaction.response.edit_message(content=f"Deleted **{name}**.", embed=view.make_embed(), view=view)
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.stop()
+        view = CardManageView(self._card, self._container, self._page)
+        await interaction.response.edit_message(content=None, embed=_card_manage_embed(self._card), view=view)
+
+
+class EditCardModal(discord.ui.Modal, title="Edit card"):
+    def __init__(self, card: dict, container: dict, page: int):
+        super().__init__()
+        self._card = card
+        self._container = container
+        self._page = page
+        self._condition_input = discord.ui.TextInput(
+            label="Condition",
+            placeholder="NM / LP / MP / HP / DMG",
+            default=card.get("condition") or "NM",
+            required=False,
+            max_length=3,
+        )
+        self._language_input = discord.ui.TextInput(
+            label="Language",
+            placeholder="en / de",
+            default=card.get("language") or "en",
+            required=False,
+            max_length=5,
+        )
+        self._foil_input = discord.ui.TextInput(
+            label="Foil (0 = no, 1 = yes)",
+            placeholder="0 or 1",
+            default="1" if card.get("foil") else "0",
+            required=False,
+            max_length=1,
+        )
+        self._notes_input = discord.ui.TextInput(
+            label="Notes",
+            placeholder="Free-text notes…",
+            default=card.get("notes") or "",
+            required=False,
+            max_length=200,
+            style=discord.TextStyle.paragraph,
+        )
+        self.add_item(self._condition_input)
+        self.add_item(self._language_input)
+        self.add_item(self._foil_input)
+        self.add_item(self._notes_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        card_id = self._card["id"]
+        cond = self._condition_input.value.strip().upper()
+        if cond in ("NM", "LP", "MP", "HP", "DMG"):
+            await bot.db.update_card(card_id, "condition", cond)
+        lang = self._language_input.value.strip().lower()
+        if lang in ("en", "de"):
+            await bot.db.update_card(card_id, "language", lang)
+        foil_val = self._foil_input.value.strip()
+        if foil_val in ("0", "1"):
+            await bot.db.update_card(card_id, "foil", int(foil_val))
+        notes = self._notes_input.value.strip() or None
+        await bot.db.update_card(card_id, "notes", notes)
+        card = await bot.db.get_card(card_id)
+        view = CardManageView(card, self._container, self._page)
+        await interaction.response.edit_message(embed=_card_manage_embed(card), view=view)
 
 
 class NewContainerModal(discord.ui.Modal, title="New container"):
