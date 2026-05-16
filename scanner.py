@@ -484,8 +484,10 @@ def _open_image_safe(image_bytes: bytes) -> Optional[Image.Image]:
 def _ensure_min_width(img: Image.Image, min_px: int = 500) -> Image.Image:
     """Upscale a too-small card so OCR has enough pixels to work with."""
     if img.width < min_px:
-        scale = min_px / img.width
-        img = img.resize((min_px, int(img.height * scale)), Image.LANCZOS)
+        scale = min(min_px / img.width, 4.0)  # cap at 4× to avoid OOM on large inputs
+        new_w = int(img.width * scale)
+        new_h = int(img.height * scale)
+        img = img.resize((new_w, new_h), Image.LANCZOS)
     return img
 
 

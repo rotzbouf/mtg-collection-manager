@@ -13,6 +13,14 @@ from sorting import compute_chaos_key, color_sort_order, type_sort_order
 
 logger = logging.getLogger(__name__)
 
+_SORT_MAP = {
+    "chaos": "c.chaos_key",
+    "name":  "c.name_en",
+    "set":   "c.set_code, c.collector_number",
+    "cmc":   "c.cmc, c.name_en",
+    "added": "c.added_at DESC",
+}
+
 DB_PATH = "mtg_collection.db"
 
 _SCHEMA = """
@@ -232,7 +240,11 @@ class Database:
     async def add_card(self, card: dict, added_by: str = "") -> int:
         colors = card.get("colors", [])
         type_line = card.get("type_line", "")
-        cmc = card.get("cmc", 0) or 0
+        _cmc = card.get("cmc", 0)
+        try:
+            cmc = float(_cmc) if _cmc is not None else 0.0
+        except (TypeError, ValueError):
+            cmc = 0.0
 
         chaos_key = compute_chaos_key(colors, type_line, cmc, card.get("name_en", ""))
         c_order = color_sort_order(colors, type_line)
@@ -480,13 +492,9 @@ class Database:
         language: Optional[str] = None,
         container_id: Optional[int] = None,
     ) -> list[dict]:
-        order = {
-            "chaos": "c.chaos_key",
-            "name": "c.name_en",
-            "set": "c.set_code, c.collector_number",
-            "cmc": "c.cmc, c.name_en",
-            "added": "c.added_at DESC",
-        }.get(sort, "c.chaos_key")
+        if sort not in _SORT_MAP:
+            raise ValueError(f"Invalid sort key: {sort!r}")
+        order = _SORT_MAP[sort]
 
         conditions, params = [], []
         if language:

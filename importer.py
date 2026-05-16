@@ -4,6 +4,8 @@ import csv
 import io
 import json
 
+_MAX_IMPORT_BYTES = 50 * 1024 * 1024  # 50 MB
+
 _CONDITION_REV = {
     "Near Mint": "NM", "Lightly Played": "LP", "Moderately Played": "MP",
     "Heavily Played": "HP", "Damaged": "DMG",
@@ -43,6 +45,8 @@ def parse_moxfield_csv(content: bytes) -> list[dict]:
 
     Each row has: name, set_code, collector_number, condition, language, foil (bool), count (int).
     """
+    if len(content) > _MAX_IMPORT_BYTES:
+        raise ValueError(f"File too large ({len(content) // 1_048_576} MB); maximum is 50 MB.")
     text = content.decode("utf-8-sig", errors="replace")
     rows = []
     for row in csv.DictReader(io.StringIO(text)):
@@ -70,12 +74,16 @@ def parse_moxfield_csv(content: bytes) -> list[dict]:
 
 def parse_full_csv(content: bytes) -> list[dict]:
     """Parse the bot's own full CSV export."""
+    if len(content) > _MAX_IMPORT_BYTES:
+        raise ValueError(f"File too large ({len(content) // 1_048_576} MB); maximum is 50 MB.")
     text = content.decode("utf-8-sig", errors="replace")
     return [r for r in csv.DictReader(io.StringIO(text)) if r.get("name_en")]
 
 
 def parse_json(content: bytes) -> list[dict]:
     """Parse the bot's own JSON export."""
+    if len(content) > _MAX_IMPORT_BYTES:
+        raise ValueError(f"File too large ({len(content) // 1_048_576} MB); maximum is 50 MB.")
     data = json.loads(content.decode("utf-8"))
     if isinstance(data, list):
         return [d for d in data if isinstance(d, dict) and d.get("name_en")]

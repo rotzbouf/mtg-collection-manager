@@ -192,45 +192,63 @@ async def _deny(interaction: discord.Interaction, required_role: str) -> None:
     await interaction.response.send_message(msg, ephemeral=True)
 
 
-async def require_guest(interaction: discord.Interaction) -> bool:
-    """Read-only commands. Open to all when DISCORD_GUEST_ROLE is not configured."""
-    if not GUEST_ROLE:
+async def _require_role(
+    interaction: discord.Interaction,
+    gate_role: str,
+    accepted_roles: list[str],
+) -> bool:
+    """Return True if the user passes the role gate. Sends a denial and returns False otherwise."""
+    if not gate_role:
         return True
     if not isinstance(interaction.user, discord.Member):
         return True
-    if _member_has_any_role(interaction.user, GUEST_ROLE, COLLECTOR_ROLE, ADMIN_ROLE):
+    if _member_has_any_role(interaction.user, *accepted_roles):
         return True
-    await _deny(interaction, GUEST_ROLE)
+    await _deny(interaction, gate_role)
     return False
+
+
+async def require_guest(interaction: discord.Interaction) -> bool:
+    """Read-only commands. Open to all when DISCORD_GUEST_ROLE is not configured."""
+    return await _require_role(interaction, GUEST_ROLE, [GUEST_ROLE, COLLECTOR_ROLE, ADMIN_ROLE])
 
 
 async def require_collector(interaction: discord.Interaction) -> bool:
     """Add/modify commands. Open to all when DISCORD_COLLECTOR_ROLE is not configured."""
-    if not COLLECTOR_ROLE:
-        return True
-    if not isinstance(interaction.user, discord.Member):
-        return True
-    if _member_has_any_role(interaction.user, COLLECTOR_ROLE, ADMIN_ROLE):
-        return True
-    await _deny(interaction, COLLECTOR_ROLE)
-    return False
+    return await _require_role(interaction, COLLECTOR_ROLE, [COLLECTOR_ROLE, ADMIN_ROLE])
 
 
 async def require_admin(interaction: discord.Interaction) -> bool:
     """Destructive/admin commands. Open to all when DISCORD_ADMIN_ROLE is not configured."""
-    if not ADMIN_ROLE:
-        return True
-    if not isinstance(interaction.user, discord.Member):
-        return True
-    if _member_has_any_role(interaction.user, ADMIN_ROLE):
-        return True
-    await _deny(interaction, ADMIN_ROLE)
-    return False
+    return await _require_role(interaction, ADMIN_ROLE, [ADMIN_ROLE])
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ──────────────────────────────────────────────────────────────────────────────
+
+def _fmt_price(card: dict) -> str:
+    parts = []
+    if card.get("price_eur"):
+        parts.append(f"€{card['price_eur']:.2f}")
+    if card.get("price_usd"):
+        parts.append(f"${card['price_usd']:.2f}")
+    return " / ".join(parts) if parts else "—"
+
+
+def _fmt_set(card: dict) -> str:
+    name = card.get("set_name") or "?"
+    code = (card.get("set_code") or "?").upper()
+    nr   = card.get("collector_number") or "?"
+    return f"{name} ({code}) #{nr}"
+
+
+def _fmt_condition(card: dict) -> str:
+    cond = card.get("condition") or "NM"
+    foil = " ✨" if card.get("foil") else ""
+    lang = (card.get("language") or "en").upper()
+    return f"{cond}{foil} · {lang}"
+
 
 def card_embed(card: dict, title_prefix: str = "") -> discord.Embed:
     rarity = (card.get("rarity") or "common").lower()
@@ -268,12 +286,7 @@ def card_embed(card: dict, title_prefix: str = "") -> discord.Embed:
     embed.add_field(name="Condition", value=f"{cond}{foil}", inline=True)
     embed.add_field(name="Container", value=container, inline=True)
 
-    price_parts = []
-    if card.get("price_eur"):
-        price_parts.append(f"€{card['price_eur']:.2f}")
-    if card.get("price_usd"):
-        price_parts.append(f"${card['price_usd']:.2f}")
-    embed.add_field(name="Price", value=" / ".join(price_parts) if price_parts else "—", inline=True)
+    embed.add_field(name="Price", value=_fmt_price(card), inline=True)
 
     if card.get("oracle_text"):
         oracle = card["oracle_text"]
@@ -658,14 +671,15 @@ class _AddAnotherView(discord.ui.View):
         self._count = count
         self._base_desc = base_desc
 
-    @discord.ui.button(label="➕ Noch eine Kopie", style=discord.ButtonStyle.success)
+    @discord.ui.button(label="➕ Add Another Copy", style=discord.ButtonStyle.success)
     async def add_another(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await require_collector(interaction):
             return
         new_id = await bot.db.add_card(self._card, added_by=self._added_by)
         self._count += 1
         embed = card_embed(self._card, title_prefix="Added ✅  ")
-        embed.description = self._base_desc + f"\n➕ +{self._count - 1} weitere Kopi{'e' if self._count - 1 == 1 else 'en'} hinzugefügt (letzte ID: **{new_id}**)"
+        n = self._count - 1
+        embed.description = self._base_desc + f"\n➕ +{n} additional cop{'y' if n == 1 else 'ies'} added (last ID: **{new_id}**)"
         await interaction.response.edit_message(embed=embed, view=self)
 
 
@@ -896,13 +910,13 @@ def _add_card_select(view: discord.ui.View, cards: list[dict], row: int = 0) -> 
         )
         for c in cards[:25]
     ]
-    sel = discord.ui.Select(placeholder="Karte öffnen…", options=options, row=row)
+    sel = discord.ui.Select(placeholder="Open card…", options=options, row=row)
 
     async def _on_card(interaction: discord.Interaction):
         card_id = int(interaction.data["values"][0])
         card = await bot.db.get_card(card_id)
         if not card:
-            await interaction.response.send_message("Karte nicht gefunden.", ephemeral=True)
+            await interaction.response.send_message("Card not found.", ephemeral=True)
             return
         await interaction.response.send_message(
             embed=_card_manage_embed(card),
@@ -943,6 +957,10 @@ class ListPageView(discord.ui.View):
     async def _next(self, interaction: discord.Interaction):
         await self._go(interaction, self._page + 1)
 
+    async def on_timeout(self) -> None:
+        for item in self.children:
+            item.disabled = True  # type: ignore[attr-defined]
+
 
 class SearchPageView(discord.ui.View):
     def __init__(self, query: str, page: int, pages: int, total: int, cards: list[dict]):
@@ -951,17 +969,23 @@ class SearchPageView(discord.ui.View):
         self._page = page
         self._pages = pages
         self._total = total
+        self._cache: dict[int, list[dict]] = {page: cards}
         _add_card_select(self, cards, row=0)
         _nav_buttons(self, page, pages, self._prev, self._next, row=1)
 
     async def _go(self, interaction: discord.Interaction, page: int):
-        results = await bot.db.search(
-            self._query, limit=_SEARCH_PER_PAGE,
-            offset=(page - 1) * _SEARCH_PER_PAGE,
-        )
+        if page not in self._cache:
+            results = await bot.db.search(
+                self._query, limit=_SEARCH_PER_PAGE,
+                offset=(page - 1) * _SEARCH_PER_PAGE,
+            )
+            self._cache[page] = results
+        else:
+            results = self._cache[page]
         embed, _ = paginate_embeds(results, page, per_page=_SEARCH_PER_PAGE, total=self._total)
         embed.title = f'Search: "{self._query}"  —  {self._total} result(s)'
         view = SearchPageView(self._query, page, self._pages, self._total, results)
+        view._cache = self._cache  # forward the cache to the new view
         await interaction.response.edit_message(embed=embed, view=view)
 
     async def _prev(self, interaction: discord.Interaction):
@@ -969,6 +993,10 @@ class SearchPageView(discord.ui.View):
 
     async def _next(self, interaction: discord.Interaction):
         await self._go(interaction, self._page + 1)
+
+    async def on_timeout(self) -> None:
+        for item in self.children:
+            item.disabled = True  # type: ignore[attr-defined]
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1197,10 +1225,17 @@ async def cmd_resync(interaction: discord.Interaction, id: Optional[int] = None)
         return
 
     await interaction.edit_original_response(content=f"Resyncing {total} unique cards from Scryfall...")
+    _resync_sem = asyncio.Semaphore(10)
+
+    async def _fetch_one(sid: str) -> tuple[str, Optional[dict]]:
+        async with _resync_sem:
+            return sid, await bot.scryfall.get_by_id(sid)
+
+    tasks = [asyncio.create_task(_fetch_one(sid)) for sid in scryfall_ids]
     updated_cards = 0
     failed = 0
-    for i, sid in enumerate(scryfall_ids, 1):
-        fresh = await bot.scryfall.get_by_id(sid)
+    for i, task in enumerate(asyncio.as_completed(tasks), 1):
+        sid, fresh = await task
         if fresh:
             await bot.db.resync_card(sid, fresh)
             updated_cards += 1
@@ -1208,7 +1243,7 @@ async def cmd_resync(interaction: discord.Interaction, id: Optional[int] = None)
             failed += 1
         if i % 25 == 0:
             await interaction.edit_original_response(
-                content=f"Resyncing... {i}/{total} done ({updated_cards} updated, {failed} failed)"
+                content=f"Resyncing… {i}/{total} done ({updated_cards} updated, {failed} failed)"
             )
 
     summary = f"Resync complete — {updated_cards}/{total} cards updated."
@@ -1287,6 +1322,7 @@ class ImportConfirmView(discord.ui.View):
         added = skipped = 0
         await interaction.edit_original_response(content=f"Importing… 0 / {total}", view=None)
 
+        failed_names: list[str] = []
         if self._fmt == "moxfield_csv":
             for row in self._rows:
                 card = None
@@ -1302,6 +1338,7 @@ class ImportConfirmView(discord.ui.View):
                 if not card:
                     card = await bot.scryfall.get_by_name(row["name"], fuzzy=True, set_code=row["set_code"])
                 if not card:
+                    failed_names.append(row["name"])
                     skipped += row["count"]
                     continue
                 card["condition"] = row["condition"]
@@ -1316,6 +1353,7 @@ class ImportConfirmView(discord.ui.View):
                         content=f"Importing… {added + skipped} / {total}"
                     )
         else:
+            failed_reasons: list[str] = []
             for row in self._rows:
                 try:
                     card, container_name = imp.normalize_row(row)
@@ -1325,6 +1363,7 @@ class ImportConfirmView(discord.ui.View):
                     added += 1
                 except Exception as exc:
                     logger.warning("Import: skipped row — %s", exc)
+                    failed_reasons.append(f"{row.get('name_en', '?')}: {exc}")
                     skipped += 1
                 if (added + skipped) % 10 == 0:
                     await interaction.edit_original_response(
@@ -1333,7 +1372,15 @@ class ImportConfirmView(discord.ui.View):
 
         msg = f"Import complete — **{added}** card(s) added."
         if skipped:
-            msg += f" {skipped} could not be resolved and were skipped."
+            msg += f" **{skipped}** could not be resolved and were skipped."
+
+        all_failures = failed_names if self._fmt == "moxfield_csv" else failed_reasons
+        if all_failures:
+            lines = "\n".join(f"• {f}" for f in all_failures[:10])
+            if len(all_failures) > 10:
+                lines += f"\n… and {len(all_failures) - 10} more"
+            msg += f"\n\nFailed imports:\n{lines}"
+
         await interaction.edit_original_response(content=msg)
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
@@ -1670,6 +1717,10 @@ class OvercountCardDetailView(discord.ui.View):
             ephemeral=True,
         )
 
+    async def on_timeout(self) -> None:
+        for item in self.children:
+            item.disabled = True  # type: ignore[attr-defined]
+
 
 class OvercountView(discord.ui.View):
     """Main overcount view: card-picker select + summary embed."""
@@ -1737,6 +1788,10 @@ class OvercountView(discord.ui.View):
 
         view = OvercountCardDetailView(card, self._containers, self._threshold)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    async def on_timeout(self) -> None:
+        for item in self.children:
+            item.disabled = True  # type: ignore[attr-defined]
 
 
 @bot.tree.command(name="overcount", description="Show cards that appear more than 4 times in your collection")
@@ -1995,6 +2050,9 @@ _SHOWCASE_RARITY_COLOUR = {
 }
 
 
+_chart_fail_count: dict[str, int] = {}
+
+
 def _make_price_chart(history: list[dict], card_name: str) -> Optional[bytes]:
     """Render a price-history line chart as PNG bytes. Returns None if < 2 points."""
     if len(history) < 2:
@@ -2028,7 +2086,10 @@ def _make_price_chart(history: list[dict], card_name: str) -> Optional[bytes]:
         buf.seek(0)
         return buf.read()
     except Exception as e:
-        logger.warning("Price chart generation failed: %s", e)
+        count = _chart_fail_count.get(card_name, 0) + 1
+        _chart_fail_count[card_name] = count
+        log_fn = logger.error if count >= 3 else logger.warning
+        log_fn("Price chart failed for %r (attempt %d): %s", card_name, count, e)
         return None
 
 
@@ -2041,11 +2102,7 @@ def _showcase_embed(card: dict, rank: int, total: int) -> discord.Embed:
     rarity      = (card.get("rarity") or "").lower()
     colour      = _SHOWCASE_RARITY_COLOUR.get(rarity, 0x5865f2)
 
-    price_eur   = card.get("price_eur") or 0.0
-    price_usd   = card.get("price_usd")
-    price_str   = f"**€{price_eur:.2f}**"
-    if price_usd:
-        price_str += f"  ·  ${price_usd:.2f}"
+    price_str   = f"**{_fmt_price(card)}**"
 
     set_code    = (card.get("set_code") or "").upper()
     set_name    = card.get("set_name") or ""
@@ -2218,6 +2275,10 @@ class ShowcaseView(discord.ui.View):
         if await self._guard(interaction):
             await self._go(interaction, self._index + 1)
 
+    async def on_timeout(self) -> None:
+        for item in self.children:
+            item.disabled = True  # type: ignore[attr-defined]
+
 
 class WelcomeView(discord.ui.View):
     """Welcome menu posted when a new member joins the showcase channel."""
@@ -2355,13 +2416,13 @@ async def backup_create(interaction: discord.Interaction):
     gz_data = await asyncio.to_thread(gzip.compress, data, compresslevel=6)
     gz_filename = base_filename + ".gz"
     size_raw_mb = len(data) / 1024 / 1024
-    size_gz_kb = len(gz_data) / 1024
+    size_gz_mb = len(gz_data) / 1024 / 1024
 
     await interaction.edit_original_response(
         content=f"Backup saved on server: `{local_path}` ({size_raw_mb:.1f} MB)"
     )
     await interaction.followup.send(
-        content=f"Compressed backup for download — `{gz_filename}` ({size_gz_kb:.1f} KB).",
+        content=f"Compressed backup for download — `{gz_filename}` ({size_gz_mb:.2f} MB).",
         file=discord.File(io.BytesIO(gz_data), filename=gz_filename),
         ephemeral=True,
     )
@@ -2646,17 +2707,10 @@ def _card_manage_embed(card: dict) -> discord.Embed:
     embed = discord.Embed(title=title, color=0xE74C3C)
     if card.get("image_url"):
         embed.set_thumbnail(url=card["image_url"])
-    set_info = (
-        f"{card.get('set_name') or '—'} "
-        f"({(card.get('set_code') or '?').upper()}) "
-        f"#{card.get('collector_number') or '?'}"
-    )
-    embed.add_field(name="Set", value=set_info, inline=True)
+    embed.add_field(name="Set", value=_fmt_set(card), inline=True)
     embed.add_field(name="Type", value=card.get("type_line") or "—", inline=True)
-    foil_str = " · ✨ Foil" if card.get("foil") else ""
-    lang = (card.get("language") or "en").upper()
-    embed.add_field(name="Condition", value=f"{card.get('condition', 'NM')}{foil_str} · {lang}", inline=True)
-    embed.add_field(name="Price (EUR)", value=f"€{card['price_eur']:.2f}" if card.get("price_eur") else "—", inline=True)
+    embed.add_field(name="Condition", value=_fmt_condition(card), inline=True)
+    embed.add_field(name="Price (EUR)", value=_fmt_price(card), inline=True)
     embed.add_field(name="Container", value=f"📦 {card.get('container_name') or '—'}", inline=True)
     if card.get("notes"):
         embed.add_field(name="Notes", value=card["notes"], inline=False)
@@ -2695,6 +2749,10 @@ class BrowseContainersView(discord.ui.View):
         cards = await bot.db.list_cards(limit=_BROWSE_PAGE_SIZE, offset=0, container_id=container_id)
         view = BrowseCardsView(container, cards, total, page=0)
         await interaction.response.edit_message(content=None, embed=view.make_embed(), view=view)
+
+    async def on_timeout(self) -> None:
+        for item in self.children:
+            item.disabled = True  # type: ignore[attr-defined]
 
 
 class BrowseCardsView(discord.ui.View):
@@ -2786,6 +2844,10 @@ class BrowseCardsView(discord.ui.View):
         cards = await bot.db.list_cards(limit=_BROWSE_PAGE_SIZE, offset=page * _BROWSE_PAGE_SIZE, container_id=self._container["id"])
         view = BrowseCardsView(self._container, cards, self._total, page)
         await interaction.response.edit_message(embed=view.make_embed(), view=view)
+
+    async def on_timeout(self) -> None:
+        for item in self.children:
+            item.disabled = True  # type: ignore[attr-defined]
 
 
 class CardManageView(discord.ui.View):
