@@ -3190,10 +3190,7 @@ async def on_message(message: discord.Message):
             color=0x5865f2,
         )
         embed.set_thumbnail(url=message.author.display_avatar.url)
-        try:
-            await message.author.send(embed=embed, view=WelcomeView())
-        except discord.Forbidden:
-            pass  # User has DMs disabled — silently skip
+        await message.reply(embed=embed, view=WelcomeView(), mention_author=False)
 
     if SCAN_CHANNEL_ID is None or message.channel.id != SCAN_CHANNEL_ID:
         await bot.process_commands(message)
