@@ -2,7 +2,7 @@
 
 A Discord bot for tracking your physical Magic: The Gathering collection.
 Add cards by name or photo, organise them into containers (binders, boxes, decks),
-search and export your collection, and generate deck proposals — all from Discord slash commands.
+search and export your collection, and generate deck proposals — all from Discord.
 
 ---
 
@@ -11,14 +11,14 @@ search and export your collection, and generate deck proposals — all from Disc
 | Category | What it does |
 |---|---|
 | **Add by name** | Resolves English or German card names via Scryfall; auto-detects language |
-| **Add by photo** | OCR reads card name, set code, collector number, and language; matched via Scryfall |
-| **Auto-scan channel** | Drop any image in the configured channel — the bot processes it instantly |
+| **Add by photo** | Drop an image in the scan channel; OCR reads card name, set code, collector number, and language |
+| **Container memory** | After picking a container once, subsequent scans go straight to confirmation — no repeated selection |
 | **Localised card text & names** | Type line, oracle text, flavour text, and display names are stored in the card's own language |
-| **Containers** | Organise cards into named binders, boxes, decks, trade piles, etc. |
+| **Containers** | Organise cards into named binders, boxes, decks, trade piles, etc. Create, rename, and delete via Browse |
 | **Full-text search** | SQLite FTS5 across name, type, oracle text, set, flavour text, notes — paginated with card picker |
-| **Interactive browsing** | `/browse` opens a container-and-card browser; click any card to edit, move, resync, or delete it |
+| **Interactive browsing** | `/browse` opens a container-and-card browser; click any card to edit, move, resync, or delete it; manage the container (rename/delete) from the same view |
 | **Chaos sort** | MTG-native sort: W→U→B→R→G→Multi→Colourless→Land, then type, then CMC |
-| **Statistics** | Totals by language, foil/non-foil, rarity breakdown, top-5 by value |
+| **Statistics** | Totals by language, foil/non-foil, rarity breakdown, top-5 by value; Overcounted Cards button |
 | **Export** | Moxfield CSV (default), Excel CSV, or JSON |
 | **Import** | Moxfield CSV, bot-export CSV, or bot-export JSON |
 | **Deckbuilder** | Auto-generates Commander (100-card) or 60-card (Timeless/Standard) proposals; saves the deck to a container |
@@ -26,7 +26,7 @@ search and export your collection, and generate deck proposals — all from Disc
 | **Showcase** | `/showcase` displays the 5 most valuable cards with image, details, and a price-history chart |
 | **Price history** | Prices are snapshotted daily; history chart auto-appears once 2+ data points exist |
 | **Null-price refresh** | Cards added without a EUR price are automatically re-checked against Scryfall daily |
-| **Overcount** | `/overcount` lists every non-basic-land card that appears more than 4 times, with per-container breakdown |
+| **Overcount** | Cards with more than 4 copies — shown via the Overcounted Cards button in `/stats`, with per-container breakdown and a move UI |
 | **Backup & restore** | `/backup create` saves a copy on the server and sends a compressed `.db.gz`; `/backup restore` accepts both formats |
 | **Resync** | `/resync` re-fetches fresh Scryfall data (text, prices, image) for one or all cards |
 
@@ -119,7 +119,7 @@ DISCORD_TOKEN=your_discord_bot_token_here
 # Optional — restrict slash command sync to one guild (faster for development)
 DISCORD_GUILD_ID=
 
-# Channel where images are auto-scanned and write/scan commands are restricted to
+# Channel where images are auto-scanned and write commands (add, import, resync) are restricted to
 DISCORD_SCAN_CHANNEL_ID=
 
 # Channel where /deck commands work
@@ -148,7 +148,7 @@ DEBUG_SCAN_PREVIEW=0
 
 | Setting | Restricted commands | Available everywhere |
 |---|---|---|
-| `DISCORD_SCAN_CHANNEL_ID` | `/add`, `/scan`, `/update`, `/remove`, `/container create/rename/delete`, auto-scan image drops | `/search`, `/list`, `/card`, `/stats`, `/export`, `/container list`, `/help`, `/showcase` |
+| `DISCORD_SCAN_CHANNEL_ID` | `/add`, `/import`, `/resync`, auto-scan image drops | `/search`, `/list`, `/stats`, `/export`, `/container list`, `/showcase`, `/browse` |
 | `DISCORD_DECKBUILDER_CHANNEL_ID` | `/deck propose` | — |
 | `DISCORD_SHOWCASE_CHANNEL_ID` | `/showcase` | — |
 | `DISCORD_SEARCH_CHANNEL_ID` | `/search` | — |
@@ -163,11 +163,11 @@ The bot enforces a three-tier hierarchy. Higher tiers inherit all lower-tier per
 Admin  ≥  Collector  ≥  Guest
 ```
 
-| Role variable | Tier | Commands |
+| Role variable | Tier | Permissions |
 |---|---|---|
-| `DISCORD_GUEST_ROLE` | Guest (read-only) | `/list`, `/card`, `/search`, `/stats`, `/export`, `/container list`, `/browse`, `/deck propose` |
-| `DISCORD_COLLECTOR_ROLE` | Collector | `/add`, `/scan`, `/update`, `/import`, `/container create` + all Guest commands |
-| `DISCORD_ADMIN_ROLE` | Admin | `/remove`, `/container delete`, `/container rename`, `/container move`, `/resync`, `/backup create`, `/backup restore` + all Collector commands |
+| `DISCORD_GUEST_ROLE` | Guest (read-only) | `/list`, `/search`, `/stats`, `/export`, `/container list`, `/browse`, `/deck propose`, `/showcase` |
+| `DISCORD_COLLECTOR_ROLE` | Collector | `/add`, `/import`, Browse → Edit/Move/Resync card, Browse → Create Container + all Guest |
+| `DISCORD_ADMIN_ROLE` | Admin | Browse → Delete card/container, Browse → Rename container, `/container move`, `/resync`, `/backup create`, `/backup restore` + all Collector |
 
 Each variable accepts a **role name** (e.g. `Guest`) or a **role ID** (e.g. `123456789`).
 
@@ -178,15 +178,13 @@ Each variable accepts a **role name** (e.g. `Guest`) or a **role ID** (e.g. `123
 | `DISCORD_ADMIN_ROLE` not set | Admin commands open to everyone |
 | All three not set | Fully open — no role restrictions |
 
-`/help` is always accessible regardless of roles.
-
 ---
 
 ## Running manually
 
 ```bash
 source venv/bin/activate
-python bot.py
+python3 bot.py
 ```
 
 Logs go to stdout. Use the systemd service for production deployments.
@@ -223,26 +221,13 @@ Add a card by name. Scryfall is queried automatically.
 /add name:Blitz der Unmöglichkeit language:de container:Binder 1
 ```
 
-After adding, a **➕ Noch eine Kopie** button lets you add further copies of the same card (same set, condition, container) without retyping the command.
-
-#### `/scan`
-
-Add a card by attaching a photo. OCR reads the card name and footer (set code, collector number, language) and matches via Scryfall.
-
-| Parameter | Required | Default | Description |
-|---|---|---|---|
-| `image` | yes | — | Photo of the card |
-| `condition` | no | `NM` | Card condition |
-| `foil` | no | false | Whether the card is a foil |
-| `quantity` | no | 1 | Number of copies |
-| `language` | no | auto | Override detected language |
+After adding, a **➕ Add Another Copy** button lets you add further copies of the same card without retyping the command.
 
 #### Auto-scan (no command needed)
 
 Drop an image directly into the configured scan channel.
-The bot replies with a container picker, identifies the card, then asks you to confirm before saving.
 
-**Scan flow:**
+**First scan (no container selected yet):**
 
 ```
 You drop image
@@ -251,16 +236,16 @@ You drop image
 Container picker  ──── select existing / create new
       │
       ▼
-OCR name + footer (set code, collector #, language) — run in parallel
-      │
-      ▼
-Collector match (set code + number → Scryfall)
-      │  if no match ▼
-      OCR name → Scryfall (with set code hint)
+OCR + Scryfall lookup (name, set code, collector number, language)
       │
       ▼
 Confirmation embed  ──── Add  /  Add as foil  /  Skip
+                          └── optional: change container for this & future scans
 ```
+
+**Subsequent scans (container already known):**
+
+The bot skips the container picker and goes straight to scan + confirmation, showing which container will be used. A dropdown in the confirmation embed lets you switch containers for the current card and all future scans.
 
 ---
 
@@ -276,16 +261,6 @@ A **card picker dropdown** is shown on every page — select any card to open it
 | `page` | 1 | any integer |
 | `sort` | `chaos` | `chaos` · `name` · `set` · `cmc` · `added` |
 | `language` | all | `en` · `de` |
-
-#### `/card`
-
-Show full details for a single entry by its collection ID and open the action panel directly.
-
-```
-/card id:42
-```
-
-The action panel provides: **✏️ Edit** (condition, language, foil, notes) · **📦 Move** (to another container) · **🔄 Resync** (re-fetch from Scryfall) · **🗑️ Delete** · **✕ Close**.
 
 #### `/search`
 
@@ -307,7 +282,11 @@ Interactive container and card browser (ephemeral — only visible to you).
 1. A dropdown lists all containers; select one to enter it
 2. Inside a container, a dropdown lists the cards (25 per page, paginated)
 3. Select a card to open its action panel: **✏️ Edit** · **📦 Move** · **🔄 Resync** · **🗑️ Delete**
-4. Use **◀ Containers** to go back to the container list
+4. Use **◀ Containers** to return to the container list
+5. **✏️ Rename** and **🗑️ Delete Container** buttons are always visible at the bottom of any container view (admin only)
+6. A **➕ New Container** button is available both in the container list and inside any container
+
+The action panel (for individual cards) provides: **✏️ Edit** (condition, language, foil, notes) · **📦 Move** (to another container) · **🔄 Resync** (re-fetch from Scryfall) · **🗑️ Delete**.
 
 #### `/stats`
 
@@ -319,17 +298,7 @@ Collection-wide statistics:
 - Top 5 most valuable cards with container location
 - Per-container overview with bulk detection (containers where the most expensive card ≤ €0.05 are flagged as bulk)
 
-#### `/overcount`
-
-Lists every non-basic-land card that appears more than 4 times in your collection, sorted by count (highest first).
-For each card the total copy count and a per-container breakdown are shown:
-
-```
-Lightning Bolt — 7×
-  📦 Binder 1: 4  ·  📦 Trade Box: 3
-```
-
-Useful for identifying surplus copies before trading or selling.
+An **⚠️ Overcounted Cards** button is attached to the stats response. Click it to see every card that appears more than 4 times, with a per-container breakdown, price summary, and a UI for selecting and moving excess copies to another container.
 
 #### `/showcase`
 
@@ -343,52 +312,9 @@ Displays the 5 most valuable cards in your collection, one embed per card:
 
 Prices are recorded automatically once per day in the background. The chart appears without any manual action after the bot has been running for two days.
 
-A second background task runs daily to back-fill EUR prices for cards that had no price when they were first added (e.g. older or niche printings). No manual action needed.
+A second background task runs daily to back-fill EUR prices for cards that had no price when they were first added. No manual action needed.
 
-If `DISCORD_SHOWCASE_CHANNEL_ID` is set, this command is restricted to that channel.
-
----
-
-### Editing
-
-#### `/update`
-
-Change a single field on an existing entry.
-
-| Parameter | Description |
-|---|---|
-| `id` | Collection entry ID |
-| `field` | `condition` · `foil` · `language` · `notes` · `price_eur` · `price_usd` |
-| `value` | New value |
-
-```
-/update id:42 field:condition value:LP
-/update id:42 field:foil value:1
-/update id:42 field:notes value:"signed by artist"
-```
-
-#### `/resync`
-
-Re-fetches fresh data from Scryfall and updates all Scryfall-sourced fields: card text, type line, flavour text, prices, and image URL. Sort keys are recomputed. Collection metadata (condition, foil, language, notes, container) is preserved.
-
-| Parameter | Required | Description |
-|---|---|---|
-| `id` | no | Collection ID of the card to resync; omit to resync every card in the collection |
-
-```
-/resync             ← refreshes all cards (shows progress every 25 cards)
-/resync id:42       ← refreshes this entry and all copies sharing the same Scryfall ID
-```
-
-> **Use case:** After the bot update that introduced localised card text, run `/resync` once to backfill German text for all existing DE cards.
-
-#### `/remove`
-
-Remove a card entry by ID. Asks for confirmation before deleting.
-
-```
-/remove id:42
-```
+If `DISCORD_SHOWCASE_CHANNEL_ID` is set, posting in that channel triggers a welcome menu with quick-access buttons (Showcase, Browse, Stats, Commands).
 
 ---
 
@@ -397,42 +323,27 @@ Remove a card entry by ID. Asks for confirmation before deleting.
 Containers represent physical storage locations — binders, deck boxes, trade piles, etc.
 Each card can belong to one container. Deleting a container does **not** delete its cards.
 
-#### `/container create`
-
-```
-/container create name:Binder 1 type:binder description:Red/Blue staples
-```
-
-Available types: `binder` · `box` · `deck` · `trade` · `other`
+All container management (create, rename, delete) is accessible through `/browse` or `/container list`.
 
 #### `/container list`
 
 Lists all containers with card count and total EUR value.
-A **📦 Browse** button opens the interactive container browser (ephemeral).
-
-#### `/container rename`
-
-```
-/container rename id:3 name:Legacy Binder
-```
-
-#### `/container delete`
-
-Removes the container; cards are unlinked but kept in the collection.
-
-```
-/container delete id:3
-```
+Buttons: **📦 Browse** (opens the interactive container browser) · **➕ New Container** (creates a new container).
 
 #### `/container move`
 
-Moves all cards from one container to another in a single operation.
+Moves **all** cards from one container to another in a single operation.
 
 ```
 /container move source:Binder 1 destination:Trade Box
 ```
 
 Both `source` and `destination` support autocomplete.
+
+**Creating, renaming, and deleting containers** is done via Browse:
+- **Create:** click **➕ New Container** in the container list or inside any container
+- **Rename:** enter a container, then click **✏️ Rename** (admin)
+- **Delete:** enter a container, then click **🗑️ Delete Container** — cards are kept, only the container link is removed (admin)
 
 ---
 
@@ -490,6 +401,25 @@ Restores the database from a previously created backup file.
 4. The bot reinitialises the database and applies any pending migrations automatically
 
 > **Tip:** Run `/backup create` before a bulk import or any other operation you may want to undo.
+
+---
+
+### Resync
+
+#### `/resync`
+
+Re-fetches fresh data from Scryfall and updates all Scryfall-sourced fields: card text, type line, flavour text, prices, and image URL. Sort keys are recomputed. Collection metadata (condition, foil, language, notes, container) is preserved.
+
+| Parameter | Required | Description |
+|---|---|---|
+| `id` | no | Collection ID of the card to resync; omit to resync every card in the collection |
+
+```
+/resync             ← refreshes all cards (shows progress every 25 cards)
+/resync id:42       ← refreshes this entry and all copies sharing the same Scryfall ID
+```
+
+Individual cards can also be resynced from their action panel in `/browse` or `/list`.
 
 ---
 

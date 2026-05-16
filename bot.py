@@ -349,7 +349,7 @@ def paginate_embeds(
 # ──────────────────────────────────────────────────────────────────────────────
 
 _READ_ONLY_COMMANDS = {
-    "search", "list", "card", "stats", "export", "help",
+    "search", "list", "stats", "export",
     "container list", "showcase",
 }
 
@@ -425,7 +425,7 @@ class MTGBot(commands.Bot):
 
     async def on_ready(self):
         logger.info("Logged in as %s (id=%s)", self.user, self.user.id)
-        await self.change_presence(activity=discord.Game(name="/help • MTG Collection"))
+        await self.change_presence(activity=discord.Game(name="📦 MTG Collection"))
 
 
 bot = MTGBot()
@@ -507,31 +507,8 @@ container_group = app_commands.Group(name="container", description="Manage card 
 CONTAINER_TYPES = ["binder", "box", "deck", "trade", "other"]
 
 
-@container_group.command(name="create", description="Create a new container")
-@app_commands.describe(name="Container name", type="Container type", description="Optional description")
-@app_commands.choices(type=[app_commands.Choice(name=t, value=t) for t in CONTAINER_TYPES])
-async def container_create(
-    interaction: discord.Interaction,
-    name: str,
-    type: str = "binder",
-    description: str = "",
-):
-    if not await require_collector(interaction):
-        return
-    try:
-        cid = await bot.db.create_container(name, description, type)
-    except Exception:
-        await interaction.response.send_message(
-            f'A container named **{name}** already exists.', ephemeral=True
-        )
-        return
-    await interaction.response.send_message(
-        f'📦 Container **{name}** (`{type}`) created with ID **{cid}**.', ephemeral=True
-    )
-
-
 class _ContainerListView(discord.ui.View):
-    """Attaches a 'Browse' button to the /container list response."""
+    """Attaches Browse and New Container buttons to the /container list response."""
     def __init__(self):
         super().__init__(timeout=300)
 
@@ -545,6 +522,12 @@ class _ContainerListView(discord.ui.View):
             "Select a container to browse:", view=view, ephemeral=True
         )
 
+    @discord.ui.button(label="New Container", emoji="➕", style=discord.ButtonStyle.secondary)
+    async def new_container(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await require_collector(interaction):
+            return
+        await interaction.response.send_modal(ContainerCreateModal(refresh_browse=False))
+
 
 @container_group.command(name="list", description="List all containers")
 async def container_list(interaction: discord.Interaction):
@@ -552,8 +535,9 @@ async def container_list(interaction: discord.Interaction):
         return
     containers = await bot.db.list_containers()
     if not containers:
+        view = _ContainerListView()
         await interaction.response.send_message(
-            "No containers yet. Use `/container create` to make one.", ephemeral=True
+            "No containers yet. Create your first one:", view=view, ephemeral=True
         )
         return
     total_value = sum(c.get("total_value_eur") or 0 for c in containers)
@@ -568,39 +552,6 @@ async def container_list(interaction: discord.Interaction):
             val += f"\n{c['description']}"
         embed.add_field(name=f"[{c['id']}] {c['name']}", value=val, inline=False)
     await interaction.response.send_message(embed=embed, view=_ContainerListView())
-
-
-@container_group.command(name="delete", description="Delete a container (cards are kept, container link is removed)")
-@app_commands.describe(id="Container ID")
-async def container_delete(interaction: discord.Interaction, id: int):
-    if not await require_admin(interaction):
-        return
-    c = await bot.db.get_container(id)
-    if not c:
-        await interaction.response.send_message(f"No container with ID {id}.", ephemeral=True)
-        return
-    view = ConfirmView(timeout=30)
-    await interaction.response.send_message(
-        f'Delete container **{c["name"]}**? Cards in it will not be deleted.', view=view, ephemeral=True
-    )
-    await view.wait()
-    if view.confirmed:
-        await bot.db.delete_container(id)
-        await interaction.edit_original_response(content=f'Container **{c["name"]}** deleted.', view=None)
-    else:
-        await interaction.edit_original_response(content="Cancelled.", view=None)
-
-
-@container_group.command(name="rename", description="Rename a container")
-@app_commands.describe(id="Container ID", name="New name")
-async def container_rename(interaction: discord.Interaction, id: int, name: str):
-    if not await require_admin(interaction):
-        return
-    ok = await bot.db.rename_container(id, name)
-    if ok:
-        await interaction.response.send_message(f'Container renamed to **{name}**.', ephemeral=True)
-    else:
-        await interaction.response.send_message(f"No container with ID {id}.", ephemeral=True)
 
 
 @container_group.command(name="move", description="Move all cards from one container to another")
@@ -770,90 +721,6 @@ async def cmd_add(
     embed.description = desc
     view = _AddAnotherView(card, str(interaction.user.id), len(ids), desc)
     await interaction.followup.send(embed=embed, view=view)
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# /scan  — add card(s) by uploading a photo
-# ──────────────────────────────────────────────────────────────────────────────
-
-@bot.tree.command(name="scan", description="Add a card by uploading a photo (OCR)")
-@app_commands.describe(
-    image="Photo of your MTG card",
-    condition="Card condition",
-    foil="Is this a foil?",
-    quantity="How many copies",
-    language="Override detected language",
-)
-@app_commands.choices(condition=[app_commands.Choice(name=c, value=c) for c in CONDITIONS])
-@app_commands.choices(language=[
-    app_commands.Choice(name="English", value="en"),
-    app_commands.Choice(name="German / Deutsch", value="de"),
-])
-async def cmd_scan(
-    interaction: discord.Interaction,
-    image: discord.Attachment,
-    condition: str = "NM",
-    foil: bool = False,
-    quantity: int = 1,
-    language: str = "",
-):
-    if not await require_collector(interaction):
-        return
-    if not image.content_type or not image.content_type.startswith("image/"):
-        await interaction.response.send_message("Please attach an image file.", ephemeral=True)
-        return
-
-    await interaction.response.defer(thinking=True)
-
-    image_bytes = await image.read()
-    m = await _resolve_scan(image_bytes)
-
-    if not m.card:
-        if not scanner.ocr_available():
-            await interaction.followup.send(
-                "OCR is not available. Use `/add` instead.", ephemeral=True
-            )
-        elif m.collector_info.get("set_code") and m.collector_info.get("collector_number"):
-            await interaction.followup.send(
-                f'Collector info read ({m.collector_info["set_code"]} '
-                f'#{m.collector_info["collector_number"]}) but no Scryfall match. '
-                f'Try `/add <name>`.',
-                ephemeral=True,
-            )
-        elif m.extracted_name:
-            await interaction.followup.send(
-                f'Could not match **"{m.extracted_name}"** on Scryfall. '
-                f'Try `/add {m.extracted_name}` with the exact name.',
-                ephemeral=True,
-            )
-        else:
-            await interaction.followup.send(
-                "Could not read the card name from the image. Try a clearer photo, or use `/add <name>`.",
-                ephemeral=True,
-            )
-        return
-
-    card = m.card
-    card["language"] = language or m.detected_lang or "en"
-    card["condition"] = condition
-    card["foil"] = foil
-    card["quantity"] = 1
-
-    copies = max(1, quantity)
-    ids = []
-    for _ in range(copies):
-        ids.append(await bot.db.add_card(card, added_by=str(interaction.user.id)))
-
-    card["id"] = ids[0]
-    lang_flag = LANG_EMOJI.get(card["language"], card["language"].upper())
-    embed = card_embed(card, title_prefix="Scanned ✅  ")
-    id_range = f"IDs **{ids[0]}–{ids[-1]}**" if len(ids) > 1 else f"ID **{ids[0]}**"
-    match_note = "  •  ".join(m.method_parts)
-    embed.description = (
-        f"Saved as {id_range} ({len(ids)} cop{'y' if len(ids)==1 else 'ies'}) | Language {lang_flag}"
-        + (f"\n*{match_note}*" if match_note else "")
-    )
-    await interaction.followup.send(embed=embed)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1074,99 +941,6 @@ async def cmd_list(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# /card
-# ──────────────────────────────────────────────────────────────────────────────
-
-@bot.tree.command(name="card", description="Show details for a card by its collection ID")
-@app_commands.describe(id="Collection ID (shown in /list)")
-async def cmd_card(interaction: discord.Interaction, id: int):
-    if not await require_guest(interaction):
-        return
-    card = await bot.db.get_card(id)
-    if not card:
-        await interaction.response.send_message(f"No card with ID {id}.", ephemeral=True)
-        return
-    await interaction.response.send_message(
-        embed=_card_manage_embed(card),
-        view=CardManageView(card, None, 0),
-        ephemeral=True,
-    )
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# /remove
-# ──────────────────────────────────────────────────────────────────────────────
-
-@bot.tree.command(name="remove", description="Remove a card from your collection by ID")
-@app_commands.describe(id="Collection ID to remove")
-async def cmd_remove(interaction: discord.Interaction, id: int):
-    if not await require_admin(interaction):
-        return
-    card = await bot.db.get_card(id)
-    if not card:
-        await interaction.response.send_message(f"No card with ID {id}.", ephemeral=True)
-        return
-
-    view = ConfirmView(timeout=30)
-    await interaction.response.send_message(
-        f"Remove **{card['name_en']}** (ID {id}) from your collection?",
-        view=view,
-        ephemeral=True,
-    )
-    await view.wait()
-    if view.confirmed:
-        await bot.db.remove_card(id)
-        await interaction.edit_original_response(content=f"Removed **{card['name_en']}** (ID {id}).", view=None)
-    else:
-        await interaction.edit_original_response(content="Cancelled.", view=None)
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# /update
-# ──────────────────────────────────────────────────────────────────────────────
-
-@bot.tree.command(name="update", description="Update a field on a collection entry")
-@app_commands.describe(
-    id="Collection ID",
-    field="Field to update",
-    value="New value",
-)
-@app_commands.choices(field=[
-    app_commands.Choice(name="condition", value="condition"),
-    app_commands.Choice(name="foil (0/1)", value="foil"),
-    app_commands.Choice(name="language (en/de)", value="language"),
-    app_commands.Choice(name="notes", value="notes"),
-    app_commands.Choice(name="price_eur", value="price_eur"),
-    app_commands.Choice(name="price_usd", value="price_usd"),
-])
-async def cmd_update(interaction: discord.Interaction, id: int, field: str, value: str):
-    if not await require_collector(interaction):
-        return
-    card = await bot.db.get_card(id)
-    if not card:
-        await interaction.response.send_message(f"No card with ID {id}.", ephemeral=True)
-        return
-
-    coerced: object = value
-    if field in ("foil",):
-        coerced = 1 if value.lower() in ("1", "yes", "true", "foil") else 0
-    elif field in ("price_eur", "price_usd"):
-        try:
-            coerced = float(value)
-        except ValueError:
-            await interaction.response.send_message("Price must be a number.", ephemeral=True)
-            return
-
-    ok = await bot.db.update_card(id, field, coerced)
-    if ok:
-        await interaction.response.send_message(
-            f"Updated **{card['name_en']}** (ID {id}): `{field}` → `{coerced}`"
-        )
-    else:
-        await interaction.response.send_message(f"Could not update field `{field}`.", ephemeral=True)
-
-
-# ──────────────────────────────────────────────────────────────────────────────
 # /browse — interactive container & card manager
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -1177,8 +951,9 @@ async def cmd_browse(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     containers = await bot.db.list_containers()
     if not containers:
+        view = BrowseContainersView(containers)
         await interaction.edit_original_response(
-            content="No containers yet. Create one with `/container create`."
+            content="No containers yet. Create your first one:", view=view
         )
         return
     view = BrowseContainersView(containers)
@@ -1557,11 +1332,39 @@ async def cmd_stats(interaction: discord.Interaction):
             text = text[:1017] + "…"
         embed.add_field(name="Containers", value=text, inline=False)
 
-    await interaction.followup.send(embed=embed)
+    view = StatsView()
+    await interaction.followup.send(embed=embed, view=view)
+
+
+class StatsView(discord.ui.View):
+    """Attached to /stats — provides quick actions like viewing overcounted cards."""
+
+    def __init__(self):
+        super().__init__(timeout=300)
+
+    @discord.ui.button(label="Overcounted Cards", emoji="⚠️", style=discord.ButtonStyle.secondary)
+    async def btn_overcount(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await require_guest(interaction):
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        cards = await bot.db.get_overcount_cards(threshold=4)
+        if not cards:
+            await interaction.followup.send(
+                "No card appears more than 4 times in your collection.", ephemeral=True
+            )
+            return
+        containers = await bot.db.list_containers()
+        embed = _overcount_summary_embed(cards)
+        view = OvercountView(cards, containers)
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+
+    async def on_timeout(self) -> None:
+        for item in self.children:
+            item.disabled = True  # type: ignore[attr-defined]
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# /overcount  —  cards with more than 4 copies
+# Cards with more than 4 copies — helper functions and views
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _overcount_card_line(card: dict, threshold: int = 4) -> str:
@@ -1792,25 +1595,6 @@ class OvercountView(discord.ui.View):
     async def on_timeout(self) -> None:
         for item in self.children:
             item.disabled = True  # type: ignore[attr-defined]
-
-
-@bot.tree.command(name="overcount", description="Show cards that appear more than 4 times in your collection")
-async def cmd_overcount(interaction: discord.Interaction):
-    if not await require_guest(interaction):
-        return
-    await interaction.response.defer(thinking=True)
-    cards = await bot.db.get_overcount_cards(threshold=4)
-    if not cards:
-        await interaction.followup.send(
-            "No card appears more than 4 times in your collection.", ephemeral=True
-        )
-        return
-
-    containers = await bot.db.list_containers()
-    embed = _overcount_summary_embed(cards)
-    # Only show the select if there are cards and they fit in the select (max 25)
-    view = OvercountView(cards, containers) if cards else discord.ui.View()
-    await interaction.followup.send(embed=embed, view=view)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -2345,21 +2129,27 @@ class WelcomeView(discord.ui.View):
     @discord.ui.button(label="ℹ️ Commands", style=discord.ButtonStyle.secondary, row=0)
     async def btn_help(self, interaction: discord.Interaction, button: discord.ui.Button):
         embed = discord.Embed(title="Available Commands", color=0x5865f2, description=(
-            "`/add` — Add a card to the collection\n"
-            "`/search` — Search for a card by name\n"
-            "`/list` — List all cards (paginated)\n"
-            "`/showcase` — Top 5 most valuable cards\n"
-            "`/overcount` — Cards exceeding 4 copies\n"
-            "`/stats` — Full collection statistics\n"
-            "`/container list` — Browse containers\n"
-            "`/export` — Export collection as CSV/JSON\n"
-            "`/deck suggest` — Build a deck from your collection"
+            "**Adding cards**\n"
+            "`/add` — Add a card by name (EN/DE auto-detected)\n"
+            "Drop an image in the scan channel — scans automatically\n\n"
+            "**Viewing**\n"
+            "`/list` — Browse full collection (paginated)\n"
+            "`/search` — Full-text search across all fields\n"
+            "`/browse` — Browse containers and manage cards interactively\n"
+            "`/stats` — Collection stats + overcounted cards button\n"
+            "`/showcase` — Top 5 most valuable cards\n\n"
+            "**Containers**\n"
+            "`/container list` — All containers with card count & value\n"
+            "`/container move` — Move all cards from one container to another\n"
+            "Rename/delete containers via Browse → select container\n\n"
+            "**Other**\n"
+            "`/export` — Download as Moxfield CSV / JSON\n"
+            "`/deck propose` — Build a deck from your collection\n"
+            "`/backup create` — Download the database (admin)"
         ))
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-# Users who already received the showcase welcome DM this session.
-_showcase_welcomed: set[int] = set()
 
 
 @bot.tree.command(name="showcase", description="Show the 5 most valuable cards in your collection")
@@ -2470,109 +2260,6 @@ async def backup_restore(interaction: discord.Interaction, file: discord.Attachm
 bot.tree.add_command(backup_group)
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# /help
-# ──────────────────────────────────────────────────────────────────────────────
-
-@bot.tree.command(name="help", description="Show available commands")
-async def cmd_help(interaction: discord.Interaction):
-    embed = discord.Embed(title="MTG Collection Manager — All Commands", color=0xE74C3C)
-
-    embed.add_field(
-        name="➕ Adding cards",
-        value=(
-            "`/add <name>` — add by name, auto-detects EN/DE; `quantity` creates N separate entries\n"
-            "`/scan <image>` — attach a photo; auto-detects card via OCR\n"
-            "Drop an image in this channel — bot scans it instantly (no command needed)\n"
-        ),
-        inline=False,
-    )
-    embed.add_field(
-        name="🔍 Viewing",
-        value=(
-            "`/list` — browse full collection (chaos sort by default)\n"
-            "`/list sort:Name` — sort by name, set, CMC, or date added\n"
-            "`/card <id>` — full details for one card\n"
-            "`/search <query>` — full-text search across name, type, oracle text, set, notes, …\n"
-            "`/stats` — cards by language & foil, rarity breakdown, value, top 5 most valuable\n"
-            "`/overcount` — list cards that appear more than 4 times (with container breakdown)\n"
-        ),
-        inline=False,
-    )
-    embed.add_field(
-        name="✏️ Editing",
-        value=(
-            "`/update <id> <field> <value>` — edit `condition`, `foil`, `language`, `notes`, `price_eur`, `price_usd`\n"
-            "`/remove <id>` — delete a card entry\n"
-        ),
-        inline=False,
-    )
-    embed.add_field(
-        name="📦 Containers",
-        value=(
-            "`/container create <name>` — create a binder, box, deck, trade pile, …\n"
-            "`/container list` — all containers with card count and total value\n"
-            "`/container rename <id> <name>` — rename a container\n"
-            "`/container delete <id>` — remove a container (cards are kept)\n"
-        ),
-        inline=False,
-    )
-    embed.add_field(
-        name="📤 Export",
-        value="`/export` — download as **Moxfield CSV** (default), Excel CSV, or JSON\n",
-        inline=False,
-    )
-    embed.add_field(
-        name="🃏 Deckbuilder (deckbuilder channel only)",
-        value=(
-            "`/deck propose format:Commander` — score commanders by collection synergy, pick one, get a 100-card proposal\n"
-            "`/deck propose format:Timeless` — auto-detect dominant strategy, build a 60-card Timeless deck\n"
-            "`/deck propose format:Standard` — same for Standard format\n"
-            "Each proposal shows key cards with their container location + full deck list as `.txt`\n"
-        ),
-        inline=False,
-    )
-    embed.add_field(
-        name="🌀 Chaos sort order",
-        value=(
-            "W → U → B → R → G → Multicolor → Colorless → Land\n"
-            "Within each color: Creature → Instant → Sorcery → Enchantment → Artifact → Planeswalker\n"
-            "Then ascending CMC, then name A–Z"
-        ),
-        inline=False,
-    )
-    embed.add_field(
-        name="💾 Backup (admin only)",
-        value=(
-            "`/backup create` — download the current database as a `.db` file\n"
-            "`/backup restore` — upload a `.db` file to replace the current database\n"
-        ),
-        inline=False,
-    )
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Confirmation UI
-# ──────────────────────────────────────────────────────────────────────────────
-
-class ConfirmView(discord.ui.View):
-    def __init__(self, timeout: float = 30):
-        super().__init__(timeout=timeout)
-        self.confirmed = False
-
-    @discord.ui.button(label="Yes, remove", style=discord.ButtonStyle.danger)
-    async def yes(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.confirmed = True
-        self.stop()
-        await interaction.response.defer()
-
-    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
-    async def no(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.stop()
-        await interaction.response.defer()
-
-
 class RestoreConfirmView(discord.ui.View):
     def __init__(self, data: bytes):
         super().__init__(timeout=60)
@@ -2616,6 +2303,21 @@ class RestoreConfirmView(discord.ui.View):
 _last_container: dict[int, tuple[int, str]] = {}
 
 
+def _no_match_msg(m: "_ScanMatch") -> str:
+    """Human-readable reason why a scan produced no card match."""
+    ci = m.collector_info
+    if not scanner.ocr_available():
+        return "OCR not available. Use `/add <name>` instead."
+    if ci.get("set_code") and ci.get("collector_number"):
+        return (
+            f'Collector info read ({ci["set_code"]} #{ci["collector_number"]}) '
+            f"but no Scryfall match. Enter the name manually."
+        )
+    if m.extracted_name:
+        return f'Could not match **"{m.extracted_name}"** on Scryfall. Enter the name manually.'
+    return "Could not read the card. Enter the name manually."
+
+
 async def _do_scan_and_confirm(
     interaction: discord.Interaction,
     image_bytes: bytes,
@@ -2623,10 +2325,9 @@ async def _do_scan_and_confirm(
     container_id: int,
     container_name: str,
 ):
-    """Hash match + OCR → Scryfall lookup → show card confirmation. Caller must not have responded yet."""
+    """OCR → Scryfall → show confirmation. Caller must not have responded yet (interaction-based)."""
     await interaction.response.defer(thinking=True)
 
-    # Debug: show the processed image so crop quality can be verified
     if DEBUG_SCAN_PREVIEW:
         preview = scanner.get_isolated_preview(image_bytes)
         if preview:
@@ -2637,13 +2338,7 @@ async def _do_scan_and_confirm(
             )
 
     m = await _resolve_scan(image_bytes)
-
-    if m.extracted_name:
-        logger.debug("OCR name: '%s'", m.extracted_name)
-    else:
-        logger.debug("OCR: no name extracted")
-    if m.collector_info:
-        logger.debug("OCR footer: %s", m.collector_info)
+    logger.debug("OCR name: %r  footer: %s", m.extracted_name, m.collector_info)
 
     if DEBUG_SCAN_PREVIEW:
         ci = m.collector_info
@@ -2655,42 +2350,59 @@ async def _do_scan_and_confirm(
             f"#=`{ci.get('collector_number') or '—'}` "
             f"lang=`{ci.get('language') or '—'}`"
         )
-        await interaction.followup.send(
-            "🔍 **Debug — OCR results:**\n" + "\n".join(dbg),
-            ephemeral=True,
-        )
+        await interaction.followup.send("🔍 **Debug — OCR results:**\n" + "\n".join(dbg), ephemeral=True)
 
     if not m.card:
         view = _ManualNameView(image_bytes, source_message, container_id, container_name)
-        ci = m.collector_info
-        if not scanner.ocr_available():
-            msg = "OCR not available. Use `/add <name>` instead."
-        elif ci.get("set_code") and ci.get("collector_number"):
-            msg = (
-                f'Collector info read ({ci["set_code"]} '
-                f'#{ci["collector_number"]}) but no Scryfall match. '
-                f'Enter the name manually.'
-            )
-        elif m.extracted_name:
-            msg = f'Could not match **"{m.extracted_name}"** on Scryfall. Enter the name manually.'
-        else:
-            msg = "Could not read the card. Enter the name manually."
-        await interaction.followup.send(msg, view=view, ephemeral=True)
+        await interaction.followup.send(_no_match_msg(m), view=view, ephemeral=True)
         return
 
     card = m.card
     card["language"] = m.detected_lang or "en"
     card["container_id"] = container_id
     card["container_name"] = container_name
+    match_method = "  •  ".join(m.method_parts)
     lang_flag = LANG_EMOJI.get(card["language"], card["language"].upper())
     embed = card_embed(card, title_prefix="Found — confirm?  ")
-    match_method = "  •  ".join(m.method_parts)
     embed.description = (
         f"Language: {lang_flag}  |  Container: 📦 **{container_name}**"
         + (f"\n*{match_method}*" if match_method else "")
     )
-    view = ScanConfirmView(card, source_message, image_bytes)
+    containers = await bot.db.list_containers()
+    view = ScanConfirmView(card, source_message, image_bytes, containers, match_method)
     await interaction.followup.send(embed=embed, view=view)
+
+
+async def _do_scan_direct(
+    scanning_msg: discord.Message,
+    image_bytes: bytes,
+    source_message: discord.Message,
+    container_id: int,
+    container_name: str,
+):
+    """OCR → Scryfall → edit scanning_msg with confirmation (no interaction — used when container already known)."""
+    m = await _resolve_scan(image_bytes)
+    logger.debug("OCR name: %r  footer: %s", m.extracted_name, m.collector_info)
+
+    if not m.card:
+        view = _ManualNameView(image_bytes, source_message, container_id, container_name)
+        await scanning_msg.edit(content=_no_match_msg(m), view=view)
+        return
+
+    card = m.card
+    card["language"] = m.detected_lang or "en"
+    card["container_id"] = container_id
+    card["container_name"] = container_name
+    match_method = "  •  ".join(m.method_parts)
+    lang_flag = LANG_EMOJI.get(card["language"], card["language"].upper())
+    embed = card_embed(card, title_prefix="Found — confirm?  ")
+    embed.description = (
+        f"Language: {lang_flag}  |  Container: 📦 **{container_name}**"
+        + (f"\n*{match_method}*" if match_method else "")
+    )
+    containers = await bot.db.list_containers()
+    view = ScanConfirmView(card, source_message, image_bytes, containers, match_method)
+    await scanning_msg.edit(content=None, embed=embed, view=view)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -2718,26 +2430,134 @@ def _card_manage_embed(card: dict) -> discord.Embed:
     return embed
 
 
+class ContainerCreateModal(discord.ui.Modal, title="Create container"):
+    cont_name = discord.ui.TextInput(label="Container name", placeholder="e.g. Binder 1", max_length=100)
+    cont_type = discord.ui.TextInput(
+        label="Type  (binder / box / deck / trade / other)",
+        placeholder="binder",
+        required=False,
+        max_length=20,
+    )
+    cont_desc = discord.ui.TextInput(
+        label="Description (optional)",
+        placeholder="e.g. Blue cards from 2023",
+        required=False,
+        max_length=200,
+        style=discord.TextStyle.paragraph,
+    )
+
+    def __init__(self, refresh_browse: bool = True):
+        super().__init__()
+        self._refresh_browse = refresh_browse
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if not await require_collector(interaction):
+            return
+        type_val = (self.cont_type.value or "binder").strip().lower()
+        if type_val not in CONTAINER_TYPES:
+            type_val = "binder"
+        name = self.cont_name.value.strip()
+        desc = self.cont_desc.value.strip() or ""
+        try:
+            await bot.db.create_container(name, desc, type_val)
+        except Exception:
+            await interaction.response.send_message(
+                f'A container named **{name}** already exists.', ephemeral=True
+            )
+            return
+        if self._refresh_browse:
+            containers = await bot.db.list_containers()
+            view = BrowseContainersView(containers)
+            await interaction.response.edit_message(
+                content="Select a container to browse:", embed=None, view=view
+            )
+        else:
+            await interaction.response.send_message(
+                f'📦 Container **{name}** (`{type_val}`) created.', ephemeral=True
+            )
+
+
+class ContainerRenameModal(discord.ui.Modal, title="Rename container"):
+    new_name = discord.ui.TextInput(label="New name", max_length=100)
+
+    def __init__(self, container: dict, page: int, total: int):
+        super().__init__()
+        self._container = container
+        self._page = page
+        self._total = total
+        self.new_name.default = container["name"]
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if not await require_admin(interaction):
+            return
+        name = self.new_name.value.strip()
+        ok = await bot.db.rename_container(self._container["id"], name)
+        if not ok:
+            await interaction.response.send_message("Could not rename container.", ephemeral=True)
+            return
+        self._container["name"] = name
+        cards = await bot.db.list_cards(
+            limit=_BROWSE_PAGE_SIZE, offset=self._page * _BROWSE_PAGE_SIZE,
+            container_id=self._container["id"],
+        )
+        view = BrowseCardsView(self._container, cards, self._total, self._page)
+        await interaction.response.edit_message(content=None, embed=view.make_embed(), view=view)
+
+
+class _BrowseContainerDeleteConfirmView(discord.ui.View):
+    def __init__(self, container: dict):
+        super().__init__(timeout=30)
+        self._container = container
+
+    @discord.ui.button(label="Delete", style=discord.ButtonStyle.danger, emoji="🗑️")
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.stop()
+        if not await require_admin(interaction):
+            return
+        await bot.db.delete_container(self._container["id"])
+        containers = await bot.db.list_containers()
+        view = BrowseContainersView(containers)
+        await interaction.response.edit_message(
+            content=f'Container **{self._container["name"]}** deleted. Cards were kept.',
+            embed=None, view=view,
+        )
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.stop()
+        cards = await bot.db.list_cards(
+            limit=_BROWSE_PAGE_SIZE, offset=0, container_id=self._container["id"]
+        )
+        total = await bot.db.count_cards(container_id=self._container["id"])
+        view = BrowseCardsView(self._container, cards, total, page=0)
+        await interaction.response.edit_message(content=None, embed=view.make_embed(), view=view)
+
+
 class BrowseContainersView(discord.ui.View):
     def __init__(self, containers: list[dict]):
         super().__init__(timeout=300)
-        if not containers:
-            return
-        options = [
-            discord.SelectOption(
-                label=c["name"][:100],
-                value=str(c["id"]),
-                description=(
-                    f"{c.get('type', 'binder')} · {c['card_count']} cards"
-                    + (f" · €{c['total_value_eur']:.2f}" if c.get("total_value_eur") else "")
-                )[:100],
-                emoji="📦",
-            )
-            for c in containers[:25]
-        ]
-        sel = discord.ui.Select(placeholder="Select a container…", options=options, row=0)
-        sel.callback = self._on_select
-        self.add_item(sel)
+        if containers:
+            options = [
+                discord.SelectOption(
+                    label=c["name"][:100],
+                    value=str(c["id"]),
+                    description=(
+                        f"{c.get('type', 'binder')} · {c['card_count']} cards"
+                        + (f" · €{c['total_value_eur']:.2f}" if c.get("total_value_eur") else "")
+                    )[:100],
+                    emoji="📦",
+                )
+                for c in containers[:25]
+            ]
+            sel = discord.ui.Select(placeholder="Select a container…", options=options, row=0)
+            sel.callback = self._on_select
+            self.add_item(sel)
+
+        create_btn = discord.ui.Button(
+            label="New Container", emoji="➕", style=discord.ButtonStyle.primary, row=1
+        )
+        create_btn.callback = self._create
+        self.add_item(create_btn)
 
     async def _on_select(self, interaction: discord.Interaction):
         container_id = int(interaction.data["values"][0])
@@ -2749,6 +2569,11 @@ class BrowseContainersView(discord.ui.View):
         cards = await bot.db.list_cards(limit=_BROWSE_PAGE_SIZE, offset=0, container_id=container_id)
         view = BrowseCardsView(container, cards, total, page=0)
         await interaction.response.edit_message(content=None, embed=view.make_embed(), view=view)
+
+    async def _create(self, interaction: discord.Interaction):
+        if not await require_collector(interaction):
+            return
+        await interaction.response.send_modal(ContainerCreateModal(refresh_browse=True))
 
     async def on_timeout(self) -> None:
         for item in self.children:
@@ -2797,6 +2622,14 @@ class BrowseCardsView(discord.ui.View):
             next_btn.callback = self._next
             self.add_item(next_btn)
 
+        rename_btn = discord.ui.Button(label="Rename", emoji="✏️", style=discord.ButtonStyle.secondary, row=2)
+        rename_btn.callback = self._rename
+        self.add_item(rename_btn)
+
+        delete_btn = discord.ui.Button(label="Delete Container", emoji="🗑️", style=discord.ButtonStyle.danger, row=2)
+        delete_btn.callback = self._delete
+        self.add_item(delete_btn)
+
     @staticmethod
     def _label(c: dict) -> str:
         return _card_select_label(c)
@@ -2844,6 +2677,23 @@ class BrowseCardsView(discord.ui.View):
         cards = await bot.db.list_cards(limit=_BROWSE_PAGE_SIZE, offset=page * _BROWSE_PAGE_SIZE, container_id=self._container["id"])
         view = BrowseCardsView(self._container, cards, self._total, page)
         await interaction.response.edit_message(embed=view.make_embed(), view=view)
+
+    async def _rename(self, interaction: discord.Interaction):
+        if not await require_admin(interaction):
+            return
+        await interaction.response.send_modal(
+            ContainerRenameModal(self._container, self._page, self._total)
+        )
+
+    async def _delete(self, interaction: discord.Interaction):
+        if not await require_admin(interaction):
+            return
+        name = self._container["name"]
+        view = _BrowseContainerDeleteConfirmView(self._container)
+        await interaction.response.edit_message(
+            content=f'Delete container **{name}**? Cards in it will not be deleted.',
+            embed=None, view=view,
+        )
 
     async def on_timeout(self) -> None:
         for item in self.children:
@@ -3166,16 +3016,66 @@ class NameCorrectionModal(discord.ui.Modal, title="Correct card name"):
         lang_flag = LANG_EMOJI.get(card["language"], card["language"].upper())
         embed = card_embed(card, title_prefix="Found — confirm?  ")
         embed.description = f"Language: {lang_flag}  |  Container: 📦 **{self._container_name}**"
-        view = ScanConfirmView(card, self._source, self._image_bytes)
+        containers = await bot.db.list_containers()
+        view = ScanConfirmView(card, self._source, self._image_bytes, containers)
         await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
 
 class ScanConfirmView(discord.ui.View):
-    def __init__(self, card: dict, source_message: discord.Message, image_bytes: bytes):
+    def __init__(
+        self,
+        card: dict,
+        source_message: discord.Message,
+        image_bytes: bytes,
+        containers: list[dict],
+        match_method: str = "",
+    ):
         super().__init__(timeout=120)
         self._card = card
         self._source = source_message
         self._image_bytes = image_bytes
+        self._match_method = match_method
+
+        # Row 1: container change select
+        if containers:
+            current_id = card.get("container_id")
+            options = [
+                discord.SelectOption(
+                    label=c["name"][:100],
+                    value=str(c["id"]),
+                    description=f"{c.get('type', 'binder')} · {c['card_count']} cards",
+                    default=(c["id"] == current_id),
+                )
+                for c in containers[:25]
+            ]
+            sel = discord.ui.Select(
+                placeholder="📦 Change container for this & future scans…",
+                options=options,
+                row=1,
+            )
+            sel.callback = self._on_container
+            self.add_item(sel)
+
+    def _build_embed(self) -> discord.Embed:
+        lang_flag = LANG_EMOJI.get(self._card.get("language", "en"), "")
+        container_name = self._card.get("container_name", "—")
+        embed = card_embed(self._card, title_prefix="Found — confirm?  ")
+        embed.description = (
+            f"Language: {lang_flag}  |  Container: 📦 **{container_name}**"
+            + (f"\n*{self._match_method}*" if self._match_method else "")
+        )
+        return embed
+
+    async def _on_container(self, interaction: discord.Interaction):
+        cid = int(interaction.data["values"][0])
+        c = await bot.db.get_container(cid)
+        if not c:
+            await interaction.response.send_message("Container no longer exists.", ephemeral=True)
+            return
+        self._card["container_id"] = cid
+        self._card["container_name"] = c["name"]
+        _last_container[self._source.author.id] = (cid, c["name"])
+        await interaction.response.edit_message(embed=self._build_embed(), view=self)
 
     async def _save(self, interaction: discord.Interaction, foil: bool):
         self._card["foil"] = foil
@@ -3190,15 +3090,15 @@ class ScanConfirmView(discord.ui.View):
         self.clear_items()
         await interaction.response.edit_message(embed=embed, view=self)
 
-    @discord.ui.button(label="Add", style=discord.ButtonStyle.success, emoji="✅")
+    @discord.ui.button(label="Add", style=discord.ButtonStyle.success, emoji="✅", row=0)
     async def add(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._save(interaction, foil=False)
 
-    @discord.ui.button(label="Add as foil", style=discord.ButtonStyle.secondary, emoji="✨")
+    @discord.ui.button(label="Add as foil", style=discord.ButtonStyle.secondary, emoji="✨", row=0)
     async def add_foil(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._save(interaction, foil=True)
 
-    @discord.ui.button(label="Skip", style=discord.ButtonStyle.danger, emoji="✖")
+    @discord.ui.button(label="Skip", style=discord.ButtonStyle.danger, emoji="✖", row=0)
     async def skip(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.clear_items()
         await interaction.response.edit_message(content="Skipped.", embed=None, view=self)
@@ -3206,14 +3106,23 @@ class ScanConfirmView(discord.ui.View):
 
 async def _handle_scan_attachment(message: discord.Message, attachment: discord.Attachment):
     image_bytes = await attachment.read()
-    containers = await bot.db.list_containers()
-    view = ContainerSelectView(containers, image_bytes, message)
     default = _last_container.get(message.author.id)
+
     if default:
-        prompt = f"📦 Last used: **{default[1]}** — use it or pick another."
+        # Container already known — skip the selection step and scan immediately.
+        container_id, container_name = default
+        scanning_msg = await message.reply(
+            f"🔍 Scanning… 📦 **{container_name}**", mention_author=False
+        )
+        await _do_scan_direct(scanning_msg, image_bytes, message, container_id, container_name)
     else:
-        prompt = "📦 Which container is this card going into?"
-    await message.channel.send(f"{message.author.mention} {prompt}", view=view)
+        # No container known yet — ask first.
+        containers = await bot.db.list_containers()
+        view = ContainerSelectView(containers, image_bytes, message)
+        await message.channel.send(
+            f"{message.author.mention} 📦 Which container is this card going into?",
+            view=view,
+        )
 
 
 class _ManualNameView(discord.ui.View):
@@ -3236,13 +3145,8 @@ async def on_message(message: discord.Message):
     if message.author.bot:
         return
 
-    # Showcase channel: DM the user a welcome menu on their first message.
-    if (
-        SHOWCASE_CHANNEL_ID
-        and message.channel.id == SHOWCASE_CHANNEL_ID
-        and message.author.id not in _showcase_welcomed
-    ):
-        _showcase_welcomed.add(message.author.id)
+    # Showcase channel: reply with the welcome menu whenever someone writes.
+    if SHOWCASE_CHANNEL_ID and message.channel.id == SHOWCASE_CHANNEL_ID:
         embed = discord.Embed(
             title="Welcome to the MTG Collection!",
             description=(
