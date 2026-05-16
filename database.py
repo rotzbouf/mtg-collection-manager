@@ -652,7 +652,8 @@ class Database:
     async def get_top_by_value(self, limit: int = 5) -> list[dict]:
         async with self._db.execute(
             """
-            SELECT c.id, c.name_en, c.set_code, c.set_name, c.collector_number,
+            SELECT c.id, c.name_en, c.name_de, c.printed_name,
+                   c.set_code, c.set_name, c.collector_number,
                    c.rarity, c.type_line, c.mana_cost, c.cmc, c.language,
                    c.condition, c.foil, c.price_eur, c.price_usd, c.image_url,
                    c.scryfall_id, c.oracle_text,
