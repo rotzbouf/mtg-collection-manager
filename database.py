@@ -752,45 +752,48 @@ class Database:
         return updated
 
     async def get_overcount_cards(self, threshold: int = 4) -> list[dict]:
-        """Return cards that appear more than *threshold* times in the collection.
+        """Return cards appearing more than *threshold* times with full per-entry details.
 
-        Basic lands are excluded (they have no copy limit).
-        Each entry contains name_en, total count, and a per-container breakdown.
+        Basic lands are excluded. Each result dict has:
+          name_en, printed_name, name_de, total, entries (list of individual row dicts).
         """
         async with self._db.execute(
             """
-            WITH counts AS (
-                SELECT name_en, container_id, COUNT(*) AS cnt
+            WITH totals AS (
+                SELECT name_en, COUNT(*) AS total
                 FROM collection
                 WHERE COALESCE(type_line, '') NOT LIKE 'Basic Land%'
-                GROUP BY name_en, container_id
-            ),
-            totals AS (
-                SELECT name_en, SUM(cnt) AS total
-                FROM counts
                 GROUP BY name_en
                 HAVING total > ?
             )
-            SELECT c.name_en, c.container_id, cont.name AS container_name,
-                   c.cnt, t.total
-            FROM counts c
+            SELECT c.id, c.name_en, c.name_de, c.printed_name,
+                   c.set_code, c.set_name, c.collector_number,
+                   c.rarity, c.price_eur, c.price_usd,
+                   c.condition, c.foil, c.language,
+                   c.container_id, ct.name AS container_name,
+                   t.total
+            FROM collection c
             JOIN totals t ON c.name_en = t.name_en
-            LEFT JOIN containers cont ON c.container_id = cont.id
-            ORDER BY t.total DESC, c.name_en, c.cnt DESC
+            LEFT JOIN containers ct ON c.container_id = ct.id
+            ORDER BY t.total DESC, c.name_en, COALESCE(c.price_eur, 0) DESC
             """,
             (threshold,),
         ) as cur:
             rows = await cur.fetchall()
 
-        # Group per-card rows into a single dict with container breakdown
         cards: dict[str, dict] = {}
         for row in rows:
-            name = row["name_en"]
+            d = dict(row)
+            name = d["name_en"]
             if name not in cards:
-                cards[name] = {"name_en": name, "total": row["total"], "containers": []}
-            cards[name]["containers"].append(
-                {"name": row["container_name"], "count": row["cnt"]}
-            )
+                cards[name] = {
+                    "name_en": name,
+                    "name_de": d["name_de"],
+                    "printed_name": d["printed_name"],
+                    "total": d["total"],
+                    "entries": [],
+                }
+            cards[name]["entries"].append(d)
         return list(cards.values())
 
     async def commit(self):
