@@ -2297,24 +2297,8 @@ class WelcomeView(discord.ui.View):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-@bot.event
-async def on_member_join(member: discord.Member):
-    """Greet new members in the showcase channel with a welcome menu."""
-    if not SHOWCASE_CHANNEL_ID:
-        return
-    channel = bot.get_channel(SHOWCASE_CHANNEL_ID)
-    if not channel:
-        return
-    embed = discord.Embed(
-        title=f"Welcome, {member.display_name}!",
-        description=(
-            "Welcome to our MTG collection server!\n"
-            "Use the buttons below to explore the collection."
-        ),
-        color=0x5865f2,
-    )
-    embed.set_thumbnail(url=member.display_avatar.url)
-    await channel.send(content=member.mention, embed=embed, view=WelcomeView())
+# Users who already received the showcase welcome DM this session.
+_showcase_welcomed: set[int] = set()
 
 
 @bot.tree.command(name="showcase", description="Show the 5 most valuable cards in your collection")
@@ -3189,6 +3173,27 @@ class _ManualNameView(discord.ui.View):
 async def on_message(message: discord.Message):
     if message.author.bot:
         return
+
+    # Showcase channel: DM the user a welcome menu on their first message.
+    if (
+        SHOWCASE_CHANNEL_ID
+        and message.channel.id == SHOWCASE_CHANNEL_ID
+        and message.author.id not in _showcase_welcomed
+    ):
+        _showcase_welcomed.add(message.author.id)
+        embed = discord.Embed(
+            title="Welcome to the MTG Collection!",
+            description=(
+                f"Hey {message.author.display_name}! "
+                "Here's what you can explore — all replies are private to you."
+            ),
+            color=0x5865f2,
+        )
+        embed.set_thumbnail(url=message.author.display_avatar.url)
+        try:
+            await message.author.send(embed=embed, view=WelcomeView())
+        except discord.Forbidden:
+            pass  # User has DMs disabled — silently skip
 
     if SCAN_CHANNEL_ID is None or message.channel.id != SCAN_CHANNEL_ID:
         await bot.process_commands(message)
