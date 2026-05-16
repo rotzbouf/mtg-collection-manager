@@ -656,7 +656,9 @@ class Database:
                    c.set_code, c.set_name, c.collector_number,
                    c.rarity, c.type_line, c.mana_cost, c.cmc, c.language,
                    c.condition, c.foil, c.price_eur, c.price_usd, c.image_url,
-                   c.scryfall_id, c.oracle_text,
+                   c.scryfall_id, c.oracle_text, c.flavor_text,
+                   c.power, c.toughness, c.loyalty,
+                   c.colors, c.color_identity, c.keywords,
                    ct.name AS container_name
             FROM collection c
             LEFT JOIN containers ct ON c.container_id = ct.id

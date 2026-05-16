@@ -377,6 +377,7 @@ class MTGBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
         intents.message_content = True
+        intents.members = True
         super().__init__(command_prefix="!", intents=intents, tree_cls=MTGCommandTree)
         self.db = Database()
         self.scryfall = ScryfallClient()
@@ -1989,8 +1990,16 @@ bot.tree.add_command(deck_group)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# /showcase  —  top 5 most valuable cards with price history
+# /showcase  —  top 5 most valuable cards with price history + navigation
 # ──────────────────────────────────────────────────────────────────────────────
+
+_SHOWCASE_RARITY_COLOUR = {
+    "mythic":   0xe8742a,
+    "rare":     0xc3a343,
+    "uncommon": 0x6e7f8d,
+    "common":   0x393939,
+}
+
 
 def _make_price_chart(history: list[dict], card_name: str) -> Optional[bytes]:
     """Render a price-history line chart as PNG bytes. Returns None if < 2 points."""
@@ -2029,78 +2038,241 @@ def _make_price_chart(history: list[dict], card_name: str) -> Optional[bytes]:
         return None
 
 
+def _showcase_embed(card: dict, rank: int, total: int) -> discord.Embed:
+    name_en     = card.get("name_en") or "Unknown"
+    loc_name    = card.get("printed_name") or card.get("name_de") or name_en
+    display     = loc_name if loc_name != name_en else name_en
+    title_name  = display if display == name_en else f"{display} ({name_en})"
+    foil_tag    = " ✨" if card.get("foil") else ""
+    rarity      = (card.get("rarity") or "").lower()
+    colour      = _SHOWCASE_RARITY_COLOUR.get(rarity, 0x5865f2)
+
+    price_eur   = card.get("price_eur") or 0.0
+    price_usd   = card.get("price_usd")
+    price_str   = f"**€{price_eur:.2f}**"
+    if price_usd:
+        price_str += f"  ·  ${price_usd:.2f}"
+
+    set_code    = (card.get("set_code") or "").upper()
+    set_name    = card.get("set_name") or ""
+    coll_nr     = card.get("collector_number") or ""
+    type_line   = card.get("type_line") or "—"
+    condition   = card.get("condition") or "NM"
+    language    = (card.get("language") or "en").upper()
+    container   = card.get("container_name") or "—"
+    mana_cost   = card.get("mana_cost") or ""
+    cmc         = card.get("cmc")
+    power       = card.get("power")
+    toughness   = card.get("toughness")
+    loyalty     = card.get("loyalty")
+    oracle_text = card.get("oracle_text") or ""
+    flavor_text = card.get("flavor_text") or ""
+    keywords    = card.get("keywords") or []
+    colors      = card.get("colors") or []
+
+    embed = discord.Embed(
+        title=f"#{rank}/{total} — {title_name}{foil_tag}",
+        colour=colour,
+    )
+
+    # Row 1
+    embed.add_field(name="Price", value=price_str, inline=True)
+    embed.add_field(name="Rarity", value=rarity.capitalize() or "—", inline=True)
+    embed.add_field(name="Container", value=f"📦 {container}", inline=True)
+    # Row 2
+    embed.add_field(name="Set", value=f"{set_name} ({set_code}) #{coll_nr}", inline=True)
+    embed.add_field(name="Type", value=type_line, inline=True)
+    embed.add_field(name="Condition", value=f"{condition} · {language}", inline=True)
+    # Row 3: mana / stats / keywords
+    if mana_cost:
+        mana_str = mana_cost
+        if cmc is not None:
+            cv = int(cmc) if cmc == int(cmc) else cmc
+            mana_str += f"  (CMC {cv})"
+        embed.add_field(name="Mana Cost", value=mana_str, inline=True)
+    if power is not None and toughness is not None:
+        embed.add_field(name="P / T", value=f"{power} / {toughness}", inline=True)
+    elif loyalty is not None:
+        embed.add_field(name="Loyalty", value=str(loyalty), inline=True)
+    if colors:
+        color_map = {"W": "⚪", "U": "🔵", "B": "⚫", "R": "🔴", "G": "🟢", "C": "◇"}
+        embed.add_field(
+            name="Colors",
+            value="".join(color_map.get(c, c) for c in colors) or "Colorless",
+            inline=True,
+        )
+    if keywords and isinstance(keywords, list):
+        embed.add_field(name="Keywords", value=", ".join(keywords), inline=False)
+    if oracle_text:
+        snippet = oracle_text[:512] + ("…" if len(oracle_text) > 512 else "")
+        embed.add_field(name="Oracle Text", value=snippet, inline=False)
+    if flavor_text:
+        snippet = flavor_text[:256] + ("…" if len(flavor_text) > 256 else "")
+        embed.add_field(name="​", value=f"*{snippet}*", inline=False)
+
+    if card.get("image_url"):
+        embed.set_thumbnail(url=card["image_url"])
+    embed.set_footer(text=f"Collection ID #{card.get('id')}  ·  Card {rank} of {total}")
+    return embed
+
+
+async def _load_showcase_data(limit: int = 5) -> tuple[list[dict], list[list[dict]], list[Optional[bytes]]]:
+    """Fetch top cards, their price histories, and pre-render charts."""
+    cards = await bot.db.get_top_by_value(limit)
+    histories: list[list[dict]] = []
+    charts: list[Optional[bytes]] = []
+    for card in cards:
+        history: list[dict] = []
+        if card.get("scryfall_id"):
+            history = await bot.db.get_price_history(card["scryfall_id"])
+        histories.append(history)
+        chart = await asyncio.to_thread(
+            _make_price_chart, history, card.get("name_en", "")
+        )
+        charts.append(chart)
+    return cards, histories, charts
+
+
+def _showcase_send_kwargs(
+    card: dict, rank: int, total: int,
+    history: list[dict], chart: Optional[bytes],
+) -> tuple[discord.Embed, Optional[discord.File]]:
+    """Build (embed, file_or_None) for a showcase card."""
+    embed = _showcase_embed(card, rank, total)
+    if chart:
+        fname = f"chart_{rank}.png"
+        embed.set_image(url=f"attachment://{fname}")
+        return embed, discord.File(io.BytesIO(chart), filename=fname)
+    # No chart — add text history note
+    if len(history) == 1:
+        hist_text = f"First recorded: {history[0]['recorded_at']} — €{history[0]['price_eur']:.2f}"
+    elif history:
+        hist_text = f"{len(history)} data points — latest €{history[-1]['price_eur']:.2f}"
+    else:
+        hist_text = "No history yet — prices are recorded automatically once a day."
+    embed.add_field(name="Price History", value=hist_text, inline=False)
+    return embed, None
+
+
+class ShowcaseView(discord.ui.View):
+    """Paginated navigation through the top-N showcase cards."""
+
+    def __init__(
+        self,
+        cards: list[dict],
+        histories: list[list[dict]],
+        charts: list[Optional[bytes]],
+        index: int = 0,
+        target_user_id: Optional[int] = None,
+    ):
+        super().__init__(timeout=300)
+        self._cards = cards
+        self._histories = histories
+        self._charts = charts
+        self._index = index
+        self._target_user_id = target_user_id
+        self._rebuild()
+
+    def _rebuild(self):
+        self.clear_items()
+        n = len(self._cards)
+        prev = discord.ui.Button(
+            label="◀ Prev", style=discord.ButtonStyle.secondary,
+            disabled=self._index == 0, row=0,
+        )
+        prev.callback = self._prev
+        self.add_item(prev)
+
+        counter = discord.ui.Button(
+            label=f"{self._index + 1} / {n}",
+            style=discord.ButtonStyle.secondary, disabled=True, row=0,
+        )
+        self.add_item(counter)
+
+        nxt = discord.ui.Button(
+            label="Next ▶", style=discord.ButtonStyle.secondary,
+            disabled=self._index >= n - 1, row=0,
+        )
+        nxt.callback = self._next
+        self.add_item(nxt)
+
+    async def _guard(self, interaction: discord.Interaction) -> bool:
+        if self._target_user_id and interaction.user.id != self._target_user_id:
+            await interaction.response.send_message(
+                "This showcase was opened for another user.", ephemeral=True
+            )
+            return False
+        return True
+
+    async def _go(self, interaction: discord.Interaction, idx: int):
+        self._index = idx
+        self._rebuild()
+        card = self._cards[idx]
+        embed, file = _showcase_send_kwargs(
+            card, idx + 1, len(self._cards), self._histories[idx], self._charts[idx]
+        )
+        if file:
+            await interaction.response.edit_message(
+                embed=embed, view=self, attachments=[], files=[file]
+            )
+        else:
+            await interaction.response.edit_message(
+                embed=embed, view=self, attachments=[]
+            )
+
+    async def _prev(self, interaction: discord.Interaction):
+        if await self._guard(interaction):
+            await self._go(interaction, self._index - 1)
+
+    async def _next(self, interaction: discord.Interaction):
+        if await self._guard(interaction):
+            await self._go(interaction, self._index + 1)
+
+
+@bot.event
+async def on_member_join(member: discord.Member):
+    """Auto-show showcase to new members in the showcase channel."""
+    if not SHOWCASE_CHANNEL_ID:
+        return
+    channel = bot.get_channel(SHOWCASE_CHANNEL_ID)
+    if not channel:
+        return
+    try:
+        cards, histories, charts = await _load_showcase_data(5)
+    except Exception as e:
+        logger.warning("Showcase auto-trigger failed: %s", e)
+        return
+    if not cards:
+        return
+    embed, file = _showcase_send_kwargs(cards[0], 1, len(cards), histories[0], charts[0])
+    view = ShowcaseView(cards, histories, charts, index=0, target_user_id=member.id)
+    content = f"Welcome {member.mention}! Here's a peek at our most valuable cards:"
+    if file:
+        await channel.send(content=content, embed=embed, view=view, file=file)
+    else:
+        await channel.send(content=content, embed=embed, view=view)
+
+
 @bot.tree.command(name="showcase", description="Show the 5 most valuable cards in your collection")
 async def cmd_showcase(interaction: discord.Interaction):
-    await interaction.response.defer(thinking=True)
-    cards = await bot.db.get_top_by_value(5)
-    if not cards:
-        await interaction.followup.send("No cards with a known price in your collection yet.", ephemeral=True)
+    await interaction.response.defer(thinking=True, ephemeral=True)
+    try:
+        cards, histories, charts = await _load_showcase_data(5)
+    except Exception as e:
+        logger.warning("Showcase load failed: %s", e)
+        await interaction.followup.send("Failed to load showcase data.", ephemeral=True)
         return
-
-    RARITY_COLOUR = {
-        "mythic":   0xe8742a,
-        "rare":     0xc3a343,
-        "uncommon": 0x6e7f8d,
-        "common":   0x393939,
-    }
-
-    for rank, card in enumerate(cards, start=1):
-        name_en    = card.get("name_en") or "Unknown"
-        loc_name   = card.get("printed_name") or card.get("name_de") or name_en
-        price_eur  = card.get("price_eur") or 0.0
-        price_usd  = card.get("price_usd")
-        rarity     = (card.get("rarity") or "").lower()
-        container  = card.get("container_name") or "—"
-        set_code   = (card.get("set_code") or "").upper()
-        set_name   = card.get("set_name") or ""
-        coll_nr    = card.get("collector_number") or ""
-        type_line  = card.get("type_line") or ""
-        condition  = card.get("condition") or "NM"
-        language   = card.get("language") or "en"
-        foil       = bool(card.get("foil"))
-        image_url  = card.get("image_url") or ""
-        scryfall_id = card.get("scryfall_id") or ""
-
-        display_name = loc_name if loc_name != name_en else name_en
-        title_name = display_name if display_name == name_en else f"{display_name} ({name_en})"
-
-        colour = RARITY_COLOUR.get(rarity, 0x5865f2)
-        foil_tag = " ✨" if foil else ""
-        price_str = f"**€{price_eur:.2f}**"
-        if price_usd:
-            price_str += f"  ·  ${price_usd:.2f}"
-
-        embed = discord.Embed(
-            title=f"#{rank} — {title_name}{foil_tag}",
-            colour=colour,
+    if not cards:
+        await interaction.followup.send(
+            "No cards with a known price in your collection yet.", ephemeral=True
         )
-        embed.add_field(name="Price", value=price_str, inline=True)
-        embed.add_field(name="Container", value=f"📦 {container}", inline=True)
-        embed.add_field(name="Rarity", value=rarity.capitalize(), inline=True)
-        embed.add_field(name="Set", value=f"{set_name} ({set_code}) #{coll_nr}", inline=True)
-        embed.add_field(name="Type", value=type_line or "—", inline=True)
-        embed.add_field(name="Condition", value=f"{condition} · {language.upper()}", inline=True)
-        if image_url:
-            embed.set_thumbnail(url=image_url)
-        embed.set_footer(text=f"Collection ID #{card.get('id')}")
-
-        # Price history
-        history: list[dict] = []
-        if scryfall_id:
-            history = await bot.db.get_price_history(scryfall_id)
-
-        chart_bytes = await asyncio.to_thread(_make_price_chart, history, display_name)
-        if chart_bytes:
-            file = discord.File(io.BytesIO(chart_bytes), filename=f"chart_{rank}.png")
-            embed.set_image(url=f"attachment://chart_{rank}.png")
-            await interaction.followup.send(embed=embed, file=file)
-        else:
-            if len(history) == 1:
-                hist_text = f"First recorded: {history[0]['recorded_at']} — €{history[0]['price_eur']:.2f}"
-            else:
-                hist_text = "No history yet — prices are recorded automatically once a day."
-            embed.add_field(name="Price history", value=hist_text, inline=False)
-            await interaction.followup.send(embed=embed)
+        return
+    embed, file = _showcase_send_kwargs(cards[0], 1, len(cards), histories[0], charts[0])
+    view = ShowcaseView(cards, histories, charts, index=0, target_user_id=interaction.user.id)
+    if file:
+        await interaction.followup.send(embed=embed, view=view, file=file, ephemeral=True)
+    else:
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
