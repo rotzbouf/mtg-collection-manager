@@ -352,12 +352,6 @@ class MTGCommandTree(app_commands.CommandTree):
                     f"Deck commands only work in <#{DECK_CHANNEL_ID}>.", ephemeral=True
                 )
                 return False
-        elif name == "showcase":
-            if SHOWCASE_CHANNEL_ID and interaction.channel_id != SHOWCASE_CHANNEL_ID:
-                await interaction.response.send_message(
-                    f"This command only works in <#{SHOWCASE_CHANNEL_ID}>.", ephemeral=True
-                )
-                return False
         elif name == "search":
             if SEARCH_CHANNEL_ID and interaction.channel_id != SEARCH_CHANNEL_ID:
                 await interaction.response.send_message(
@@ -2211,14 +2205,10 @@ class ShowcaseView(discord.ui.View):
         embed, file = _showcase_send_kwargs(
             card, idx + 1, len(self._cards), self._histories[idx], self._charts[idx]
         )
-        if file:
-            await interaction.response.edit_message(
-                embed=embed, view=self, attachments=[], files=[file]
-            )
-        else:
-            await interaction.response.edit_message(
-                embed=embed, view=self, attachments=[]
-            )
+        await interaction.response.edit_message(
+            embed=embed, view=self,
+            attachments=[file] if file else [],
+        )
 
     async def _prev(self, interaction: discord.Interaction):
         if await self._guard(interaction):
@@ -2229,28 +2219,102 @@ class ShowcaseView(discord.ui.View):
             await self._go(interaction, self._index + 1)
 
 
+class WelcomeView(discord.ui.View):
+    """Welcome menu posted when a new member joins the showcase channel."""
+
+    def __init__(self):
+        super().__init__(timeout=86400)  # 24 h
+
+    @discord.ui.button(label="🃏 Showcase", style=discord.ButtonStyle.primary, row=0)
+    async def btn_showcase(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            cards, histories, charts = await _load_showcase_data(5)
+        except Exception as e:
+            logger.warning("Welcome showcase failed: %s", e)
+            await interaction.followup.send("Failed to load showcase.", ephemeral=True)
+            return
+        if not cards:
+            await interaction.followup.send("No priced cards in the collection yet.", ephemeral=True)
+            return
+        embed, file = _showcase_send_kwargs(cards[0], 1, len(cards), histories[0], charts[0])
+        view = ShowcaseView(cards, histories, charts, index=0, target_user_id=interaction.user.id)
+        if file:
+            await interaction.followup.send(embed=embed, view=view, file=file, ephemeral=True)
+        else:
+            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+
+    @discord.ui.button(label="📦 Browse", style=discord.ButtonStyle.secondary, row=0)
+    async def btn_browse(self, interaction: discord.Interaction, button: discord.ui.Button):
+        containers = await bot.db.list_containers()
+        if not containers:
+            await interaction.response.send_message("No containers yet.", ephemeral=True)
+            return
+        lines = []
+        for c in containers:
+            val = f" · €{c['total_value_eur']:.2f}" if c.get("total_value_eur") else ""
+            lines.append(f"📦 **{c['name']}** — {c['card_count']} cards{val}")
+        embed = discord.Embed(
+            title="Collection — Containers",
+            description="\n".join(lines),
+            color=0x5865f2,
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @discord.ui.button(label="📊 Stats", style=discord.ButtonStyle.secondary, row=0)
+    async def btn_stats(self, interaction: discord.Interaction, button: discord.ui.Button):
+        s = await bot.db.stats()
+        if not s:
+            await interaction.response.send_message("No stats available yet.", ephemeral=True)
+            return
+        embed = discord.Embed(title="Collection Stats", color=0x5865f2)
+        embed.add_field(name="Total cards", value=str(s.get("total_cards", 0)), inline=True)
+        embed.add_field(name="Unique cards", value=str(s.get("unique_cards", 0)), inline=True)
+        embed.add_field(name="Total value", value=f"€{s.get('total_value_eur', 0):.2f}", inline=True)
+        embed.add_field(name="Foil cards", value=str(s.get("foil_total", 0)), inline=True)
+        r_line = "  ·  ".join([
+            f"{s.get('r_mythic', 0)} Mythic",
+            f"{s.get('r_rare', 0)} Rare",
+            f"{s.get('r_uncommon', 0)} Uncommon",
+            f"{s.get('r_common', 0)} Common",
+        ])
+        embed.add_field(name="By rarity", value=r_line, inline=False)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @discord.ui.button(label="ℹ️ Commands", style=discord.ButtonStyle.secondary, row=0)
+    async def btn_help(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = discord.Embed(title="Available Commands", color=0x5865f2, description=(
+            "`/add` — Add a card to the collection\n"
+            "`/search` — Search for a card by name\n"
+            "`/list` — List all cards (paginated)\n"
+            "`/showcase` — Top 5 most valuable cards\n"
+            "`/overcount` — Cards exceeding 4 copies\n"
+            "`/stats` — Full collection statistics\n"
+            "`/container list` — Browse containers\n"
+            "`/export` — Export collection as CSV/JSON\n"
+            "`/deck suggest` — Build a deck from your collection"
+        ))
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
 @bot.event
 async def on_member_join(member: discord.Member):
-    """Auto-show showcase to new members in the showcase channel."""
+    """Greet new members in the showcase channel with a welcome menu."""
     if not SHOWCASE_CHANNEL_ID:
         return
     channel = bot.get_channel(SHOWCASE_CHANNEL_ID)
     if not channel:
         return
-    try:
-        cards, histories, charts = await _load_showcase_data(5)
-    except Exception as e:
-        logger.warning("Showcase auto-trigger failed: %s", e)
-        return
-    if not cards:
-        return
-    embed, file = _showcase_send_kwargs(cards[0], 1, len(cards), histories[0], charts[0])
-    view = ShowcaseView(cards, histories, charts, index=0, target_user_id=member.id)
-    content = f"Welcome {member.mention}! Here's a peek at our most valuable cards:"
-    if file:
-        await channel.send(content=content, embed=embed, view=view, file=file)
-    else:
-        await channel.send(content=content, embed=embed, view=view)
+    embed = discord.Embed(
+        title=f"Welcome, {member.display_name}!",
+        description=(
+            "Welcome to our MTG collection server!\n"
+            "Use the buttons below to explore the collection."
+        ),
+        color=0x5865f2,
+    )
+    embed.set_thumbnail(url=member.display_avatar.url)
+    await channel.send(content=member.mention, embed=embed, view=WelcomeView())
 
 
 @bot.tree.command(name="showcase", description="Show the 5 most valuable cards in your collection")
