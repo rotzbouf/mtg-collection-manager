@@ -65,6 +65,56 @@ No GPU required. EasyOCR runs on CPU; the scan rate of a Discord bot makes CPU i
 
 ---
 
+## Discord Setup
+
+### Bot permissions
+
+Grant these permissions **server-wide** (or individually in every channel the bot uses).
+
+| Permission | Integer bit | Why it is needed |
+|---|---|---|
+| **View Channel** | `1 << 10` | See channels and incoming messages |
+| **Send Messages** | `1 << 11` | Post scan status, command responses, and error messages |
+| **Read Message History** | `1 << 16` | Create message replies (`message.reply`); required in the showcase channel for the welcome embed |
+| **Embed Links** | `1 << 14` | Send `discord.Embed` objects — card confirmations, search results, stats, showcase, `/add` output |
+| **Attach Files** | `1 << 15` | Send file attachments — deck `.txt`, export CSV/JSON, backup `.db.gz`, price-history chart images |
+
+**OAuth2 invite permission integer:** `117760`  
+_(View Channel + Send Messages + Read Message History + Embed Links + Attach Files)_
+
+> **Common symptom if a permission is missing**
+>
+> | Missing permission | What breaks |
+> |---|---|
+> | **Embed Links** | Scan confirmation shows buttons but no card embed; `/add`, `/search`, `/stats`, `/showcase` show no embed |
+> | **Attach Files** | `/export`, `/backup create`, `/deck propose`, and showcase price-history charts fail with 403 |
+> | **Read Message History** | Showcase channel welcome reply fails with 403 (error code 160002) |
+> | **Send Messages** | Bot cannot post anything |
+
+### Per-channel notes
+
+If channel-specific permission overrides exist, make sure the bot's role is not denied any of the above. Channels configured in `.env` have the following specific requirements:
+
+| Channel setting | Critical permissions |
+|---|---|
+| `DISCORD_SCAN_CHANNEL_ID` | **Send Messages** + **Embed Links** (card confirmation embeds); **Read Message History** only if you want native message replies |
+| `DISCORD_SHOWCASE_CHANNEL_ID` | **Send Messages** + **Embed Links** + **Attach Files** (chart images) + **Read Message History** (welcome reply) |
+| `DISCORD_DECKBUILDER_CHANNEL_ID` | **Send Messages** + **Embed Links** + **Attach Files** (deck `.txt`) |
+| Any channel with `/export` or `/backup` | **Send Messages** + **Attach Files** |
+
+### Gateway intents
+
+Two **privileged intents** must be enabled in the [Discord Developer Portal](https://discord.com/developers/applications) → *Your App → Bot → Privileged Gateway Intents*:
+
+| Intent | Why it is needed |
+|---|---|
+| **Message Content Intent** | Read message content and detect image attachments in the scan channel |
+| **Server Members Intent** | Resolve member display names in scan confirmations and stats |
+
+Without **Message Content Intent** the auto-scan feature will not trigger on image drops.
+
+---
+
 ## Installation
 
 ### First-time setup
