@@ -1,0 +1,143 @@
+"""Backup cog: /backup create/restore + RestoreConfirmView."""
+from __future__ import annotations
+
+import asyncio
+import gzip
+import io
+import logging
+import pathlib
+import os
+from datetime import datetime, timezone
+
+import discord
+from discord import app_commands
+from discord.ext import commands
+
+from core.database import Database
+from cogs.auth import require_admin
+
+logger = logging.getLogger(__name__)
+
+BACKUP_DIR = pathlib.Path(os.getenv("BACKUP_DIR", "backups"))
+
+
+class RestoreConfirmView(discord.ui.View):
+    def __init__(self, data: bytes):
+        super().__init__(timeout=60)
+        self._data = data
+
+    @discord.ui.button(label="Yes, restore", style=discord.ButtonStyle.danger)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.stop()
+        await interaction.response.defer()
+        if interaction.client.db._restore_lock.locked():
+            await interaction.edit_original_response(
+                content="A restore is already in progress. Please wait.", embed=None, view=None
+            )
+            return
+        await interaction.edit_original_response(
+            content="Restoring database, please wait...", embed=None, view=None
+        )
+        try:
+            await interaction.client.db.restore_from_bytes(self._data)
+        except Exception as exc:
+            logger.exception("Restore failed")
+            await interaction.edit_original_response(
+                content=f"Restore failed: {exc}", embed=None, view=None
+            )
+            return
+        await interaction.edit_original_response(
+            content="Database restored successfully.", embed=None, view=None
+        )
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.stop()
+        await interaction.response.edit_message(content="Restore cancelled.", embed=None, view=None)
+
+
+class BackupCog(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+
+    backup_group = app_commands.Group(
+        name="backup", description="Database backup and restore (admin only)"
+    )
+
+    @backup_group.command(name="create", description="Download the current database as a backup file")
+    async def backup_create(self, interaction: discord.Interaction):
+        if not await require_admin(interaction):
+            return
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        await interaction.edit_original_response(content="Creating backup, please wait...")
+        try:
+            data = await interaction.client.db.backup_bytes()
+        except Exception as exc:
+            logger.exception("Backup failed")
+            await interaction.edit_original_response(content=f"Backup failed: {exc}")
+            return
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        base_filename = f"mtg_collection_{ts}.db"
+
+        # Save uncompressed copy to server
+        BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+        local_path = BACKUP_DIR / base_filename
+        await asyncio.to_thread(local_path.write_bytes, data)
+
+        # Compress for Discord upload
+        await interaction.edit_original_response(content="Compressing for upload...")
+        gz_data = await asyncio.to_thread(gzip.compress, data, compresslevel=6)
+        gz_filename = base_filename + ".gz"
+        size_raw_mb = len(data) / 1024 / 1024
+        size_gz_mb = len(gz_data) / 1024 / 1024
+
+        await interaction.edit_original_response(
+            content=f"Backup saved on server: `{local_path}` ({size_raw_mb:.1f} MB)"
+        )
+        await interaction.followup.send(
+            content=f"Compressed backup for download — `{gz_filename}` ({size_gz_mb:.2f} MB).",
+            file=discord.File(io.BytesIO(gz_data), filename=gz_filename),
+            ephemeral=True,
+        )
+
+    @backup_group.command(name="restore", description="Restore the database from a backup file")
+    @app_commands.describe(file="A .db backup file previously created with /backup create")
+    async def backup_restore(self, interaction: discord.Interaction, file: discord.Attachment):
+        if not await require_admin(interaction):
+            return
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        if not (file.filename.endswith(".db") or file.filename.endswith(".db.gz")):
+            await interaction.followup.send("Please attach a `.db` or `.db.gz` backup file.", ephemeral=True)
+            return
+        await interaction.edit_original_response(content="Reading backup file...")
+        raw = await file.read()
+        if file.filename.endswith(".gz"):
+            await interaction.edit_original_response(content="Decompressing backup...")
+            data = await asyncio.to_thread(gzip.decompress, raw)
+        else:
+            data = raw
+        await interaction.edit_original_response(content="Validating backup...")
+        try:
+            counts = await Database.inspect_backup(data)
+        except ValueError as exc:
+            await interaction.followup.send(f"Invalid backup: {exc}", ephemeral=True)
+            return
+        except Exception as exc:
+            logger.exception("Could not inspect backup")
+            await interaction.followup.send(f"Could not read backup file: {exc}", ephemeral=True)
+            return
+        embed = discord.Embed(
+            title="Restore database?",
+            description=(
+                f"**Backup contains:** {counts['cards']} cards · {counts['containers']} containers\n\n"
+                "This will **replace the current database** with the backup.\n"
+                "All changes made after the backup was created will be lost."
+            ),
+            color=0xFF4444,
+        )
+        view = RestoreConfirmView(data)
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+
+
+async def setup(bot):
+    await bot.add_cog(BackupCog(bot))
