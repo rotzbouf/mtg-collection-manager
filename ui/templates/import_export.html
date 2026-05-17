@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Import / Export — MTG{% endblock %}
+
+{% block content %}
+<h2>Import / Export</h2>
+
+{% if import_done %}
+<article style="border-left:4px solid green">
+  <strong>Import complete.</strong> {{ import_count }} card(s) added to the collection.
+  <br><a href="/collection">View Collection</a>
+</article>
+{% endif %}
+
+{% if error %}
+<article class="error">{{ error }}</article>
+{% endif %}
+
+<div class="grid">
+  <section>
+    <h4>Export</h4>
+    <p>Download your collection in different formats:</p>
+    <ul>
+      <li><a href="/export/csv" role="button" class="outline">Download CSV (full)</a></li>
+      <li><a href="/export/json" role="button" class="outline">Download JSON</a></li>
+      <li><a href="/export/moxfield" role="button" class="outline">Download Moxfield CSV</a></li>
+    </ul>
+  </section>
+
+  <section>
+    <h4>Import</h4>
+    <p>Supported formats: Moxfield CSV, full bot CSV, JSON export.</p>
+
+    {% if not preview %}
+    <form method="post" action="/import" enctype="multipart/form-data">
+      <input type="hidden" name="action" value="preview">
+      <label>
+        File
+        <input type="file" name="file" accept=".csv,.json" required>
+      </label>
+      <button type="submit">Preview import</button>
+    </form>
+    {% else %}
+    <article>
+      <h5>Preview (first 10 of {{ preview_total }} rows)</h5>
+      <table style="font-size:0.8rem">
+        <thead>
+          <tr>
+            {% for key in preview[0].keys() %}
+            <th>{{ key }}</th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in preview %}
+          <tr>
+            {% for v in row.values() %}
+            <td>{{ v }}</td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <p>Format detected: <strong>{{ fmt }}</strong> — {{ preview_total }} rows total.</p>
+
+      <form method="post" action="/import/confirm">
+        <input type="hidden" name="parsed_json" value="{{ parsed_json | e }}">
+        <input type="hidden" name="fmt" value="{{ fmt }}">
+        <div style="display:flex;gap:1rem">
+          <button type="submit">Confirm Import ({{ preview_total }} cards)</button>
+          <a href="/import-export" role="button" class="outline secondary">Cancel</a>
+        </div>
+      </form>
+    </article>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}Stats — MTG{% endblock %}
+
+{% block content %}
+<h2>Collection Statistics</h2>
+
+{% if stats %}
+<div class="grid">
+  <article>
+    <h4>Total</h4>
+    <p style="font-size:2rem;margin:0">{{ stats.total_cards }}</p>
+    <small>{{ stats.unique_cards }} unique oracle IDs</small>
+  </article>
+  <article>
+    <h4>Total Value</h4>
+    <p style="font-size:2rem;margin:0">€{{ "%.2f"|format(stats.total_value_eur or 0) }}</p>
+    <small>\${{ "%.2f"|format(stats.total_value_usd or 0) }} USD</small>
+  </article>
+  <article>
+    <h4>Foil</h4>
+    <p style="font-size:2rem;margin:0">{{ stats.foil_total }}</p>
+    <small>€{{ "%.2f"|format(stats.foil_eur or 0) }}</small>
+  </article>
+</div>
+
+<div class="grid">
+  <article>
+    <h4>🇬🇧 English</h4>
+    <table>
+      <tr><td>Total</td><td>{{ stats.en_total }}</td></tr>
+      <tr><td>Non-foil</td><td>{{ stats.en_nonfoil }} (€{{ "%.2f"|format(stats.en_nonfoil_eur or 0) }})</td></tr>
+      <tr><td>Foil</td><td>{{ stats.en_foil }} (€{{ "%.2f"|format(stats.en_foil_eur or 0) }})</td></tr>
+    </table>
+  </article>
+  <article>
+    <h4>🇩🇪 German</h4>
+    <table>
+      <tr><td>Total</td><td>{{ stats.de_total }}</td></tr>
+      <tr><td>Non-foil</td><td>{{ stats.de_nonfoil }} (€{{ "%.2f"|format(stats.de_nonfoil_eur or 0) }})</td></tr>
+      <tr><td>Foil</td><td>{{ stats.de_foil }} (€{{ "%.2f"|format(stats.de_foil_eur or 0) }})</td></tr>
+    </table>
+  </article>
+</div>
+
+<article>
+  <h4>By Rarity</h4>
+  <table>
+    <thead><tr><th>Rarity</th><th>Count</th><th>Value (EUR)</th></tr></thead>
+    <tbody>
+      <tr><td>Mythic</td><td>{{ stats.r_mythic }}</td><td>€{{ "%.2f"|format(stats.r_mythic_eur or 0) }}</td></tr>
+      <tr><td>Rare</td><td>{{ stats.r_rare }}</td><td>€{{ "%.2f"|format(stats.r_rare_eur or 0) }}</td></tr>
+      <tr><td>Uncommon</td><td>{{ stats.r_uncommon }}</td><td>€{{ "%.2f"|format(stats.r_uncommon_eur or 0) }}</td></tr>
+      <tr><td>Common</td><td>{{ stats.r_common }}</td><td>€{{ "%.2f"|format(stats.r_common_eur or 0) }}</td></tr>
+    </tbody>
+  </table>
+</article>
+
+{% if stats.top_cards %}
+<article>
+  <h4>Top Cards by Value</h4>
+  <table>
+    <thead><tr><th>Card</th><th>Lang</th><th>Foil</th><th>Container</th><th>EUR</th></tr></thead>
+    <tbody>
+      {% for c in stats.top_cards %}
+      <tr>
+        <td>{{ c.printed_name or c.name_de or c.name_en }}</td>
+        <td>{{ lang_flags.get(c.language, '') }}</td>
+        <td>{% if c.foil %}✨{% endif %}</td>
+        <td><small>{{ c.container_name or '—' }}</small></td>
+        <td>€{{ "%.2f"|format(c.price_eur) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</article>
+{% endif %}
+
+{% if containers %}
+<article>
+  <h4>Containers</h4>
+  <table>
+    <thead><tr><th>Name</th><th>Type</th><th>Cards</th><th>Value (EUR)</th><th>Max card (EUR)</th></tr></thead>
+    <tbody>
+      {% for ct in containers %}
+      <tr>
+        <td><a href="/containers/{{ ct.id }}">{{ ct.name }}</a></td>
+        <td><small>{{ ct.type }}</small></td>
+        <td>{{ ct.card_count }}</td>
+        <td>€{{ "%.2f"|format(ct.total_value_eur or 0) }}</td>
+        <td>€{{ "%.2f"|format(ct.max_card_eur or 0) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</article>
+{% endif %}
+
+{% else %}
+<p>No data yet. Add some cards!</p>
+{% endif %}
+{% endblock %}

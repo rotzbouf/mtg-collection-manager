@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}Add Card — MTG{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+  <ul>
+    <li><a href="/collection">Collection</a></li>
+    <li>Add Card</li>
+  </ul>
+</nav>
+
+<h2>Add a Card</h2>
+
+{% if error %}
+<article class="error">{{ error }}</article>
+{% endif %}
+
+{% if not card %}
+{# Step 1: Search form #}
+<form method="post" action="/collection/add">
+  <input type="hidden" name="action" value="lookup">
+  <div class="grid">
+    <label>
+      Card name
+      <input type="text" name="name" value="{{ name }}" placeholder="e.g. Lightning Bolt" required autofocus>
+    </label>
+    <label>
+      Set code (optional)
+      <input type="text" name="set_code" value="{{ set_code }}" placeholder="e.g. m21" maxlength="10">
+    </label>
+  </div>
+  <button type="submit">Look up on Scryfall</button>
+</form>
+
+{% else %}
+{# Step 2: Confirm card #}
+<article>
+  <div class="grid">
+    <div style="max-width:200px">
+      {% if card.scryfall_id %}
+      <img src="/images/{{ card.scryfall_id }}" alt="{{ card.name_en }}" style="width:100%;border-radius:6px" onerror="this.style.display='none'">
+      {% endif %}
+    </div>
+    <div>
+      <h3>{{ card.printed_name or card.name_en }}</h3>
+      {% if card.name_de and card.name_de != card.name_en %}<p><small>EN: {{ card.name_en }}</small></p>{% endif %}
+      <p>{{ card.type_line }}</p>
+      {% if card.mana_cost %}<p>{{ card.mana_cost }}</p>{% endif %}
+      <p><small>{{ card.set_name }} — {{ card.rarity | capitalize if card.rarity }}</small></p>
+      {% if card.price_eur is not none %}<p><small>€{{ "%.2f"|format(card.price_eur) }}</small></p>{% endif %}
+    </div>
+  </div>
+</article>
+
+<form method="post" action="/collection/add">
+  <input type="hidden" name="action" value="save">
+  <input type="hidden" name="scryfall_id" value="{{ card.scryfall_id or '' }}">
+  <input type="hidden" name="oracle_id" value="{{ card.oracle_id or '' }}">
+  <input type="hidden" name="name_en" value="{{ card.name_en or '' }}">
+  <input type="hidden" name="name_de" value="{{ card.name_de or '' }}">
+  <input type="hidden" name="printed_name" value="{{ card.printed_name or '' }}">
+  <input type="hidden" name="set_code_hidden" value="{{ card.set_code or '' }}">
+  <input type="hidden" name="set_name" value="{{ card.set_name or '' }}">
+  <input type="hidden" name="collector_number" value="{{ card.collector_number or '' }}">
+  <input type="hidden" name="rarity" value="{{ card.rarity or '' }}">
+  <input type="hidden" name="mana_cost" value="{{ card.mana_cost or '' }}">
+  <input type="hidden" name="cmc" value="{{ card.cmc or 0 }}">
+  <input type="hidden" name="type_line" value="{{ card.type_line or '' }}">
+  <input type="hidden" name="oracle_text" value="{{ card.oracle_text or '' }}">
+  <input type="hidden" name="image_url" value="{{ card.image_url or '' }}">
+  <input type="hidden" name="price_eur" value="{{ card.price_eur or '' }}">
+  <input type="hidden" name="price_usd" value="{{ card.price_usd or '' }}">
+  <input type="hidden" name="colors" value="{{ card.colors | tojson if card.colors else '[]' }}">
+  <input type="hidden" name="color_identity" value="{{ card.color_identity | tojson if card.color_identity else '[]' }}">
+  <input type="hidden" name="keywords" value="{{ card.keywords | tojson if card.keywords else '[]' }}">
+  <input type="hidden" name="legalities" value="{{ card.legalities | tojson if card.legalities else '{}' }}">
+
+  <div class="grid">
+    <label>
+      Language
+      <select name="language">
+        {% for code in languages %}
+        <option value="{{ code }}" {% if card.language == code %}selected{% endif %}>{{ lang_flags.get(code, '') }} {{ code | upper }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      Condition
+      <select name="condition">
+        {% for c in conditions %}
+        <option value="{{ c }}" {% if c == 'NM' %}selected{% endif %}>{{ c }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      Container
+      <select name="container_id">
+        <option value="">None</option>
+        {% for ct in containers %}
+        <option value="{{ ct.id }}">{{ ct.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+  </div>
+  <label>
+    <input type="checkbox" name="foil" value="1"> Foil
+  </label>
+
+  <div style="display:flex;gap:1rem;margin-top:1rem">
+    <button type="submit">Add to Collection</button>
+    <a href="/collection/add" role="button" class="outline secondary">Search Again</a>
+  </div>
+</form>
+{% endif %}
+{% endblock %}

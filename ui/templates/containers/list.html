@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Containers — MTG{% endblock %}
+
+{% block content %}
+<hgroup>
+  <h2>Containers</h2>
+  <p>Binders, boxes, decks, trade folders</p>
+</hgroup>
+
+{% if containers %}
+<table>
+  <thead>
+    <tr>
+      <th>Name</th>
+      <th>Type</th>
+      <th>Cards</th>
+      <th>Value (EUR)</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for ct in containers %}
+    <tr>
+      <td><a href="/containers/{{ ct.id }}">{{ ct.name }}</a></td>
+      <td><small>{{ ct.type }}</small></td>
+      <td>{{ ct.card_count }}</td>
+      <td>
+        {% if ct.total_value_eur %}€{{ "%.2f"|format(ct.total_value_eur) }}{% else %}—{% endif %}
+      </td>
+      <td>
+        {% if ct.card_count == 0 %}
+        <form method="post" action="/containers/{{ ct.id }}/delete" style="display:inline" onsubmit="return confirm('Delete empty container?')">
+          <button type="submit" class="outline secondary" style="padding:0.2rem 0.5rem;font-size:0.8rem">✕</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>No containers yet.</p>
+{% endif %}
+
+<hr>
+<h4>Create Container</h4>
+<form method="post" action="/containers/create">
+  <div class="grid">
+    <label>
+      Name
+      <input type="text" name="name" required placeholder="My Binder" autofocus>
+    </label>
+    <label>
+      Type
+      <select name="type">
+        {% for t in container_types %}
+        <option value="{{ t }}">{{ t | capitalize }}</option>
+        {% endfor %}
+      </select>
+    </label>
+  </div>
+  <button type="submit">Create</button>
+</form>
+{% endblock %}

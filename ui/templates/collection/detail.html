@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}{{ card._display_name }} — MTG{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+  <ul>
+    <li><a href="/collection">Collection</a></li>
+    <li>{{ card._display_name }}</li>
+  </ul>
+</nav>
+
+<div class="grid">
+  <div style="max-width:280px">
+    {% if card.scryfall_id %}
+    <img src="/images/{{ card.scryfall_id }}"
+         alt="{{ card._display_name }}"
+         style="width:100%;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.3)"
+         onerror="this.src='';this.alt='No image'">
+    {% else %}
+    <div class="card-placeholder">No image</div>
+    {% endif %}
+  </div>
+
+  <div>
+    <hgroup>
+      <h2>{{ card._display_name }}</h2>
+      {% if card.mana_cost %}<p>{{ card.mana_cost }}</p>{% endif %}
+    </hgroup>
+
+    <dl>
+      <dt>Type</dt><dd>{{ card.type_line or '—' }}</dd>
+      <dt>Set</dt><dd>{{ card.set_name or card.set_code or '—' }}{% if card.collector_number %} #{{ card.collector_number }}{% endif %}</dd>
+      <dt>Rarity</dt><dd>{{ card.rarity | capitalize if card.rarity else '—' }}</dd>
+      {% if card.power and card.toughness %}
+      <dt>P/T</dt><dd>{{ card.power }}/{{ card.toughness }}</dd>
+      {% endif %}
+      {% if card.loyalty %}
+      <dt>Loyalty</dt><dd>{{ card.loyalty }}</dd>
+      {% endif %}
+      <dt>Language</dt><dd>{{ card._flag }} {{ card.language | upper }}</dd>
+      <dt>Condition</dt><dd>{{ card.condition or 'NM' }}</dd>
+      <dt>Foil</dt><dd>{% if card.foil %}Yes ✨{% else %}No{% endif %}</dd>
+      <dt>Container</dt><dd>{{ card.container_name or '—' }}</dd>
+      <dt>Price EUR</dt><dd>{% if card.price_eur is not none %}€{{ "%.2f"|format(card.price_eur) }}{% else %}—{% endif %}</dd>
+      <dt>Price USD</dt><dd>{% if card.price_usd is not none %}\${{ "%.2f"|format(card.price_usd) }}{% else %}—{% endif %}</dd>
+      <dt>Added</dt><dd><small>{{ card.added_at or '—' }}</small></dd>
+    </dl>
+
+    {% if card.oracle_text %}
+    <blockquote style="white-space:pre-wrap;font-size:0.9rem">{{ card.oracle_text }}</blockquote>
+    {% endif %}
+    {% if card.flavor_text %}
+    <p><em style="font-size:0.85rem">{{ card.flavor_text }}</em></p>
+    {% endif %}
+  </div>
+</div>
+
+<hr>
+<h4>Edit entry</h4>
+<form method="post" action="/collection/{{ card.id }}/edit">
+  <div class="grid">
+    <label>
+      Condition
+      <select name="condition">
+        {% for c in conditions %}
+        <option value="{{ c }}" {% if card.condition == c %}selected{% endif %}>{{ c }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      Language
+      <select name="language">
+        {% for code in languages %}
+        <option value="{{ code }}" {% if card.language == code %}selected{% endif %}>{{ lang_flags.get(code, '') }} {{ code | upper }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      Container
+      <select name="container_id">
+        <option value="">None</option>
+        {% for ct in containers %}
+        <option value="{{ ct.id }}" {% if card.container_id == ct.id %}selected{% endif %}>{{ ct.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+  </div>
+  <label>
+    <input type="checkbox" name="foil" value="1" {% if card.foil %}checked{% endif %}> Foil
+  </label>
+  <label>
+    Notes
+    <input type="text" name="notes" value="{{ card.notes or '' }}" placeholder="Optional notes">
+  </label>
+  <button type="submit">Save changes</button>
+</form>
+
+<hr>
+<form method="post" action="/collection/{{ card.id }}/delete" onsubmit="return confirm('Delete this card entry permanently?')">
+  <button type="submit" class="outline contrast">Delete this entry</button>
+</form>
+{% endblock %}

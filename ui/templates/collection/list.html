@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Collection — MTG{% endblock %}
+
+{% block content %}
+<hgroup>
+  <h2>Collection</h2>
+  <p>{{ total }} card entries</p>
+</hgroup>
+
+<div class="grid">
+  <div>
+    <input
+      type="search"
+      id="search-input"
+      name="q"
+      value="{{ q }}"
+      placeholder="Search cards…"
+      hx-get="/collection"
+      hx-trigger="input changed delay:300ms, search"
+      hx-target="#card-table"
+      hx-push-url="true"
+      hx-include="#filter-form"
+      aria-label="Search cards"
+    >
+  </div>
+  <div>
+    <a href="/collection/add" role="button">+ Add Card</a>
+  </div>
+</div>
+
+<form id="filter-form" hx-get="/collection" hx-target="#card-table" hx-push-url="true" style="margin-bottom:1rem">
+  <input type="hidden" name="q" id="filter-q" value="{{ q }}">
+  <div class="grid">
+    <label>
+      Container
+      <select name="container_id" hx-get="/collection" hx-target="#card-table" hx-push-url="true" hx-include="#filter-form">
+        <option value="">All</option>
+        {% for c in containers %}
+        <option value="{{ c.id }}" {% if container_id == c.id %}selected{% endif %}>{{ c.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      Language
+      <select name="language" hx-get="/collection" hx-target="#card-table" hx-push-url="true" hx-include="#filter-form">
+        <option value="">All</option>
+        {% for code, flag in lang_flags.items() %}
+        <option value="{{ code }}" {% if language == code %}selected{% endif %}>{{ flag }} {{ code | upper }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      Sort
+      <select name="sort" hx-get="/collection" hx-target="#card-table" hx-push-url="true" hx-include="#filter-form">
+        {% for val, label in sort_options %}
+        <option value="{{ val }}" {% if sort == val %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+  </div>
+</form>
+
+<div id="card-table">
+  {% include "collection/_rows.html" %}
+</div>
+
+<script>
+  // Keep hidden q in sync when search input changes
+  document.getElementById('search-input').addEventListener('input', function() {
+    document.getElementById('filter-q').value = this.value;
+  });
+</script>
+{% endblock %}

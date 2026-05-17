@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}MTG Collection{% endblock %}</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <script src="https://unpkg.com/htmx.org@2" defer></script>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header class="container-fluid">
+    <nav>
+      <ul>
+        <li><strong><a href="/collection" class="contrast">MTG Collection</a></strong></li>
+      </ul>
+      <ul>
+        <li><a href="/collection">Collection</a></li>
+        <li><a href="/containers">Containers</a></li>
+        <li><a href="/stats">Stats</a></li>
+        <li><a href="/import-export">Import/Export</a></li>
+        <li><a href="/deck">Deck Builder</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="container-fluid">
+    <small>MTG Collection Manager — local web UI</small>
+  </footer>
+</body>
+</html>

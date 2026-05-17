@@ -1,0 +1,63 @@
+/* MTG Collection Manager — UI overrides on top of Pico CSS */
+
+/* Nav brand */
+header nav a.contrast {
+  font-weight: bold;
+  text-decoration: none;
+}
+
+/* Rarity badges */
+.rarity {
+  display: inline-block;
+  width: 1.1rem;
+  height: 1.1rem;
+  border-radius: 50%;
+  font-size: 0.65rem;
+  font-weight: bold;
+  text-align: center;
+  line-height: 1.1rem;
+  margin-left: 0.25rem;
+  vertical-align: middle;
+}
+.rarity.mythic   { background: #e06b1a; color: #fff; }
+.rarity.rare     { background: #c5a028; color: #fff; }
+.rarity.uncommon { background: #607d8b; color: #fff; }
+.rarity.common   { background: #555; color: #fff; }
+
+/* Error articles */
+article.error {
+  border-left: 4px solid var(--pico-del-color, #c0392b);
+  background: rgba(192, 57, 43, 0.08);
+  padding: 0.75rem 1rem;
+}
+
+/* Card placeholder */
+.card-placeholder {
+  width: 100%;
+  aspect-ratio: 5/7;
+  background: var(--pico-card-background-color, #f4f4f4);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--pico-muted-color);
+  font-size: 0.9rem;
+  border: 1px dashed var(--pico-border-color);
+}
+
+/* Tighter table on small screens */
+@media (max-width: 768px) {
+  table { font-size: 0.85rem; }
+}
+
+/* Overflow scroll for wide tables */
+.overflow-auto { overflow-x: auto; display: block; }
+
+/* Footer */
+footer {
+  margin-top: 2rem;
+  padding: 1rem 0;
+  border-top: 1px solid var(--pico-border-color);
+  color: var(--pico-muted-color);
+  font-size: 0.8rem;
+}

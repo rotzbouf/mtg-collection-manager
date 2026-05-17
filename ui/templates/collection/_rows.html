@@ -1,0 +1,66 @@
+{% if cards %}
+<table class="overflow-auto">
+  <thead>
+    <tr>
+      <th></th>
+      <th>Name</th>
+      <th>Set</th>
+      <th>Lang</th>
+      <th>Condition</th>
+      <th>Foil</th>
+      <th>Container</th>
+      <th>Price (EUR)</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for card in cards %}
+    <tr>
+      <td style="width:40px">
+        {% if card.scryfall_id %}
+        <img src="/images/{{ card.scryfall_id }}" alt="" style="width:36px;height:50px;object-fit:cover;border-radius:3px" loading="lazy" onerror="this.style.display='none'">
+        {% endif %}
+      </td>
+      <td>
+        <a href="/collection/{{ card.id }}">{{ card._display_name }}</a>
+        {% if card.rarity == 'mythic' %}<span class="rarity mythic">M</span>
+        {% elif card.rarity == 'rare' %}<span class="rarity rare">R</span>
+        {% elif card.rarity == 'uncommon' %}<span class="rarity uncommon">U</span>
+        {% else %}<span class="rarity common">C</span>{% endif %}
+      </td>
+      <td><small>{{ card.set_code | upper if card.set_code }} {% if card.collector_number %}#{{ card.collector_number }}{% endif %}</small></td>
+      <td>{{ card._flag }}</td>
+      <td><small>{{ card.condition or 'NM' }}</small></td>
+      <td>{% if card.foil %}✨{% endif %}</td>
+      <td><small>{{ card.container_name or '—' }}</small></td>
+      <td>
+        {% if card.price_eur is not none %}
+          <small>€{{ "%.2f"|format(card.price_eur) }}</small>
+        {% else %}
+          <small>—</small>
+        {% endif %}
+      </td>
+      <td>
+        <form method="post" action="/collection/{{ card.id }}/delete" style="display:inline" onsubmit="return confirm('Delete this card entry?')">
+          <button type="submit" class="outline secondary" style="padding:0.2rem 0.5rem;font-size:0.8rem">✕</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>No cards found.</p>
+{% endif %}
+
+<nav>
+  <ul>
+    {% if page > 1 %}
+    <li><a href="?q={{ q }}&container_id={{ container_id or '' }}&language={{ language }}&sort={{ sort }}&page={{ page - 1 }}">← Prev</a></li>
+    {% endif %}
+    <li><small>Page {{ page }} / {{ total_pages }} ({{ total }} cards)</small></li>
+    {% if page < total_pages %}
+    <li><a href="?q={{ q }}&container_id={{ container_id or '' }}&language={{ language }}&sort={{ sort }}&page={{ page + 1 }}">Next →</a></li>
+    {% endif %}
+  </ul>
+</nav>
