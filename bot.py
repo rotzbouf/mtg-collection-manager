@@ -3192,8 +3192,8 @@ async def _handle_scan_attachment(message: discord.Message, attachment: discord.
     if default:
         # Container already known — skip the selection step and scan immediately.
         container_id, container_name = default
-        scanning_msg = await message.reply(
-            f"🔍 Scanning… 📦 **{container_name}**", mention_author=False
+        scanning_msg = await message.channel.send(
+            f"{message.author.mention} 🔍 Scanning… 📦 **{container_name}**"
         )
         await _do_scan_direct(scanning_msg, image_bytes, message, container_id, container_name)
     else:
