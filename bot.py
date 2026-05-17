@@ -95,12 +95,9 @@ class _ScanMatch(NamedTuple):
 
 
 async def _resolve_scan(image_bytes: bytes) -> _ScanMatch:
-    """Run name OCR and footer OCR concurrently and return the best card match."""
-    extracted_name, collector_info = await asyncio.gather(
-        asyncio.to_thread(scanner.extract_name, image_bytes),
-        asyncio.to_thread(scanner.extract_collector_info, image_bytes),
-    )
-    collector_info = collector_info or {}
+    """Run name OCR then footer OCR sequentially to avoid concurrent EasyOCR access."""
+    extracted_name = await asyncio.to_thread(scanner.extract_name, image_bytes)
+    collector_info = await asyncio.to_thread(scanner.extract_collector_info, image_bytes) or {}
 
     # Collector match: set code + number → exact Scryfall lookup
     collector_card: Optional[dict] = None
@@ -3104,14 +3101,32 @@ class ScanConfirmView(discord.ui.View):
         self._card["foil"] = foil
         self._card.setdefault("condition", "NM")
         self._card.setdefault("quantity", 1)
-        row_id = await bot.db.add_card(self._card, added_by=str(self._source.author.id))
+        try:
+            row_id = await bot.db.add_card(self._card, added_by=str(self._source.author.id))
+        except Exception as exc:
+            logger.error("_save add_card failed: %s", exc, exc_info=True)
+            await interaction.response.send_message(
+                "⚠️ Could not save card — check logs or try `/add`.", ephemeral=True
+            )
+            return
         self._card["id"] = row_id
         lang_flag = LANG_EMOJI.get(self._card.get("language", "en"), "")
         foil_tag = " ✨" if foil else ""
         embed = card_embed(self._card, title_prefix="Added ✅  ")
         embed.description = f"ID **{row_id}** | {lang_flag}{foil_tag} | added by {self._source.author.mention}"
+        self.stop()
         self.clear_items()
-        await interaction.response.edit_message(embed=embed, view=self)
+        try:
+            await interaction.response.edit_message(embed=embed, view=self)
+        except Exception as exc:
+            logger.error("_save edit_message failed: %s", exc, exc_info=True)
+            try:
+                await interaction.followup.send(
+                    f"✅ Saved **{self._card.get('name_en', '')}** (ID {row_id}) — could not update the message.",
+                    ephemeral=True,
+                )
+            except Exception:
+                pass
 
     @discord.ui.button(label="Add", style=discord.ButtonStyle.success, emoji="✅", row=0)
     async def add(self, interaction: discord.Interaction, button: discord.ui.Button):
