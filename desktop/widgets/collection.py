@@ -32,7 +32,8 @@ class CollectionWidget(QWidget):
         self._containers: list[dict] = []
 
         self._build_ui()
-        # Initial load deferred to after the event loop is running
+
+    def db_ready(self):
         QTimer.singleShot(0, self._init_load)
 
     # ------------------------------------------------------------------ #

@@ -17,6 +17,8 @@ class StatsWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._build_ui()
+
+    def db_ready(self):
         QTimer.singleShot(0, self._load_stats)
 
     # ------------------------------------------------------------------ #

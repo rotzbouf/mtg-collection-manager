@@ -150,3 +150,9 @@ class MainWindow(QMainWindow):
                 self, "Database error",
                 f"Failed to initialize database:\n{exc}"
             )
+            return
+
+        # Notify all widgets that the DB is ready
+        for widget in self._pages.values():
+            if hasattr(widget, "db_ready"):
+                widget.db_ready()

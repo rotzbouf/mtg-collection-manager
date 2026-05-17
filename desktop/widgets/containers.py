@@ -24,6 +24,8 @@ class ContainersWidget(QWidget):
         self._containers: list[dict] = []
         self._selected_container: Optional[dict] = None
         self._build_ui()
+
+    def db_ready(self):
         QTimer.singleShot(0, self._load_containers)
 
     # ------------------------------------------------------------------ #
