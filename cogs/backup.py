@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import gzip
 import io
+import lzma
 import logging
 import pathlib
 import os
@@ -84,20 +85,21 @@ class BackupCog(commands.Cog):
         local_path = BACKUP_DIR / base_filename
         await asyncio.to_thread(local_path.write_bytes, data)
 
-        # Compress for Discord upload
-        await interaction.edit_original_response(content="Compressing for upload...")
-        gz_data = await asyncio.to_thread(gzip.compress, data, compresslevel=6)
-        gz_filename = base_filename + ".gz"
         size_raw_mb = len(data) / 1024 / 1024
-        size_gz_mb = len(gz_data) / 1024 / 1024
+
+        # Compress for Discord upload — lzma/xz gives much better ratios than gzip for SQLite
+        await interaction.edit_original_response(content="Compressing for upload…")
+        xz_data = await asyncio.to_thread(lambda: lzma.compress(data, preset=6))
+        xz_filename = base_filename + ".xz"
+        size_xz_mb = len(xz_data) / 1024 / 1024
 
         await interaction.edit_original_response(
             content=f"Backup saved on server: `{local_path}` ({size_raw_mb:.1f} MB)\nUploading compressed copy…"
         )
         try:
             await interaction.followup.send(
-                content=f"Compressed backup for download — `{gz_filename}` ({size_gz_mb:.2f} MB).",
-                file=discord.File(io.BytesIO(gz_data), filename=gz_filename),
+                content=f"Compressed backup — `{xz_filename}` ({size_xz_mb:.2f} MB).",
+                file=discord.File(io.BytesIO(xz_data), filename=xz_filename),
                 ephemeral=True,
             )
             await interaction.edit_original_response(
@@ -108,8 +110,8 @@ class BackupCog(commands.Cog):
             await interaction.edit_original_response(
                 content=(
                     f"Backup saved on server: `{local_path}` ({size_raw_mb:.1f} MB)\n"
-                    f"⚠️ Could not upload to Discord: {exc} "
-                    f"(compressed size: {size_gz_mb:.2f} MB — may exceed the server's file size limit)"
+                    f"⚠️ Could not upload to Discord ({size_xz_mb:.2f} MB compressed — "
+                    f"server file size limit exceeded). Retrieve the backup directly from the server."
                 )
             )
 
@@ -119,13 +121,16 @@ class BackupCog(commands.Cog):
         if not await require_admin(interaction):
             return
         await interaction.response.defer(thinking=True, ephemeral=True)
-        if not (file.filename.endswith(".db") or file.filename.endswith(".db.gz")):
-            await interaction.followup.send("Please attach a `.db` or `.db.gz` backup file.", ephemeral=True)
+        if not (file.filename.endswith(".db") or file.filename.endswith(".db.gz") or file.filename.endswith(".db.xz")):
+            await interaction.followup.send("Please attach a `.db`, `.db.gz`, or `.db.xz` backup file.", ephemeral=True)
             return
-        await interaction.edit_original_response(content="Reading backup file...")
+        await interaction.edit_original_response(content="Reading backup file…")
         raw = await file.read()
-        if file.filename.endswith(".gz"):
-            await interaction.edit_original_response(content="Decompressing backup...")
+        if file.filename.endswith(".xz"):
+            await interaction.edit_original_response(content="Decompressing backup…")
+            data = await asyncio.to_thread(lzma.decompress, raw)
+        elif file.filename.endswith(".gz"):
+            await interaction.edit_original_response(content="Decompressing backup…")
             data = await asyncio.to_thread(gzip.decompress, raw)
         else:
             data = raw

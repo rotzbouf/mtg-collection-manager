@@ -112,14 +112,22 @@ class ScryfallClient:
             await asyncio.sleep(max(0, 0.1 - (loop.time() - self._last_request)))
             session = await self._session_get()
             try:
-                async with session.get(url, params=params, timeout=_REQUEST_TIMEOUT) as resp:
-                    self._last_request = loop.time()
-                    if resp.status == 200:
-                        return await resp.json()
-                    if resp.status == 404:
+                for attempt in range(3):
+                    async with session.get(url, params=params, timeout=_REQUEST_TIMEOUT) as resp:
+                        self._last_request = loop.time()
+                        if resp.status == 200:
+                            return await resp.json()
+                        if resp.status == 404:
+                            return None
+                        if resp.status == 429:
+                            wait = float(resp.headers.get("Retry-After", 1.0))
+                            logger.warning("Scryfall rate-limited — retrying in %.1fs (attempt %d/3)", wait, attempt + 1)
+                            await asyncio.sleep(wait)
+                            continue
+                        logger.warning("Scryfall %s → %s", url, resp.status)
                         return None
-                    logger.warning("Scryfall %s → %s", url, resp.status)
-                    return None
+                logger.warning("Scryfall %s — gave up after 3 retries (429)", url)
+                return None
             except (aiohttp.ClientError, asyncio.TimeoutError) as e:
                 logger.error("Scryfall request failed: %s", e)
                 return None

@@ -152,7 +152,7 @@ class MTGBot(commands.Bot):
             async with aiohttp.ClientSession(headers={"Accept": "image/webp,image/*,*/*;q=0.8"}) as session:
                 for scryfall_id, image_url in missing:
                     await image_cache.ensure_cached(scryfall_id, image_url, session=session)
-                    await asyncio.sleep(0.1)  # 10 req/s — Scryfall CDN polite limit
+                    await asyncio.sleep(0.5)  # 2 req/s — leave headroom for API calls sharing Scryfall's rate budget
             logger.info("Image cache: done")
         except Exception as exc:
             logger.error("Image cache task failed: %s", exc)
