@@ -7,71 +7,119 @@
 {% if import_done %}
 <article style="border-left:4px solid green">
   <strong>Import complete.</strong> {{ import_count }} card(s) added to the collection.
-  <br><a href="/collection">View Collection</a>
+  <a href="/collection">View Collection →</a>
+</article>
+{% endif %}
+
+{% if backup_done %}
+<article style="border-left:4px solid green">
+  <strong>Database restored successfully.</strong>
+  <a href="/collection">View Collection →</a>
 </article>
 {% endif %}
 
 {% if error %}
-<article class="error">{{ error }}</article>
+<article style="border-left:4px solid red">{{ error }}</article>
 {% endif %}
 
-<div class="grid">
-  <section>
-    <h4>Export</h4>
-    <p>Download your collection in different formats:</p>
-    <ul>
-      <li><a href="/export/csv" role="button" class="outline">Download CSV (full)</a></li>
-      <li><a href="/export/json" role="button" class="outline">Download JSON</a></li>
-      <li><a href="/export/moxfield" role="button" class="outline">Download Moxfield CSV</a></li>
-    </ul>
-  </section>
+{# ── Export ──────────────────────────────────────────────────────────────── #}
+<section>
+  <h4>Export collection</h4>
+  <p>Download your collection in different formats:</p>
+  <div style="display:flex;gap:0.75rem;flex-wrap:wrap">
+    <a href="/export/csv" role="button" class="outline">CSV (full)</a>
+    <a href="/export/json" role="button" class="outline">JSON</a>
+    <a href="/export/moxfield" role="button" class="outline">Moxfield CSV</a>
+  </div>
+</section>
 
-  <section>
-    <h4>Import</h4>
-    <p>Supported formats: Moxfield CSV, full bot CSV, JSON export.</p>
+<hr>
 
-    {% if not preview %}
-    <form method="post" action="/import" enctype="multipart/form-data">
-      <input type="hidden" name="action" value="preview">
-      <label>
-        File
-        <input type="file" name="file" accept=".csv,.json" required>
-      </label>
-      <button type="submit">Preview import</button>
-    </form>
-    {% else %}
-    <article>
-      <h5>Preview (first 10 of {{ preview_total }} rows)</h5>
+{# ── Import ──────────────────────────────────────────────────────────────── #}
+<section>
+  <h4>Import cards</h4>
+  <p>Supported formats: Moxfield CSV, full bot CSV, JSON export.</p>
+
+  {% if not preview %}
+  <form method="post" action="/import" enctype="multipart/form-data" style="max-width:30rem">
+    <label>
+      File
+      <input type="file" name="file" accept=".csv,.json" required>
+    </label>
+    <button type="submit">Preview import</button>
+  </form>
+  {% else %}
+  <article>
+    <h5>Preview — first 10 of {{ preview_total }} rows</h5>
+    <div style="overflow-x:auto">
       <table style="font-size:0.8rem">
         <thead>
-          <tr>
-            {% for key in preview[0].keys() %}
-            <th>{{ key }}</th>
-            {% endfor %}
-          </tr>
+          <tr>{% for key in preview[0].keys() %}<th>{{ key }}</th>{% endfor %}</tr>
         </thead>
         <tbody>
           {% for row in preview %}
-          <tr>
-            {% for v in row.values() %}
-            <td>{{ v }}</td>
-            {% endfor %}
-          </tr>
+          <tr>{% for v in row.values() %}<td>{{ v }}</td>{% endfor %}</tr>
           {% endfor %}
         </tbody>
       </table>
-      <p>Format detected: <strong>{{ fmt }}</strong> — {{ preview_total }} rows total.</p>
+    </div>
+    <p>Format: <strong>{{ fmt }}</strong> — {{ preview_total }} rows total.</p>
+    <form method="post" action="/import/confirm">
+      <input type="hidden" name="parsed_json" value="{{ parsed_json | e }}">
+      <input type="hidden" name="fmt" value="{{ fmt }}">
+      <div style="display:flex;gap:1rem">
+        <button type="submit">Confirm import ({{ preview_total }} cards)</button>
+        <a href="/import-export" role="button" class="outline secondary">Cancel</a>
+      </div>
+    </form>
+  </article>
+  {% endif %}
+</section>
 
-      <form method="post" action="/import/confirm">
-        <input type="hidden" name="parsed_json" value="{{ parsed_json | e }}">
-        <input type="hidden" name="fmt" value="{{ fmt }}">
-        <div style="display:flex;gap:1rem">
-          <button type="submit">Confirm Import ({{ preview_total }} cards)</button>
-          <a href="/import-export" role="button" class="outline secondary">Cancel</a>
-        </div>
+<hr>
+
+{# ── Backup ──────────────────────────────────────────────────────────────── #}
+<section>
+  <h4>Database backup</h4>
+
+  <div class="grid">
+    <div>
+      <h5>Create backup</h5>
+      <p>Download a compressed snapshot of the full database (.db.xz). Use it to restore later or move to another machine.</p>
+      <a href="/backup/download" role="button">Download backup</a>
+    </div>
+
+    <div>
+      <h5>Restore backup</h5>
+      <p>Upload a <code>.db</code>, <code>.db.gz</code>, or <code>.db.xz</code> backup file. <strong>This will replace the current database.</strong></p>
+
+      {% if not backup_restore_preview %}
+      <form method="post" action="/backup/restore" enctype="multipart/form-data">
+        <label>
+          Backup file
+          <input type="file" name="file" accept=".db,.gz,.xz" required>
+        </label>
+        <button type="submit" class="outline">Upload &amp; preview</button>
       </form>
-    </article>
-    {% endif %}
-  </section>
-</div>
+      {% else %}
+      <article style="border-left:4px solid orange">
+        <h5>⚠️ Confirm restore</h5>
+        <p>
+          <strong>{{ backup_restore_preview.filename }}</strong><br>
+          {{ backup_restore_preview.cards }} cards · {{ backup_restore_preview.containers }} containers
+          · {{ "%.1f" | format(backup_restore_preview.size_mb) }} MB
+        </p>
+        <p>All data added <em>after</em> this backup was created will be lost.</p>
+        <form method="post" action="/backup/restore/confirm">
+          <input type="hidden" name="token" value="{{ backup_restore_token }}">
+          <div style="display:flex;gap:1rem">
+            <button type="submit" style="background:var(--pico-color-red-550)">Restore database</button>
+            <a href="/import-export" role="button" class="outline secondary">Cancel</a>
+          </div>
+        </form>
+      </article>
+      {% endif %}
+    </div>
+  </div>
+</section>
 {% endblock %}

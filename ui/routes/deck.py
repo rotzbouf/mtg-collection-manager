@@ -40,8 +40,7 @@ FORMATS = [
 
 @router.get("/deck", response_class=HTMLResponse)
 async def deck_form(request: Request):
-    return templates.TemplateResponse("deck.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "deck.html", {
         "colors": COLORS,
         "themes": list(THEMES.keys()),
         "formats": FORMATS,
@@ -93,8 +92,7 @@ async def deck_build(
     except Exception as exc:
         error = str(exc)
 
-    return templates.TemplateResponse("deck.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "deck.html", {
         "colors": COLORS,
         "themes": list(THEMES.keys()),
         "formats": FORMATS,

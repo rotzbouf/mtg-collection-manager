@@ -25,8 +25,7 @@ LANG_FLAGS = {
 async def stats_page(request: Request):
     data = await deps.db.stats()
     containers = await deps.db.container_stats()
-    return templates.TemplateResponse("stats.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "stats.html", {
         "stats": data,
         "containers": containers,
         "lang_flags": LANG_FLAGS,

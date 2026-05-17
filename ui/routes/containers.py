@@ -41,8 +41,7 @@ def _display_name(card: dict) -> str:
 @router.get("/containers", response_class=HTMLResponse)
 async def containers_list(request: Request):
     containers = await deps.db.list_containers()
-    return templates.TemplateResponse("containers/list.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "containers/list.html", {
         "containers": containers,
         "container_types": CONTAINER_TYPES,
     })
@@ -75,8 +74,7 @@ async def container_detail(
         card["_display_name"] = _display_name(card)
         card["_flag"] = LANG_FLAGS.get(card.get("language", "en"), "")
 
-    return templates.TemplateResponse("containers/detail.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "containers/detail.html", {
         "container": container,
         "cards": cards,
         "page": page,

@@ -1,6 +1,7 @@
 """Collection routes: list, detail, add, edit, delete."""
 from __future__ import annotations
 
+import json
 import os
 from typing import Optional
 
@@ -47,6 +48,10 @@ def _display_name(card: dict) -> str:
     return en
 
 
+def _render(request: Request, template: str, ctx: dict):
+    return templates.TemplateResponse(request, template, ctx)
+
+
 @router.get("/collection", response_class=HTMLResponse)
 async def collection_list(
     request: Request,
@@ -64,28 +69,23 @@ async def collection_list(
         total = await deps.db.count_search(q)
     else:
         lang_filter = language if language else None
-        cid_filter = container_id
         cards = await deps.db.list_cards(
             limit=PAGE_SIZE,
             offset=offset,
             sort=sort if sort in dict(SORT_OPTIONS) else "chaos",
             language=lang_filter,
-            container_id=cid_filter,
+            container_id=container_id,
         )
-        total = await deps.db.count_cards(language=lang_filter, container_id=cid_filter)
+        total = await deps.db.count_cards(language=lang_filter, container_id=container_id)
 
     total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
     containers_list = await deps.db.list_containers()
 
-    # Add display helpers
     for card in cards:
         card["_display_name"] = _display_name(card)
         card["_flag"] = LANG_FLAGS.get(card.get("language", "en"), "")
 
-    is_htmx = request.headers.get("HX-Request") == "true"
-
     ctx = {
-        "request": request,
         "cards": cards,
         "q": q,
         "container_id": container_id,
@@ -100,16 +100,15 @@ async def collection_list(
         "page_size": PAGE_SIZE,
     }
 
-    if is_htmx:
-        return templates.TemplateResponse("collection/_rows.html", ctx)
-    return templates.TemplateResponse("collection/list.html", ctx)
+    is_htmx = request.headers.get("HX-Request") == "true"
+    template = "collection/_rows.html" if is_htmx else "collection/list.html"
+    return _render(request, template, ctx)
 
 
 @router.get("/collection/add", response_class=HTMLResponse)
 async def collection_add_form(request: Request, name: str = "", set_code: str = ""):
     containers_list = await deps.db.list_containers()
-    return templates.TemplateResponse("collection/add.html", {
-        "request": request,
+    return _render(request, "collection/add.html", {
         "name": name,
         "set_code": set_code,
         "containers": containers_list,
@@ -127,7 +126,6 @@ async def collection_add_submit(
     name: str = Form(""),
     set_code: str = Form(""),
     action: str = Form("lookup"),
-    # confirm fields
     scryfall_id: str = Form(""),
     name_en: str = Form(""),
     name_de: str = Form(""),
@@ -153,52 +151,30 @@ async def collection_add_submit(
     keywords: str = Form("[]"),
     legalities: str = Form("{}"),
 ):
-    import json
-
     containers_list = await deps.db.list_containers()
 
-    if action == "lookup":
-        # Scryfall lookup
-        if not name.strip():
-            return templates.TemplateResponse("collection/add.html", {
-                "request": request,
-                "name": name,
-                "set_code": set_code,
-                "containers": containers_list,
-                "conditions": CONDITIONS,
-                "languages": LANGUAGES,
-                "lang_flags": LANG_FLAGS,
-                "card": None,
-                "error": "Please enter a card name.",
-            })
-        sc = set_code.strip() or None
-        card_data = await deps.scryfall.get_by_name(name.strip(), fuzzy=True, set_code=sc)
-        if not card_data:
-            # try German
-            card_data = await deps.scryfall.get_german(name.strip(), set_code=sc)
-        if not card_data:
-            return templates.TemplateResponse("collection/add.html", {
-                "request": request,
-                "name": name,
-                "set_code": set_code,
-                "containers": containers_list,
-                "conditions": CONDITIONS,
-                "languages": LANGUAGES,
-                "lang_flags": LANG_FLAGS,
-                "card": None,
-                "error": f"Card not found on Scryfall: {name!r}",
-            })
-        return templates.TemplateResponse("collection/add.html", {
-            "request": request,
+    def _add_ctx(card=None, error=None):
+        return _render(request, "collection/add.html", {
             "name": name,
             "set_code": set_code,
             "containers": containers_list,
             "conditions": CONDITIONS,
             "languages": LANGUAGES,
             "lang_flags": LANG_FLAGS,
-            "card": card_data,
-            "error": None,
+            "card": card,
+            "error": error,
         })
+
+    if action == "lookup":
+        if not name.strip():
+            return _add_ctx(error="Please enter a card name.")
+        sc = set_code.strip() or None
+        card_data = await deps.scryfall.get_by_name(name.strip(), fuzzy=True, set_code=sc)
+        if not card_data:
+            card_data = await deps.scryfall.get_german(name.strip(), set_code=sc)
+        if not card_data:
+            return _add_ctx(error=f"Card not found on Scryfall: {name!r}")
+        return _add_ctx(card=card_data)
 
     # action == "save"
     def _f(v: str) -> Optional[float]:
@@ -252,8 +228,7 @@ async def collection_detail(request: Request, card_id: int):
     card["_display_name"] = _display_name(card)
     card["_flag"] = LANG_FLAGS.get(card.get("language", "en"), "")
     containers_list = await deps.db.list_containers()
-    return templates.TemplateResponse("collection/detail.html", {
-        "request": request,
+    return _render(request, "collection/detail.html", {
         "card": card,
         "containers": containers_list,
         "conditions": CONDITIONS,
