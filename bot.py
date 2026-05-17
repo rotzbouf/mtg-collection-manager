@@ -2302,6 +2302,9 @@ class RestoreConfirmView(discord.ui.View):
 # Per-user last-used container: user_id -> (container_id, container_name)
 _last_container: dict[int, tuple[int, str]] = {}
 
+# Filename extensions accepted as images when Discord omits content_type
+_SCAN_IMAGE_EXTS = {"jpg", "jpeg", "png", "gif", "webp", "bmp", "tiff", "heic"}
+
 
 def _no_match_msg(m: "_ScanMatch") -> str:
     """Human-readable reason why a scan produced no card match."""
@@ -3227,14 +3230,25 @@ async def on_message(message: discord.Message):
 
     images = [
         a for a in message.attachments
-        if a.content_type and a.content_type.startswith("image/")
+        if (a.content_type or "").startswith("image/")
+        or a.filename.lower().rsplit(".", 1)[-1] in _SCAN_IMAGE_EXTS
     ]
     if not images:
         await bot.process_commands(message)
         return
 
     for attachment in images:
-        await _handle_scan_attachment(message, attachment)
+        try:
+            await _handle_scan_attachment(message, attachment)
+        except Exception as exc:
+            logger.error("_handle_scan_attachment error: %s", exc, exc_info=True)
+            try:
+                await message.channel.send(
+                    f"{message.author.mention} ⚠️ Scan failed — try again or use `/add`.",
+                    delete_after=30,
+                )
+            except Exception:
+                pass
 
 
 # ──────────────────────────────────────────────────────────────────────────────
