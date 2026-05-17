@@ -92,13 +92,26 @@ class BackupCog(commands.Cog):
         size_gz_mb = len(gz_data) / 1024 / 1024
 
         await interaction.edit_original_response(
-            content=f"Backup saved on server: `{local_path}` ({size_raw_mb:.1f} MB)"
+            content=f"Backup saved on server: `{local_path}` ({size_raw_mb:.1f} MB)\nUploading compressed copy…"
         )
-        await interaction.followup.send(
-            content=f"Compressed backup for download — `{gz_filename}` ({size_gz_mb:.2f} MB).",
-            file=discord.File(io.BytesIO(gz_data), filename=gz_filename),
-            ephemeral=True,
-        )
+        try:
+            await interaction.followup.send(
+                content=f"Compressed backup for download — `{gz_filename}` ({size_gz_mb:.2f} MB).",
+                file=discord.File(io.BytesIO(gz_data), filename=gz_filename),
+                ephemeral=True,
+            )
+            await interaction.edit_original_response(
+                content=f"Backup saved on server: `{local_path}` ({size_raw_mb:.1f} MB) ✅"
+            )
+        except discord.HTTPException as exc:
+            logger.error("Backup upload failed: %s", exc)
+            await interaction.edit_original_response(
+                content=(
+                    f"Backup saved on server: `{local_path}` ({size_raw_mb:.1f} MB)\n"
+                    f"⚠️ Could not upload to Discord: {exc} "
+                    f"(compressed size: {size_gz_mb:.2f} MB — may exceed the server's file size limit)"
+                )
+            )
 
     @backup_group.command(name="restore", description="Restore the database from a backup file")
     @app_commands.describe(file="A .db backup file previously created with /backup create")
