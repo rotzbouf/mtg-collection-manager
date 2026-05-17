@@ -347,11 +347,20 @@ class StatsCog(commands.Cog):
         if top:
             lines = []
             for i, c in enumerate(top, 1):
-                name = c.get("name_en") or "?"
+                lang = c.get("language", "en")
+                if lang != "en":
+                    display = c.get("printed_name") or c.get("name_de") or c.get("name_en") or "?"
+                    name_en = c.get("name_en") or ""
+                    if display != name_en:
+                        name = f"{display} ({name_en})"
+                    else:
+                        name = display
+                else:
+                    name = c.get("name_en") or "?"
                 foil_tag = " ✨" if c.get("foil") else ""
-                lang = LANG_EMOJI.get(c.get("language", "en"), "")
+                lang_flag = LANG_EMOJI.get(lang, "")
                 container = c.get("container_name") or "—"
-                lines.append(f"{i}. {name}{foil_tag} {lang}  —  {_eur(c.get('price_eur'))}  📦 {container}")
+                lines.append(f"{i}. {name}{foil_tag} {lang_flag}  —  {_eur(c.get('price_eur'))}  📦 {container}")
             embed.add_field(name="Most valuable cards", value="\n".join(lines), inline=False)
 
         # ── Containers ──

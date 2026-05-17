@@ -565,7 +565,7 @@ class Database:
         # Top 5 cards by EUR value
         async with self._db.execute(
             """
-            SELECT c.name_en, c.name_de, c.price_eur, c.foil, c.language,
+            SELECT c.name_en, c.name_de, c.printed_name, c.price_eur, c.foil, c.language,
                    ct.name AS container_name
             FROM collection c
             LEFT JOIN containers ct ON c.container_id = ct.id
