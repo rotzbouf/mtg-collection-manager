@@ -2381,28 +2381,35 @@ async def _do_scan_direct(
     container_name: str,
 ):
     """OCR → Scryfall → edit scanning_msg with confirmation (no interaction — used when container already known)."""
-    m = await _resolve_scan(image_bytes)
-    logger.debug("OCR name: %r  footer: %s", m.extracted_name, m.collector_info)
+    try:
+        m = await _resolve_scan(image_bytes)
+        logger.debug("OCR name: %r  footer: %s", m.extracted_name, m.collector_info)
 
-    if not m.card:
-        view = _ManualNameView(image_bytes, source_message, container_id, container_name)
-        await scanning_msg.edit(content=_no_match_msg(m), view=view)
-        return
+        if not m.card:
+            view = _ManualNameView(image_bytes, source_message, container_id, container_name)
+            await scanning_msg.edit(content=_no_match_msg(m), view=view)
+            return
 
-    card = m.card
-    card["language"] = m.detected_lang or "en"
-    card["container_id"] = container_id
-    card["container_name"] = container_name
-    match_method = "  •  ".join(m.method_parts)
-    lang_flag = LANG_EMOJI.get(card["language"], card["language"].upper())
-    embed = card_embed(card, title_prefix="Found — confirm?  ")
-    embed.description = (
-        f"Language: {lang_flag}  |  Container: 📦 **{container_name}**"
-        + (f"\n*{match_method}*" if match_method else "")
-    )
-    containers = await bot.db.list_containers()
-    view = ScanConfirmView(card, source_message, image_bytes, containers, match_method)
-    await scanning_msg.edit(content=None, embed=embed, view=view)
+        card = m.card
+        card["language"] = m.detected_lang or "en"
+        card["container_id"] = container_id
+        card["container_name"] = container_name
+        match_method = "  •  ".join(m.method_parts)
+        lang_flag = LANG_EMOJI.get(card["language"], card["language"].upper())
+        embed = card_embed(card, title_prefix="Found — confirm?  ")
+        embed.description = (
+            f"Language: {lang_flag}  |  Container: 📦 **{container_name}**"
+            + (f"\n*{match_method}*" if match_method else "")
+        )
+        containers = await bot.db.list_containers()
+        view = ScanConfirmView(card, source_message, image_bytes, containers, match_method)
+        await scanning_msg.edit(content=None, embed=embed, view=view)
+    except Exception as exc:
+        logger.error("_do_scan_direct failed: %s", exc, exc_info=True)
+        try:
+            await scanning_msg.edit(content="⚠️ Scan failed — try again or use `/add`.", embed=None, view=None)
+        except Exception:
+            pass
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -3056,6 +3063,16 @@ class ScanConfirmView(discord.ui.View):
             sel.callback = self._on_container
             self.add_item(sel)
 
+        # Row 2: create a new container on the fly
+        new_btn = discord.ui.Button(
+            label="New container",
+            style=discord.ButtonStyle.primary,
+            emoji="➕",
+            row=2,
+        )
+        new_btn.callback = self._new_container
+        self.add_item(new_btn)
+
     def _build_embed(self) -> discord.Embed:
         lang_flag = LANG_EMOJI.get(self._card.get("language", "en"), "")
         container_name = self._card.get("container_name", "—")
@@ -3076,6 +3093,9 @@ class ScanConfirmView(discord.ui.View):
         self._card["container_name"] = c["name"]
         _last_container[self._source.author.id] = (cid, c["name"])
         await interaction.response.edit_message(embed=self._build_embed(), view=self)
+
+    async def _new_container(self, interaction: discord.Interaction):
+        await interaction.response.send_modal(NewContainerScanModal(self))
 
     async def _save(self, interaction: discord.Interaction, foil: bool):
         self._card["foil"] = foil
@@ -3100,8 +3120,51 @@ class ScanConfirmView(discord.ui.View):
 
     @discord.ui.button(label="Skip", style=discord.ButtonStyle.danger, emoji="✖", row=0)
     async def skip(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.stop()
         self.clear_items()
         await interaction.response.edit_message(content="Skipped.", embed=None, view=self)
+
+
+class NewContainerScanModal(discord.ui.Modal, title="New container"):
+    cont_name = discord.ui.TextInput(label="Container name", placeholder="e.g. Binder 2", max_length=100)
+    cont_type = discord.ui.TextInput(
+        label="Type  (binder / box / deck / trade / other)",
+        placeholder="binder",
+        required=False,
+        max_length=20,
+    )
+
+    def __init__(self, confirm_view: ScanConfirmView):
+        super().__init__()
+        self._cv = confirm_view
+
+    async def on_submit(self, interaction: discord.Interaction):
+        type_val = (self.cont_type.value or "binder").strip().lower()
+        if type_val not in CONTAINER_TYPES:
+            type_val = "binder"
+        name = self.cont_name.value.strip()
+        try:
+            cid = await bot.db.create_container(name, type=type_val)
+        except Exception:
+            containers = await bot.db.list_containers()
+            existing = next((c for c in containers if c["name"] == name), None)
+            if not existing:
+                await interaction.response.send_message("Could not create container.", ephemeral=True)
+                return
+            cid = existing["id"]
+        self._cv._card["container_id"] = cid
+        self._cv._card["container_name"] = name
+        _last_container[self._cv._source.author.id] = (cid, name)
+        self._cv.stop()
+        containers = await bot.db.list_containers()
+        new_view = ScanConfirmView(
+            self._cv._card,
+            self._cv._source,
+            self._cv._image_bytes,
+            containers,
+            self._cv._match_method,
+        )
+        await interaction.response.edit_message(embed=new_view._build_embed(), view=new_view)
 
 
 async def _handle_scan_attachment(message: discord.Message, attachment: discord.Attachment):
