@@ -55,7 +55,8 @@ def _apply_dark_style(app: QApplication):
             background-color: #181825;
             alternate-background-color: #1e1e2e;
             gridline-color: #313244;
-            selection-background-color: #313244;
+            selection-background-color: #3b82c4;
+            selection-color: #ffffff;
             color: #cdd6f4;
         }
         QTableWidget QHeaderView::section {
@@ -71,7 +72,8 @@ def _apply_dark_style(app: QApplication):
         QListWidget {
             background-color: #181825;
             alternate-background-color: #1e1e2e;
-            selection-background-color: #313244;
+            selection-background-color: #3b82c4;
+            selection-color: #ffffff;
             color: #cdd6f4;
         }
         QLineEdit, QComboBox, QTextEdit {
