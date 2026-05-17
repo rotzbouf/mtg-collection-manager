@@ -2403,7 +2403,8 @@ async def _do_scan_direct(
         )
         containers = await bot.db.list_containers()
         view = ScanConfirmView(card, source_message, image_bytes, containers, match_method)
-        await scanning_msg.edit(content=None, embed=embed, view=view)
+        await scanning_msg.edit(content="✅ Scanned — confirm below.")
+        await scanning_msg.channel.send(embed=embed, view=view)
     except Exception as exc:
         logger.error("_do_scan_direct failed: %s", exc, exc_info=True)
         try:
