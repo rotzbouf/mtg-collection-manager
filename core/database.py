@@ -578,6 +578,17 @@ class Database:
 
         return result
 
+    async def get_all_image_refs(self) -> list[tuple[str, str]]:
+        """Return unique (scryfall_id, image_url) pairs for all collection entries that have both."""
+        async with self._db.execute(
+            """
+            SELECT DISTINCT scryfall_id, image_url
+            FROM collection
+            WHERE scryfall_id IS NOT NULL AND image_url IS NOT NULL
+            """
+        ) as cur:
+            return [(r["scryfall_id"], r["image_url"]) for r in await cur.fetchall()]
+
     async def get_all(self) -> list[dict]:
         async with self._db.execute(
             """

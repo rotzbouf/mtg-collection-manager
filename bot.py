@@ -19,6 +19,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
+import aiohttp
+import core.image_cache as image_cache
 import core.scanner as scanner
 from core.database import Database
 from core.scryfall import ScryfallClient
@@ -130,12 +132,30 @@ class MTGBot(commands.Bot):
         refresh_null_prices_task.start()
         # Load OCR models in background — slow on first run, must not block the sync
         asyncio.create_task(self._init_ocr())
+        asyncio.create_task(self._cache_images())
 
     async def _init_ocr(self):
         try:
             await scanner.init_ocr()
         except Exception as e:
             logger.error("OCR init failed: %s", e)
+
+    async def _cache_images(self):
+        await self.wait_until_ready()
+        try:
+            refs = await self.db.get_all_image_refs()
+            missing = [(sid, url) for sid, url in refs if not image_cache.get_cached_path(sid)]
+            if not missing:
+                logger.info("Image cache: all %d images already cached", len(refs))
+                return
+            logger.info("Image cache: %d/%d images missing — downloading in background", len(missing), len(refs))
+            async with aiohttp.ClientSession(headers={"Accept": "image/webp,image/*,*/*;q=0.8"}) as session:
+                for scryfall_id, image_url in missing:
+                    await image_cache.ensure_cached(scryfall_id, image_url, session=session)
+                    await asyncio.sleep(0.1)  # 10 req/s — Scryfall CDN polite limit
+            logger.info("Image cache: done")
+        except Exception as exc:
+            logger.error("Image cache task failed: %s", exc)
 
     async def close(self):
         await self.db.close()
