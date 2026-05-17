@@ -1,8 +1,20 @@
 # MTG Collection Manager
 
-A Discord bot for tracking your physical Magic: The Gathering collection.
-Add cards by name or photo, organise them into containers (binders, boxes, decks),
-search and export your collection, and generate deck proposals — all from Discord.
+A multi-interface tool for tracking your physical Magic: The Gathering collection.
+Manage cards via Discord slash commands, a local web UI, or a standalone desktop app —
+all sharing the same SQLite database.
+
+---
+
+## Interfaces
+
+| Interface | How to run | Best for |
+|---|---|---|
+| **Discord bot** | `python3 bot.py` or systemd service | Scanning, adding by photo, remote access |
+| **Web UI** | `./start_ui.sh` | Browser-based collection management |
+| **Desktop app** | `./start_desktop.sh` | Native GUI without a browser |
+
+All three interfaces read and write the same `mtg_collection.db` (SQLite WAL mode, safe for concurrent access).
 
 ---
 
@@ -14,21 +26,22 @@ search and export your collection, and generate deck proposals — all from Disc
 | **Add by photo** | Drop an image in the scan channel; OCR reads card name, set code, collector number, and language |
 | **Container memory** | After picking a container once, subsequent scans go straight to confirmation — no repeated selection |
 | **Localised card text & names** | Type line, oracle text, flavour text, and display names are stored in the card's own language |
-| **Containers** | Organise cards into named binders, boxes, decks, trade piles, etc. Create, rename, and delete via Browse |
+| **Containers** | Organise cards into named binders, boxes, decks, trade piles, etc. |
 | **Full-text search** | SQLite FTS5 across name, type, oracle text, set, flavour text, notes — paginated with card picker |
-| **Interactive browsing** | `/browse` opens a container-and-card browser; click any card to edit, move, resync, or delete it; manage the container (rename/delete) from the same view |
+| **Interactive browsing** | Browse containers and cards; edit, move, resync, or delete cards; manage containers |
 | **Chaos sort** | MTG-native sort: W→U→B→R→G→Multi→Colourless→Land, then type, then CMC |
-| **Statistics** | Totals by language, foil/non-foil, rarity breakdown, top-5 by value; Overcounted Cards button |
+| **Statistics** | Totals by language, foil/non-foil, rarity breakdown, top-5 by value |
 | **Export** | Moxfield CSV (default), Excel CSV, or JSON |
 | **Import** | Moxfield CSV, bot-export CSV, or bot-export JSON |
-| **Deckbuilder** | Auto-generates Commander (100-card) or 60-card (Timeless/Standard) proposals; saves the deck to a container |
+| **Deckbuilder** | Auto-generates Commander (100-card) or 60-card (Timeless/Standard) proposals; saves deck to a container |
 | **Deck list** | Every proposed card shows its storage location; a location manifest at the end records original container IDs |
-| **Showcase** | `/showcase` displays the 5 most valuable cards with image, details, and a price-history chart |
+| **Showcase** | Displays the 5 most valuable cards with image, details, and a price-history chart |
 | **Price history** | Prices are snapshotted daily; history chart auto-appears once 2+ data points exist |
 | **Null-price refresh** | Cards added without a EUR price are automatically re-checked against Scryfall daily |
-| **Overcount** | Cards with more than 4 copies — shown via the Overcounted Cards button in `/stats`, with per-container breakdown and a move UI |
-| **Backup & restore** | `/backup create` saves a copy on the server and sends a compressed `.db.gz`; `/backup restore` accepts both formats |
-| **Resync** | `/resync` re-fetches fresh Scryfall data (text, prices, image) for one or all cards |
+| **Overcount** | Cards with more than 4 copies — shown via the Overcounted Cards button in `/stats`, with per-container breakdown |
+| **Backup & restore** | `/backup create` saves a server copy and sends a `.db.xz` attachment; web UI also supports create/restore |
+| **Local image cache** | Card images downloaded at startup and served locally; no repeated Scryfall hits |
+| **Resync** | Re-fetches fresh Scryfall data (text, prices, image) for one or all cards |
 
 ---
 
@@ -59,9 +72,16 @@ easyocr>=1.7.0
 numpy>=1.24.0
 opencv-python-headless>=4.8.0
 matplotlib>=3.7.0
+fastapi>=0.111
+uvicorn[standard]>=0.29
+jinja2>=3.1
+python-multipart>=0.0.9
+aiofiles>=23.0
+PyQt6>=6.6
+qasync>=0.27
 ```
 
-No GPU required. EasyOCR runs on CPU; the scan rate of a Discord bot makes CPU inference fast enough.
+No GPU required. EasyOCR runs on CPU. The desktop app requires a display (X11 or Wayland).
 
 ---
 
@@ -75,12 +95,11 @@ Grant these permissions **server-wide** (or individually in every channel the bo
 |---|---|---|
 | **View Channel** | `1 << 10` | See channels and incoming messages |
 | **Send Messages** | `1 << 11` | Post scan status, command responses, and error messages |
-| **Read Message History** | `1 << 16` | Create message replies (`message.reply`); required in the showcase channel for the welcome embed |
-| **Embed Links** | `1 << 14` | Send `discord.Embed` objects — card confirmations, search results, stats, showcase, `/add` output |
-| **Attach Files** | `1 << 15` | Send file attachments — deck `.txt`, export CSV/JSON, backup `.db.gz`, price-history chart images |
+| **Read Message History** | `1 << 16` | Create message replies; required in the showcase channel for the welcome embed |
+| **Embed Links** | `1 << 14` | Send `discord.Embed` objects — card confirmations, search results, stats, showcase |
+| **Attach Files** | `1 << 15` | Send file attachments — deck `.txt`, export CSV/JSON, backup `.db.xz`, price-history charts |
 
-**OAuth2 invite permission integer:** `117760`  
-_(View Channel + Send Messages + Read Message History + Embed Links + Attach Files)_
+**OAuth2 invite permission integer:** `117760`
 
 > **Common symptom if a permission is missing**
 >
@@ -93,13 +112,11 @@ _(View Channel + Send Messages + Read Message History + Embed Links + Attach Fil
 
 ### Per-channel notes
 
-If channel-specific permission overrides exist, make sure the bot's role is not denied any of the above. Channels configured in `.env` have the following specific requirements:
-
 | Channel setting | Critical permissions |
 |---|---|
-| `DISCORD_SCAN_CHANNEL_ID` | **Send Messages** + **Embed Links** (card confirmation embeds); **Read Message History** only if you want native message replies |
-| `DISCORD_SHOWCASE_CHANNEL_ID` | **Send Messages** + **Embed Links** + **Attach Files** (chart images) + **Read Message History** (welcome reply) |
-| `DISCORD_DECKBUILDER_CHANNEL_ID` | **Send Messages** + **Embed Links** + **Attach Files** (deck `.txt`) |
+| `DISCORD_SCAN_CHANNEL_ID` | **Send Messages** + **Embed Links** + **Read Message History** |
+| `DISCORD_SHOWCASE_CHANNEL_ID` | **Send Messages** + **Embed Links** + **Attach Files** + **Read Message History** |
+| `DISCORD_DECKBUILDER_CHANNEL_ID` | **Send Messages** + **Embed Links** + **Attach Files** |
 | Any channel with `/export` or `/backup` | **Send Messages** + **Attach Files** |
 
 ### Gateway intents
@@ -110,8 +127,6 @@ Two **privileged intents** must be enabled in the [Discord Developer Portal](htt
 |---|---|
 | **Message Content Intent** | Read message content and detect image attachments in the scan channel |
 | **Server Members Intent** | Resolve member display names in scan confirmations and stats |
-
-Without **Message Content Intent** the auto-scan feature will not trigger on image drops.
 
 ---
 
@@ -141,8 +156,6 @@ The install script:
 ```bash
 sudo bash service_install.sh
 ```
-
-The service starts automatically on boot and restarts on failure. Logs go to the system journal.
 
 ```bash
 sudo systemctl status mtg-bot          # check status
@@ -189,6 +202,13 @@ DISCORD_GUEST_ROLE=
 DISCORD_COLLECTOR_ROLE=
 DISCORD_ADMIN_ROLE=
 
+# Local image cache directory (relative or absolute; default: ./images)
+IMAGE_CACHE_DIR=images
+
+# Web UI host and port (default: localhost:8000)
+UI_HOST=127.0.0.1
+UI_PORT=8000
+
 # Set to 1 to receive an ephemeral debug image after each scan showing the
 # isolated card and the OCR name zone (red rectangle). Disable in production.
 DEBUG_SCAN_PREVIEW=0
@@ -203,11 +223,7 @@ DEBUG_SCAN_PREVIEW=0
 | `DISCORD_SHOWCASE_CHANNEL_ID` | `/showcase` | — |
 | `DISCORD_SEARCH_CHANNEL_ID` | `/search` | — |
 
-Leave all blank to allow all commands anywhere.
-
 ### Role-based access control
-
-The bot enforces a three-tier hierarchy. Higher tiers inherit all lower-tier permissions.
 
 ```
 Admin  ≥  Collector  ≥  Guest
@@ -219,31 +235,40 @@ Admin  ≥  Collector  ≥  Guest
 | `DISCORD_COLLECTOR_ROLE` | Collector | `/add`, `/import`, Browse → Edit/Move/Resync card, Browse → Create Container + all Guest |
 | `DISCORD_ADMIN_ROLE` | Admin | Browse → Delete card/container, Browse → Rename container, `/container move`, `/resync`, `/backup create`, `/backup restore` + all Collector |
 
-Each variable accepts a **role name** (e.g. `Guest`) or a **role ID** (e.g. `123456789`).
-
-| Scenario | Effect |
-|---|---|
-| `DISCORD_GUEST_ROLE` not set | Read-only commands open to everyone |
-| `DISCORD_COLLECTOR_ROLE` not set | Collector commands open to everyone |
-| `DISCORD_ADMIN_ROLE` not set | Admin commands open to everyone |
-| All three not set | Fully open — no role restrictions |
-
 ---
 
-## Running manually
+## Running
+
+### Discord bot
 
 ```bash
 source venv/bin/activate
 python3 bot.py
 ```
 
-Logs go to stdout. Use the systemd service for production deployments.
-
 On first start the bot:
-
 - Initialises the SQLite database (`mtg_collection.db`)
 - Syncs slash commands (instantly to the configured guild, or globally within ~1 hour)
 - Loads the EasyOCR model in the background (may take a minute on the very first run)
+- Downloads any missing card images to `IMAGE_CACHE_DIR` in the background (0.5 s between requests)
+
+### Web UI
+
+```bash
+./start_ui.sh
+```
+
+Opens a browser-based collection manager at `http://localhost:8000` (or the configured `UI_HOST:UI_PORT`).
+All features are available: collection browsing/editing, containers, statistics, import/export, deckbuilder, and database backup/restore.
+
+### Desktop app
+
+```bash
+./start_desktop.sh
+```
+
+Launches a native PyQt6 application. Requires a display (X11 or Wayland).
+The app connects directly to the same SQLite database used by the bot and web UI.
 
 ---
 
@@ -253,12 +278,10 @@ On first start the bot:
 
 #### `/add`
 
-Add a card by name. Scryfall is queried automatically.
-
 | Parameter | Required | Default | Description |
 |---|---|---|---|
 | `name` | yes | — | English or German card name |
-| `container` | no | — | Container name (created automatically if new) or numeric container ID |
+| `container` | no | — | Container name or numeric ID |
 | `set_code` | no | — | Narrow to a specific set, e.g. `MH3` |
 | `language` | no | auto | Override detected language (`en` / `de`) |
 | `condition` | no | `NM` | `NM` · `LP` · `MP` · `HP` · `DMG` |
@@ -271,11 +294,11 @@ Add a card by name. Scryfall is queried automatically.
 /add name:Blitz der Unmöglichkeit language:de container:Binder 1
 ```
 
-After adding, a **➕ Add Another Copy** button lets you add further copies of the same card without retyping the command.
+A **➕ Add Another Copy** button lets you add further copies without retyping.
 
 #### Auto-scan (no command needed)
 
-Drop an image directly into the configured scan channel.
+Drop an image into the configured scan channel.
 
 **First scan (no container selected yet):**
 
@@ -293,9 +316,7 @@ Confirmation embed  ──── Add  /  Add as foil  /  Skip
                           └── optional: change container for this & future scans
 ```
 
-**Subsequent scans (container already known):**
-
-The bot skips the container picker and goes straight to scan + confirmation, showing which container will be used. A dropdown in the confirmation embed lets you switch containers for the current card and all future scans.
+**Subsequent scans:** the bot skips the container picker and goes straight to scan + confirmation. A dropdown lets you switch containers for the current card and all future scans.
 
 ---
 
@@ -303,8 +324,7 @@ The bot skips the container picker and goes straight to scan + confirmation, sho
 
 #### `/list`
 
-Browse the full collection with pagination (10 cards per page). Navigation buttons (◀ / ▶) appear when there is more than one page.
-A **card picker dropdown** is shown on every page — select any card to open its full action panel without leaving the list.
+Browse the full collection with pagination (10 cards per page).
 
 | Parameter | Default | Options |
 |---|---|---|
@@ -314,8 +334,7 @@ A **card picker dropdown** is shown on every page — select any card to open it
 
 #### `/search`
 
-Full-text search across every indexed field: name (EN + DE), type line, oracle text,
-set name, set code, collector number, rarity, mana cost, flavour text, and notes.
+Full-text search across every indexed field: name (EN + DE), type line, oracle text, set name, set code, collector number, rarity, mana cost, flavour text, and notes.
 
 ```
 /search query:goblin haste
@@ -323,77 +342,49 @@ set name, set code, collector number, rarity, mana cost, flavour text, and notes
 /search query:flying deathtouch
 ```
 
-Results are paginated (10 per page) with ◀ / ▶ navigation. A **card picker dropdown** lets you open any result's action panel directly.
-
 #### `/browse`
 
-Interactive container and card browser (ephemeral — only visible to you).
+Interactive container and card browser (ephemeral).
 
 1. A dropdown lists all containers; select one to enter it
 2. Inside a container, a dropdown lists the cards (25 per page, paginated)
 3. Select a card to open its action panel: **✏️ Edit** · **📦 Move** · **🔄 Resync** · **🗑️ Delete**
-4. Use **◀ Containers** to return to the container list
-5. **✏️ Rename** and **🗑️ Delete Container** buttons are always visible at the bottom of any container view (admin only)
-6. A **➕ New Container** button is available both in the container list and inside any container
-
-The action panel (for individual cards) provides: **✏️ Edit** (condition, language, foil, notes) · **📦 Move** (to another container) · **🔄 Resync** (re-fetch from Scryfall) · **🗑️ Delete**.
+4. **✏️ Rename** and **🗑️ Delete Container** buttons are always visible (admin only)
+5. A **➕ New Container** button is available in the container list and inside any container
 
 #### `/stats`
-
-Collection-wide statistics:
 
 - Total and unique card counts
 - English / German breakdown with foil / non-foil split and EUR value
 - Rarity breakdown (Common · Uncommon · Rare · Mythic) with values
-- Top 5 most valuable cards with container location
-- Per-container overview with bulk detection (containers where the most expensive card ≤ €0.05 are flagged as bulk)
+- Top 5 most valuable cards with localised name and container location
+- Per-container overview
 
-An **⚠️ Overcounted Cards** button is attached to the stats response. Click it to see every card that appears more than 4 times, with a per-container breakdown, price summary, and a UI for selecting and moving excess copies to another container.
+An **⚠️ Overcounted Cards** button is attached to the stats response.
 
 #### `/showcase`
 
 Displays the 5 most valuable cards in your collection, one embed per card:
 
-- Card name in the card's own language (English name shown in parentheses when different)
-- Card image (thumbnail)
-- Current price (EUR and USD where available)
-- Set, collector number, rarity, condition, language, container location
-- **Price history chart** — a line chart is automatically attached once at least 2 daily snapshots exist
-
-Prices are recorded automatically once per day in the background. The chart appears without any manual action after the bot has been running for two days.
-
-A second background task runs daily to back-fill EUR prices for cards that had no price when they were first added. No manual action needed.
-
-If `DISCORD_SHOWCASE_CHANNEL_ID` is set, posting in that channel triggers a welcome menu with quick-access buttons (Showcase, Browse, Stats, Commands).
+- Card name in the card's own language (English name in parentheses when different)
+- Card image, current price (EUR and USD), set, collector number, rarity, condition, language, container
+- **Price history chart** — attached once at least 2 daily snapshots exist
 
 ---
 
 ### Containers
 
-Containers represent physical storage locations — binders, deck boxes, trade piles, etc.
-Each card can belong to one container. Deleting a container does **not** delete its cards.
-
-All container management (create, rename, delete) is accessible through `/browse` or `/container list`.
-
 #### `/container list`
 
 Lists all containers with card count and total EUR value.
-Buttons: **📦 Browse** (opens the interactive container browser) · **➕ New Container** (creates a new container).
 
 #### `/container move`
 
-Moves **all** cards from one container to another in a single operation.
+Moves **all** cards from one container to another.
 
 ```
 /container move source:Binder 1 destination:Trade Box
 ```
-
-Both `source` and `destination` support autocomplete.
-
-**Creating, renaming, and deleting containers** is done via Browse:
-- **Create:** click **➕ New Container** in the container list or inside any container
-- **Rename:** enter a container, then click **✏️ Rename** (admin)
-- **Delete:** enter a container, then click **🗑️ Delete Container** — cards are kept, only the container link is removed (admin)
 
 ---
 
@@ -401,56 +392,40 @@ Both `source` and `destination` support autocomplete.
 
 #### `/export`
 
-Downloads your entire collection as a file attachment.
-
 | Format | Filename | Description |
 |---|---|---|
-| `Moxfield CSV` *(default)* | `collection_moxfield.csv` | Importable at moxfield.com; columns: Count, Name, Edition, Condition, Language, Foil, Collector Number |
-| `CSV` | `collection.csv` | Excel-compatible; all fields including Scryfall metadata |
-| `JSON` | `collection.json` | Full record per card including all Scryfall metadata |
-
-**Moxfield import:** go to your Moxfield collection → *Import* → upload `collection_moxfield.csv`.
+| `Moxfield CSV` *(default)* | `collection_moxfield.csv` | Importable at moxfield.com |
+| `CSV` | `collection.csv` | Excel-compatible; all fields |
+| `JSON` | `collection.json` | Full record per card |
 
 #### `/import`
 
-Imports cards from an attached file into the collection.
-
 | Format | Description |
 |---|---|
-| Moxfield CSV | Each card is looked up on Scryfall by set code + collector number (falls back to name search) |
-| Bot export CSV | Direct import of a previously exported full CSV |
-| Bot export JSON | Direct import of a previously exported JSON |
-
-Optionally assign all imported cards to a specific container.
-A preview of the import (entry count, format detected) is shown before confirmation.
-
-> **Tip:** Run `/backup create` before a large import so you can roll back if needed.
+| Moxfield CSV | Looked up on Scryfall by set code + collector number |
+| Bot export CSV | Direct re-import of a full CSV export |
+| Bot export JSON | Direct re-import of a JSON export |
 
 ---
 
 ### Backup & Restore
 
-Backup and restore commands are admin-only.
+Backup commands are admin-only.
 
 #### `/backup create`
 
-Creates a consistent snapshot of the current database:
+1. Saves an uncompressed `.db` copy in `BACKUP_DIR` on the server
+2. Sends an lzma-compressed `.db.xz` as an ephemeral Discord attachment
 
-1. Saves an uncompressed `.db` copy in `BACKUP_DIR` on the server (default: `./backups/`)
-2. Sends a gzip-compressed `.db.gz` as an ephemeral Discord attachment for download
-
-The snapshot is taken online — no downtime or connection interruption required.
+> **Size:** lzma compression typically reduces a 20+ MB database to ~2–4 MB, well within Discord's 8 MB file limit.
 
 #### `/backup restore`
 
-Restores the database from a previously created backup file.
+1. Attach a `.db`, `.db.gz`, or `.db.xz` file
+2. The bot validates and shows a confirmation embed with card and container counts
+3. Confirm to replace the current database
 
-1. Attach a `.db` or `.db.gz` file (both formats accepted)
-2. The bot validates the file and shows a confirmation embed with the card and container counts found in the backup
-3. Confirm to replace the current database — all changes made after the backup was created will be lost
-4. The bot reinitialises the database and applies any pending migrations automatically
-
-> **Tip:** Run `/backup create` before a bulk import or any other operation you may want to undo.
+Backup and restore are also available in the web UI under **Import / Export**.
 
 ---
 
@@ -458,48 +433,32 @@ Restores the database from a previously created backup file.
 
 #### `/resync`
 
-Re-fetches fresh data from Scryfall and updates all Scryfall-sourced fields: card text, type line, flavour text, prices, and image URL. Sort keys are recomputed. Collection metadata (condition, foil, language, notes, container) is preserved.
+Re-fetches Scryfall data and updates card text, type line, flavour text, prices, and image URL.
 
 | Parameter | Required | Description |
 |---|---|---|
-| `id` | no | Collection ID of the card to resync; omit to resync every card in the collection |
+| `id` | no | Collection ID; omit to resync every card |
 
 ```
-/resync             ← refreshes all cards (shows progress every 25 cards)
+/resync             ← refreshes all cards
 /resync id:42       ← refreshes this entry and all copies sharing the same Scryfall ID
 ```
-
-Individual cards can also be resynced from their action panel in `/browse` or `/list`.
 
 ---
 
 ### Deckbuilder
 
-Deckbuilder commands are restricted to `DISCORD_DECKBUILDER_CHANNEL_ID` (if configured).
+Restricted to `DISCORD_DECKBUILDER_CHANNEL_ID` if configured.
 
 #### `/deck propose`
 
-Generates a deck proposal from your collection using synergy scoring.
+**Commander format:** scores every legendary creature by synergy, shows top 10, builds a 100-card list.
 
-**Commander format**
+**Timeless / Standard formats:** detects the dominant strategy and builds a 60-card list.
 
-1. The bot scores every legendary creature in your collection by synergy with the rest of your cards
-2. A dropdown shows the top 10 candidates with colour identity and synergy score
-3. Pick a commander → the bot builds a 100-card list (up to 63 non-lands + basic lands from your collection)
-4. The result embed lists the top key cards with their **container location** (📦 binder / box)
-5. A `.txt` deck list is attached — every line includes the container where the card is stored
+After a proposal, press **📦 Save to Container** to move all suggested cards into a new container.
 
-**Timeless / Standard formats**
-
-Automatically detects the dominant strategy in your legal cards (tokens, counters, graveyard, control, etc.) and builds a 60-card list (36 non-lands + 24 basic lands). Basic lands are taken from your collection first; any shortfall is noted as plain text entries.
-
-**Saving a deck**
-
-Press **📦 Save to Container** after a deck proposal to move all suggested cards (including collection basics) into a new container named after the deck. The original container of each card is recorded in the `.txt` file's location manifest so you can trace every card back after the move.
-
-**Deck list format**
-
-Non-English cards show their printed name with the English name in parentheses:
+**Deck list format:**
 
 ```
 Commander
@@ -508,53 +467,58 @@ Commander
 Creatures
 1 Doubling Season  // 📦 Binder 1
 1 Blitzschlag (Lightning Bolt)  // EN: Lightning Bolt  // 📦 Rote Box
-...
-
-Basic Lands
-1 Forest  // 📦 Binder 1
-4 Forest
-```
-
-A **location manifest** at the end of the `.txt` lists each card's collection ID, container ID, and container name at proposal time:
-
-```
-// --- Location Manifest ---
-Card ID  Cont. ID  Container   Card (localized / EN)
-1042     3         Rote Box    Blitzschlag / Lightning Bolt
-1095     7         Blue Box    Counterspell
 ```
 
 ---
 
 ## Chaos Sort Order
 
-The default sort mimics how experienced players physically sort their collection:
-
 ```
 White → Blue → Black → Red → Green → Multicolour → Colourless/Artifact → Land
 ```
 
-Within each colour group:
-
-```
-Creature → Instant → Sorcery → Enchantment → Artifact → Planeswalker → Other
-```
-
-Within each type group: ascending CMC, then alphabetical by name.
+Within each colour group: Creature → Instant → Sorcery → Enchantment → Artifact → Planeswalker → Other, then ascending CMC, then alphabetical.
 
 ---
 
 ## Architecture
 
 ```
-bot.py          — Discord bot, all slash commands, UI views, auto-scan handler
-database.py     — Async SQLite via aiosqlite; schema, migrations, all queries
-scanner.py      — Card isolation (OpenCV), OCR (EasyOCR CPU → pytesseract fallback)
-scryfall.py     — Scryfall API client: card lookup, EN/DE name resolution
-sorting.py      — Chaos sort key computation
-deckbuilder.py  — Synergy scoring, deck construction, deck list formatting
-exporter.py     — Moxfield CSV, full CSV, and JSON serialisation
-importer.py     — Moxfield CSV, full CSV, and JSON parsing for /import
+core/               — Shared service layer (used by bot, web UI, and desktop app)
+│   database.py     — Async SQLite via aiosqlite; schema, migrations, all queries
+│   scryfall.py     — Scryfall API client with rate limiting and 429 retry backoff
+│   scanner.py      — Card isolation (OpenCV), OCR (EasyOCR CPU → pytesseract fallback)
+│   image_cache.py  — Local card image cache (images/<scryfall_id>.<ext>)
+│   sorting.py      — Chaos sort key computation
+│   deckbuilder.py  — Synergy scoring and deck construction
+│   exporter.py     — Moxfield CSV, full CSV, and JSON serialisation
+│   importer.py     — Moxfield CSV, full CSV, and JSON parsing
+
+cogs/               — Discord bot feature modules (discord.py Cogs)
+│   collection.py   — /add, /list, /search, /resync
+│   containers.py   — /container list, /container move, /browse
+│   stats.py        — /stats, /showcase
+│   deck.py         — /deck propose
+│   import_export.py — /export, /import
+│   backup.py       — /backup create, /backup restore
+│   scan.py         — Auto-scan image handler
+│   auth.py         — Role-based access control helpers
+│   admin.py        — Admin utilities
+
+ui/                 — Local web UI (FastAPI + Jinja2 + HTMX)
+│   app.py          — FastAPI application
+│   routes/         — Collection, containers, stats, deck, import/export routes
+│   templates/      — Jinja2 HTML templates
+│   static/         — CSS
+
+desktop/            — Native desktop app (PyQt6 + qasync)
+│   app.py          — QApplication entry point, dark stylesheet
+│   main_window.py  — Sidebar navigation + stacked pages, DB initialisation
+│   db.py           — Shared Database + ScryfallClient instances
+│   widgets/        — Collection, Containers, Stats, ImportExport, Deck pages
+│   dialogs/        — Add card, edit card, container dialogs
+
+bot.py              — Discord bot entry point; loads cogs, schedules background tasks
 ```
 
 ### Database schema (SQLite)
@@ -564,10 +528,9 @@ importer.py     — Moxfield CSV, full CSV, and JSON parsing for /import
 | `collection` | One row per physical card |
 | `containers` | Named storage locations |
 | `collection_fts` | FTS5 virtual table, auto-synced via triggers |
-| `price_history` | Daily EUR price snapshots per scryfall_id (for `/showcase` charts) |
+| `price_history` | Daily EUR price snapshots per scryfall_id |
 
-The database is created automatically on first run at `./mtg_collection.db`.
-Schema migrations run automatically on startup.
+The database is created automatically on first run at `./mtg_collection.db`. Schema migrations run automatically on startup. WAL mode is enabled for safe concurrent access across all three interfaces.
 
 ---
 
@@ -575,18 +538,50 @@ Schema migrations run automatically on startup.
 
 ```
 mtg_collection_manager/
-├── bot.py
-├── database.py
-├── deckbuilder.py
-├── exporter.py
-├── importer.py
-├── scanner.py
-├── scryfall.py
-├── sorting.py
-├── requirements.txt
+├── bot.py                    ← Discord bot entry point
+├── start_ui.sh               ← Launch web UI
+├── start_desktop.sh          ← Launch desktop app
 ├── install.sh
 ├── service_install.sh
 ├── service_uninstall.sh
+├── requirements.txt
 ├── .env.example
-└── mtg_collection.db      ← created on first run
+│
+├── core/                     ← Shared service layer
+│   ├── database.py
+│   ├── scryfall.py
+│   ├── scanner.py
+│   ├── image_cache.py
+│   ├── sorting.py
+│   ├── deckbuilder.py
+│   ├── exporter.py
+│   └── importer.py
+│
+├── cogs/                     ← Discord bot feature modules
+│   ├── collection.py
+│   ├── containers.py
+│   ├── stats.py
+│   ├── deck.py
+│   ├── import_export.py
+│   ├── backup.py
+│   ├── scan.py
+│   ├── auth.py
+│   └── admin.py
+│
+├── ui/                       ← Web UI (FastAPI + Jinja2 + HTMX)
+│   ├── app.py
+│   ├── routes/
+│   ├── templates/
+│   └── static/
+│
+├── desktop/                  ← Desktop app (PyQt6)
+│   ├── app.py
+│   ├── main_window.py
+│   ├── db.py
+│   ├── widgets/
+│   └── dialogs/
+│
+├── images/                   ← Local card image cache (auto-populated at startup)
+├── backups/                  ← Server-side backup copies
+└── mtg_collection.db         ← SQLite database (created on first run)
 ```
