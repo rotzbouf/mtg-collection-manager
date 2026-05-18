@@ -409,6 +409,25 @@ class SettingsWidget(QWidget):
         layout.addWidget(QLabel(
             "Save the current database to a .db file. Use this to create a manual backup."
         ))
+
+        # Default backup directory
+        dir_row = QHBoxLayout()
+        dir_row.addWidget(QLabel("Default directory:"))
+        self._backup_dir_edit = QLineEdit()
+        self._backup_dir_edit.setPlaceholderText("(none — dialog opens at last location)")
+        self._backup_dir_edit.setText(cfg.load().get("backup_dir", ""))
+        dir_row.addWidget(self._backup_dir_edit, stretch=1)
+        self._backup_dir_browse_btn = QPushButton("Browse…")
+        self._backup_dir_browse_btn.setFixedWidth(80)
+        dir_row.addWidget(self._backup_dir_browse_btn)
+        self._backup_dir_save_btn = QPushButton("Save")
+        self._backup_dir_save_btn.setFixedWidth(60)
+        dir_row.addWidget(self._backup_dir_save_btn)
+        layout.addLayout(dir_row)
+        self._backup_dir_status = QLabel("")
+        self._backup_dir_status.setStyleSheet("color: #888; font-size: 11px;")
+        layout.addWidget(self._backup_dir_status)
+
         backup_row = QHBoxLayout()
         self._backup_btn = QPushButton("Save backup…")
         backup_row.addWidget(self._backup_btn)
@@ -442,6 +461,8 @@ class SettingsWidget(QWidget):
         self._sync_lang_btn.clicked.connect(self._on_sync_lang)
         self._sync_cancel_btn.clicked.connect(self._on_sync_cancel)
         self._record_prices_btn.clicked.connect(self._on_record_prices)
+        self._backup_dir_browse_btn.clicked.connect(self._on_browse_backup_dir)
+        self._backup_dir_save_btn.clicked.connect(self._on_save_backup_dir)
 
         scroll.setWidget(inner)
         outer_layout.addWidget(scroll)
@@ -1056,11 +1077,40 @@ class SettingsWidget(QWidget):
     # ------------------------------------------------------------------ #
 
     @asyncSlot()
+    def _on_browse_backup_dir(self):
+        current = self._backup_dir_edit.text().strip() or str(Path.home())
+        chosen = QFileDialog.getExistingDirectory(self, "Select backup directory", current)
+        if chosen:
+            self._backup_dir_edit.setText(chosen)
+            self._backup_dir_status.setText("")
+
+    def _on_save_backup_dir(self):
+        directory = self._backup_dir_edit.text().strip()
+        if directory and not Path(directory).is_dir():
+            self._backup_dir_status.setText("⚠ Directory does not exist.")
+            self._backup_dir_status.setStyleSheet("color: #e94560; font-size: 11px;")
+            return
+        config = cfg.load()
+        config["backup_dir"] = directory
+        try:
+            cfg.save(config)
+            self._backup_dir_status.setText("Saved.")
+            self._backup_dir_status.setStyleSheet("color: #4caf50; font-size: 11px;")
+        except Exception as exc:
+            self._backup_dir_status.setText(f"Error: {exc}")
+            self._backup_dir_status.setStyleSheet("color: #e94560; font-size: 11px;")
+
+    @asyncSlot()
     async def _on_backup(self):
+        from datetime import date
         from desktop.db import db
 
+        default_dir = cfg.load().get("backup_dir", "").strip()
+        default_name = f"mtg_backup_{date.today()}.db"
+        default_path = str(Path(default_dir) / default_name) if default_dir else default_name
+
         path, _ = QFileDialog.getSaveFileName(
-            self, "Save backup", "mtg_backup.db", "Database (*.db)"
+            self, "Save backup", default_path, "Database (*.db)"
         )
         if not path:
             return
@@ -1070,6 +1120,7 @@ class SettingsWidget(QWidget):
             data = await db.backup_bytes()
             await asyncio.to_thread(lambda: open(path, "wb").write(data))
             self._backup_status.setText(f"Backup saved to {path}")
+            QMessageBox.information(self, "Backup", f"Backup created successfully:\n{path}")
         except Exception as exc:
             QMessageBox.critical(self, "Backup error", str(exc))
             self._backup_status.setText("Backup failed.")

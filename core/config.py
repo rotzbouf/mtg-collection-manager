@@ -12,6 +12,7 @@ BUILTIN_TYPES: list[str] = ["binder", "box", "deck", "commander", "trade", "othe
 _DEFAULTS: dict = {
     "container_types": list(BUILTIN_TYPES),
     "overcount_excluded_types": [],
+    "backup_dir": "",
 }
 
 
