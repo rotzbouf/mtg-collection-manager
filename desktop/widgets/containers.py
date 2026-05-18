@@ -1,6 +1,7 @@
 """Containers tab widget."""
 from __future__ import annotations
 
+import asyncio
 from typing import Optional
 
 from PyQt6.QtWidgets import (
@@ -8,6 +9,7 @@ from PyQt6.QtWidgets import (
     QListWidget, QListWidgetItem, QPushButton, QLabel,
     QTableWidget, QTableWidgetItem, QHeaderView,
     QMessageBox, QAbstractItemView, QFrame, QComboBox, QMenu, QApplication,
+    QDialog, QDialogButtonBox, QFormLayout,
 )
 from PyQt6.QtCore import Qt, QTimer, QMimeData, QByteArray, QEvent
 from PyQt6.QtGui import QColor, QDrag
@@ -381,36 +383,72 @@ class ContainersWidget(QWidget):
         except OSError as exc:
             QMessageBox.warning(self, "Export failed", str(exc))
 
+    def _selected_card_ids(self) -> list[int]:
+        seen: set[int] = set()
+        ids: list[int] = []
+        for idx in self._table.selectionModel().selectedRows():
+            item = self._table.item(idx.row(), 0)
+            if item:
+                cid = item.data(Qt.ItemDataRole.UserRole)
+                if cid not in seen:
+                    seen.add(cid)
+                    ids.append(cid)
+        return ids
+
     def _on_card_context_menu(self, pos):
-        row = self._table.rowAt(pos.y())
-        if row < 0:
+        selected_ids = self._selected_card_ids()
+        if not selected_ids:
             return
-        id_item = self._table.item(row, 0)
-        if id_item is None:
-            return
-        card_id = id_item.data(Qt.ItemDataRole.UserRole)
+
         cards = getattr(self, "_container_cards", [])
-        card = next((c for c in cards if c.get("id") == card_id), None)
-        if card is None or self._selected_container is None:
-            return
+        n = len(selected_ids)
+        noun = f"{n} card{'s' if n > 1 else ''}"
 
         menu = QMenu(self)
-        if card.get("is_commander"):
-            action = menu.addAction("Remove Commander mark")
-        else:
-            action = menu.addAction("👑 Mark as Commander")
-        action.triggered.connect(lambda: self._do_toggle_commander(card))
 
-        menu.addSeparator()
-        resync_act = menu.addAction("↻ Resync from Scryfall")
-        resync_act.setEnabled(bool(card.get("scryfall_id")))
-        resync_act.triggered.connect(lambda: self._do_resync_card(card))
+        # Multi-card actions (always shown)
+        menu.addAction(f"↗ Move {noun} to container…",
+                       lambda: self._on_move_to_container(selected_ids))
+        menu.addAction(f"✕ Remove {noun} from container",
+                       lambda: asyncio.ensure_future(
+                           self._do_move_cards(selected_ids, None)))
 
-        history_act = menu.addAction("📈 Price history")
-        history_act.setEnabled(bool(card.get("scryfall_id")))
-        history_act.triggered.connect(lambda: self._show_price_history(card))
+        # Single-card only actions
+        if n == 1:
+            card = next((c for c in cards if c.get("id") == selected_ids[0]), None)
+            if card:
+                menu.addSeparator()
+                if card.get("is_commander"):
+                    act = menu.addAction("Remove Commander mark")
+                else:
+                    act = menu.addAction("👑 Mark as Commander")
+                act.triggered.connect(lambda: self._do_toggle_commander(card))
+
+                menu.addSeparator()
+                resync_act = menu.addAction("↻ Resync from Scryfall")
+                resync_act.setEnabled(bool(card.get("scryfall_id")))
+                resync_act.triggered.connect(lambda: self._do_resync_card(card))
+
+                history_act = menu.addAction("📈 Price history")
+                history_act.setEnabled(bool(card.get("scryfall_id")))
+                history_act.triggered.connect(lambda: self._show_price_history(card))
 
         menu.exec(self._table.viewport().mapToGlobal(pos))
+
+    def _on_move_to_container(self, card_ids: list[int]):
+        dlg = _MoveToContainerDialog(self._containers, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            asyncio.ensure_future(self._do_move_cards(card_ids, dlg.selected_id()))
+
+    async def _do_move_cards(self, card_ids: list[int], container_id):
+        from desktop.db import db
+        try:
+            await db.move_cards_to_container(card_ids, container_id)
+            await self._load_containers()
+            if self._selected_container:
+                await self._load_container_cards(self._selected_container["id"])
+        except Exception as exc:
+            QMessageBox.critical(self, "Error", str(exc))
 
     @asyncSlot()
     async def _do_toggle_commander(self, card: dict):
@@ -466,17 +504,12 @@ class ContainersWidget(QWidget):
         dlg.exec()
 
     def _on_card_selected(self):
-        rows = self._table.selectedItems()
-        if not rows:
+        selected = self._selected_card_ids()
+        if len(selected) != 1:
             self._detail.clear()
             return
-        row_idx = self._table.currentRow()
-        id_item = self._table.item(row_idx, 0)
-        if id_item is None:
-            return
-        card_id = id_item.data(Qt.ItemDataRole.UserRole)
         cards = getattr(self, "_container_cards", [])
-        card = next((c for c in cards if c.get("id") == card_id), None)
+        card = next((c for c in cards if c.get("id") == selected[0]), None)
         if card:
             self._detail.set_card(card)
 
@@ -578,6 +611,30 @@ class ContainersWidget(QWidget):
     @asyncSlot()
     async def refresh(self):
         await self._load_containers()
+
+
+class _MoveToContainerDialog(QDialog):
+    def __init__(self, containers: list[dict], parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Move to container")
+        self.setMinimumWidth(300)
+        layout = QVBoxLayout(self)
+        self._combo = QComboBox()
+        self._combo.addItem("— Remove from container —", None)
+        for c in containers:
+            self._combo.addItem(c["name"], c["id"])
+        form = QFormLayout()
+        form.addRow("Container:", self._combo)
+        layout.addLayout(form)
+        btns = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+    def selected_id(self):
+        return self._combo.currentData()
 
 
 # ── Commander deck legality check ─────────────────────────────────────────────

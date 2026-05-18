@@ -3,12 +3,14 @@ from __future__ import annotations
 
 from typing import Optional
 
+import asyncio
+
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QPushButton, QLabel, QLineEdit, QComboBox, QCheckBox,
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
     QGroupBox, QScrollArea, QFrame, QSpinBox, QDoubleSpinBox,
-    QSizePolicy,
+    QSizePolicy, QMenu, QDialog, QDialogButtonBox, QFormLayout,
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor, QFont
@@ -296,9 +298,10 @@ class SearchWidget(QWidget):
         self._table = QTableWidget(0, len(_RESULT_COLS))
         self._table.setHorizontalHeaderLabels(_RESULT_COLS)
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._table.setAlternatingRowColors(True)
+        self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         hdr = self._table.horizontalHeader()
         hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
@@ -308,6 +311,7 @@ class SearchWidget(QWidget):
         layout.addWidget(self._table)
 
         self._table.itemSelectionChanged.connect(self._on_row_selected)
+        self._table.customContextMenuRequested.connect(self._on_context_menu)
         return w
 
     # ---- Detail pane ------------------------------------------------- #
@@ -450,17 +454,55 @@ class SearchWidget(QWidget):
             self._table.setItem(row_idx, 9, _item(format_price(card.get("price_eur"))))
 
     def _on_row_selected(self):
-        rows = self._table.selectedItems()
-        if not rows:
-            self._detail.clear()
+        selected = self._selected_card_ids()
+        if len(selected) == 1:
+            card = next((c for c in self._results if c.get("id") == selected[0]), None)
+            if card:
+                self._detail.set_card(card)
+                return
+        self._detail.clear()
+
+    def _selected_card_ids(self) -> list[int]:
+        seen: set[int] = set()
+        ids: list[int] = []
+        for idx in self._table.selectionModel().selectedRows():
+            item = self._table.item(idx.row(), 0)
+            if item:
+                cid = item.data(Qt.ItemDataRole.UserRole)
+                if cid not in seen:
+                    seen.add(cid)
+                    ids.append(cid)
+        return ids
+
+    def _on_context_menu(self, pos):
+        card_ids = self._selected_card_ids()
+        if not card_ids:
             return
-        id_item = self._table.item(self._table.currentRow(), 0)
-        if id_item is None:
+        n = len(card_ids)
+        noun = f"{n} card{'s' if n > 1 else ''}"
+        menu = QMenu(self)
+        menu.addAction(f"↗ Move {noun} to container…",
+                       lambda: self._on_move_to_container(card_ids))
+        menu.addAction(f"✕ Remove {noun} from container",
+                       lambda: self._on_move_to_container(card_ids, remove=True))
+        menu.exec(self._table.viewport().mapToGlobal(pos))
+
+    def _on_move_to_container(self, card_ids: list[int], remove: bool = False):
+        if remove:
+            asyncio.ensure_future(self._do_move_cards(card_ids, None))
             return
-        card_id = id_item.data(Qt.ItemDataRole.UserRole)
-        card = next((c for c in self._results if c.get("id") == card_id), None)
-        if card:
-            self._detail.set_card(card)
+        dlg = _MoveToContainerDialog(self._containers, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            asyncio.ensure_future(self._do_move_cards(card_ids, dlg.selected_id()))
+
+    async def _do_move_cards(self, card_ids: list[int], container_id):
+        from desktop.db import db
+        try:
+            await db.move_cards_to_container(card_ids, container_id)
+            await self._on_search()
+        except Exception as exc:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.critical(self, "Error", str(exc))
 
     def _on_reset(self):
         self._f_name.clear()
@@ -485,3 +527,30 @@ class SearchWidget(QWidget):
         self._detail.clear()
         self._results = []
         self._status_lbl.setText("Filters reset.")
+
+
+class _MoveToContainerDialog(QDialog):
+    def __init__(self, containers: list[dict], parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Move to container")
+        self.setMinimumWidth(300)
+        layout = QVBoxLayout(self)
+
+        self._combo = QComboBox()
+        self._combo.addItem("— Remove from container —", None)
+        for c in containers:
+            self._combo.addItem(c["name"], c["id"])
+
+        form = QFormLayout()
+        form.addRow("Container:", self._combo)
+        layout.addLayout(form)
+
+        btns = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+    def selected_id(self):
+        return self._combo.currentData()

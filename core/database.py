@@ -1048,6 +1048,7 @@ class Database:
                c.set_code, c.set_name, c.collector_number,
                c.rarity, c.price_eur, c.price_usd,
                c.condition, c.foil, c.language,
+               c.scryfall_id, c.image_url,
                c.container_id, ct.name AS container_name,
                t.total
         FROM collection c

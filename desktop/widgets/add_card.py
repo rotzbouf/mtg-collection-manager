@@ -460,12 +460,21 @@ class AddCardWidget(QWidget):
         card["quantity"]    = 1
 
         try:
-            await db.add_card(card, added_by="desktop")
+            new_id = await db.add_card(card, added_by="desktop")
         except Exception as exc:
             QMessageBox.critical(self, "Error", f"Could not add card:\n{exc}")
             return
 
         name = display_name(self._selected_card)
-        self._add_status.setText(f"✓ '{name}' added to collection.")
+        container_id = card["container_id"]
+
+        # Build confirmation line
+        parts = [f"✓ '{name}' added  (ID {new_id})"]
+        if container_id is not None:
+            count = await db.count_cards(container_id=container_id)
+            container_name = self._container_cb.currentText()
+            parts.append(f"{container_name}: {count} cards")
+
+        self._add_status.setText("   ·   ".join(parts))
         self._add_status.setStyleSheet("font-size: 12px; color: #4caf50;")
-        QTimer.singleShot(4000, lambda: self._add_status.setText(""))
+        QTimer.singleShot(6000, lambda: self._add_status.setText(""))

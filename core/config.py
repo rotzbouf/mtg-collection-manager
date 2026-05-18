@@ -13,7 +13,6 @@ _DEFAULTS: dict = {
     "container_types": list(BUILTIN_TYPES),
     "overcount_excluded_types": [],
     "backup_dir": "",
-    "price_source": "scryfall",          # "scryfall" | "cardmarket"
 }
 
 

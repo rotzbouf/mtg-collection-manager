@@ -27,6 +27,7 @@ class CollectionWidget(QWidget):
         self._page = 0
         self._total = 0
         self._search_text = ""
+        self._id_text = ""
         self._no_container_mode = False
         self._containers: list[dict] = []
         self._build_ui()
@@ -56,6 +57,12 @@ class CollectionWidget(QWidget):
         self._search_edit.setPlaceholderText("Search cards…")
         self._search_edit.setClearButtonEnabled(True)
         toolbar.addWidget(self._search_edit, stretch=1)
+        toolbar.addWidget(QLabel("ID:"))
+        self._id_edit = QLineEdit()
+        self._id_edit.setPlaceholderText("e.g. 42")
+        self._id_edit.setClearButtonEnabled(True)
+        self._id_edit.setFixedWidth(90)
+        toolbar.addWidget(self._id_edit)
         self._no_container_btn = QPushButton("🗂 No container")
         self._no_container_btn.setCheckable(True)
         self._no_container_btn.setToolTip("Show only cards not assigned to any container")
@@ -106,8 +113,14 @@ class CollectionWidget(QWidget):
         self._search_timer.setInterval(350)
         self._search_timer.timeout.connect(self._on_search_changed)
 
+        self._id_timer = QTimer()
+        self._id_timer.setSingleShot(True)
+        self._id_timer.setInterval(350)
+        self._id_timer.timeout.connect(self._on_id_changed)
+
         # ---- Signal connections ----
         self._search_edit.textChanged.connect(lambda _: self._search_timer.start())
+        self._id_edit.textChanged.connect(lambda _: self._id_timer.start())
         self._prev_btn.clicked.connect(self._on_prev)
         self._next_btn.clicked.connect(self._on_next)
         self._no_container_btn.toggled.connect(self._on_no_container_toggled)
@@ -137,6 +150,22 @@ class CollectionWidget(QWidget):
     @asyncSlot()
     async def _load_page(self):
         from desktop.db import db
+
+        id_text = self._id_text.strip()
+        if id_text:
+            try:
+                card_id = int(id_text)
+            except ValueError:
+                self._total = 0
+                self._populate_table([])
+                self._update_pagination()
+                return
+            card = await db.get_card(card_id)
+            cards = [card] if card else []
+            self._total = len(cards)
+            self._populate_table(cards)
+            self._update_pagination()
+            return
 
         query = self._search_text.strip()
         offset = self._page * PAGE_SIZE
@@ -199,6 +228,11 @@ class CollectionWidget(QWidget):
 
     def _on_search_changed(self):
         self._search_text = self._search_edit.text()
+        self._page = 0
+        self._load_page()
+
+    def _on_id_changed(self):
+        self._id_text = self._id_edit.text()
         self._page = 0
         self._load_page()
 
