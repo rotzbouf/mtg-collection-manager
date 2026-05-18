@@ -8,20 +8,27 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer
 from qasync import asyncSlot
 
+from desktop.widgets.add_card import AddCardWidget
 from desktop.widgets.collection import CollectionWidget
+from desktop.widgets.search import SearchWidget
+from desktop.widgets.scan import ScanWidget
 from desktop.widgets.containers import ContainersWidget
 from desktop.widgets.stats import StatsWidget
-from desktop.widgets.import_export import ImportExportWidget
+from desktop.widgets.settings import SettingsWidget
 from desktop.widgets.deck import DeckWidget
+from desktop.widgets.overcount import OvercountWidget
 
 _SIDEBAR_WIDTH = 160
 
 _NAV_ITEMS = [
-    ("Collection",     "collection"),
-    ("Containers",     "containers"),
-    ("Statistics",     "stats"),
-    ("Import / Export","import_export"),
-    ("Deck Builder",   "deck"),
+    ("Collection",  "collection"),
+    ("Search",      "search"),
+    ("Add Card",    "add_card"),
+    ("Scanner",     "scan"),
+    ("Containers",  "containers"),
+    ("Statistics",  "stats"),
+    ("Deck Builder","deck"),
+    ("Overcount",   "overcount"),
 ]
 
 
@@ -30,6 +37,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("MTG Collection Manager")
         self.setMinimumSize(1100, 700)
+        self._db_initialized = False
         self._build_ui()
         QTimer.singleShot(0, self._init_db)
 
@@ -82,6 +90,13 @@ class MainWindow(QMainWindow):
 
         sidebar_layout.addStretch()
 
+        # Settings button — pinned to the bottom
+        settings_btn = QPushButton("⚙  Settings")
+        settings_btn.setProperty("active", False)
+        settings_btn.clicked.connect(lambda: self._navigate("settings"))
+        sidebar_layout.addWidget(settings_btn)
+        self._nav_buttons["settings"] = settings_btn
+
         # DB path indicator
         from desktop.db import db
         db_lbl = QLabel(f"DB: {db.path}")
@@ -101,19 +116,31 @@ class MainWindow(QMainWindow):
             self._pages[key] = widget
             self._stack.addWidget(widget)
 
+        settings_widget = self._create_page("settings")
+        self._pages["settings"] = settings_widget
+        self._stack.addWidget(settings_widget)
+
         self._navigate("collection")
 
     def _create_page(self, key: str) -> QWidget:
         if key == "collection":
             return CollectionWidget()
+        if key == "search":
+            return SearchWidget()
+        if key == "add_card":
+            return AddCardWidget()
         if key == "containers":
             return ContainersWidget()
         if key == "stats":
             return StatsWidget()
-        if key == "import_export":
-            return ImportExportWidget()
+        if key == "scan":
+            return ScanWidget()
+        if key == "settings":
+            return SettingsWidget()
         if key == "deck":
             return DeckWidget()
+        if key == "overcount":
+            return OvercountWidget()
         return QWidget()
 
     # ------------------------------------------------------------------ #
@@ -123,13 +150,29 @@ class MainWindow(QMainWindow):
     def _navigate(self, key: str):
         for k, btn in self._nav_buttons.items():
             btn.setProperty("active", k == key)
-            # Force style refresh
             btn.style().unpolish(btn)
             btn.style().polish(btn)
 
         page = self._pages.get(key)
         if page:
             self._stack.setCurrentWidget(page)
+            if self._db_initialized and hasattr(page, "refresh"):
+                page.refresh()
+
+    # ------------------------------------------------------------------ #
+    # Window lifecycle                                                       #
+    # ------------------------------------------------------------------ #
+
+    def closeEvent(self, event):
+        settings = self._pages.get("settings")
+        if settings and hasattr(settings, "bot_stop_for_close"):
+            if settings.bot_stop_for_close():
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.information(
+                    self, "Discord Bot",
+                    "The Discord bot has been stopped."
+                )
+        event.accept()
 
     # ------------------------------------------------------------------ #
     # DB initialisation                                                     #
@@ -153,6 +196,14 @@ class MainWindow(QMainWindow):
             return
 
         # Notify all widgets that the DB is ready
+        self._db_initialized = True
         for widget in self._pages.values():
             if hasattr(widget, "db_ready"):
                 widget.db_ready()
+
+        # Record today's prices in the background — INSERT OR IGNORE so it's
+        # a no-op if already run today.
+        try:
+            await db.record_prices()
+        except Exception:
+            pass

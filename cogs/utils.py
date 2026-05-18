@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import discord
+from discord import app_commands
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -33,6 +34,17 @@ _SCAN_IMAGE_EXTS = {"jpg", "jpeg", "png", "gif", "webp", "bmp", "tiff", "heic"}
 
 # ── Formatting helpers ────────────────────────────────────────────────────────
 
+async def container_autocomplete(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[str]]:
+    containers = await interaction.client.db.list_containers()
+    return [
+        app_commands.Choice(name=f"{c['name']} ({c['card_count']} cards)", value=str(c["id"]))
+        for c in containers
+        if current.lower() in c["name"].lower()
+    ][:25]
+
+
 def _fmt_price(card: dict) -> str:
     parts = []
     if card.get("price_eur"):
@@ -40,20 +52,6 @@ def _fmt_price(card: dict) -> str:
     if card.get("price_usd"):
         parts.append(f"${card['price_usd']:.2f}")
     return " / ".join(parts) if parts else "—"
-
-
-def _fmt_set(card: dict) -> str:
-    name = card.get("set_name") or "?"
-    code = (card.get("set_code") or "?").upper()
-    nr   = card.get("collector_number") or "?"
-    return f"{name} ({code}) #{nr}"
-
-
-def _fmt_condition(card: dict) -> str:
-    cond = card.get("condition") or "NM"
-    foil = " ✨" if card.get("foil") else ""
-    lang = (card.get("language") or "en").upper()
-    return f"{cond}{foil} · {lang}"
 
 
 # ── Embed builders ────────────────────────────────────────────────────────────
@@ -111,127 +109,3 @@ def card_embed(card: dict, title_prefix: str = "") -> discord.Embed:
     return embed
 
 
-def paginate_embeds(
-    cards: list[dict], page: int, per_page: int = 10, total: int = 0
-) -> tuple[discord.Embed, int]:
-    """Build a paginated collection embed.
-
-    When *total* is provided, *cards* is treated as the already-sliced page
-    and total/pages are computed from the given true count.  Without it the
-    function slices *cards* itself (legacy behaviour).
-    """
-    if total:
-        pages = max(1, (total + per_page - 1) // per_page)
-        chunk = cards
-    else:
-        total = len(cards)
-        pages = max(1, (total + per_page - 1) // per_page)
-        page = max(1, min(page, pages))
-        start = (page - 1) * per_page
-        chunk = cards[start:start + per_page]
-
-    embed = discord.Embed(
-        title=f"Collection — page {page}/{pages}  ({total} entries)",
-        color=0x2ECC71,
-    )
-    for c in chunk:
-        name = c.get("name_en", "?")
-        if c.get("name_de") and c["name_de"] != name:
-            name += f" / {c['name_de']}"
-        lang_flag = LANG_EMOJI.get(c.get("language", "en"), "")
-        foil = " ✨" if c.get("foil") else ""
-        container = c.get("container_name") or "—"
-        price = f"€{c['price_eur']:.2f}" if c.get("price_eur") else "—"
-        val = (
-            f"{c.get('set_code', '').upper()} #{c.get('collector_number', '?')} "
-            f"| {c.get('condition', 'NM')}{foil} "
-            f"| {price} | {lang_flag} | 📦 {container}"
-        )
-        embed.add_field(name=f"[{c.get('id', '?')}] {name}", value=val, inline=False)
-
-    return embed, pages
-
-
-# ── Nav / Select helpers ──────────────────────────────────────────────────────
-
-def _nav_buttons(view: discord.ui.View, page: int, pages: int,
-                 prev_cb, next_cb, *, row: int = 0) -> None:
-    """Add ◀ [page/pages] ▶ buttons to a view."""
-    if page > 1:
-        btn = discord.ui.Button(label="◀ Prev", style=discord.ButtonStyle.secondary, row=row)
-        btn.callback = prev_cb
-        view.add_item(btn)
-    indicator = discord.ui.Button(
-        label=f"{page} / {pages}", style=discord.ButtonStyle.secondary,
-        disabled=True, row=row,
-    )
-    view.add_item(indicator)
-    if page < pages:
-        btn = discord.ui.Button(label="Next ▶", style=discord.ButtonStyle.secondary, row=row)
-        btn.callback = next_cb
-        view.add_item(btn)
-
-
-def _card_select_label(c: dict) -> str:
-    name = (c.get("printed_name") or c.get("name_en") or "Unknown")[:80]
-    foil = " ✨" if c.get("foil") else ""
-    lang = f" [{(c.get('language') or 'en').upper()}]" if c.get("language") != "en" else ""
-    return f"{name}{foil}{lang}"[:100]
-
-
-def _card_select_desc(c: dict) -> str:
-    parts = [(c.get("set_code") or "?").upper(), c.get("condition", "NM")]
-    if c.get("price_eur"):
-        parts.append(f"€{c['price_eur']:.2f}")
-    if c.get("container_name"):
-        parts.append(f"📦 {c['container_name']}")
-    return "  ·  ".join(parts)[:100]
-
-
-def _add_card_select(view: discord.ui.View, cards: list[dict], row: int = 0) -> None:
-    """Add a card picker Select to a view. Selecting opens the card manage panel."""
-    if not cards:
-        return
-    options = [
-        discord.SelectOption(
-            label=_card_select_label(c),
-            value=str(c["id"]),
-            description=_card_select_desc(c),
-        )
-        for c in cards[:25]
-    ]
-    sel = discord.ui.Select(placeholder="Open card…", options=options, row=row)
-
-    async def _on_card(interaction: discord.Interaction):
-        from cogs.collection import CardManageView, _card_manage_embed
-        card_id = int(interaction.data["values"][0])
-        card = await interaction.client.db.get_card(card_id)
-        if not card:
-            await interaction.response.send_message("Card not found.", ephemeral=True)
-            return
-        await interaction.response.send_message(
-            embed=_card_manage_embed(card),
-            view=CardManageView(card, None, 0),
-            ephemeral=True,
-        )
-
-    sel.callback = _on_card
-    view.add_item(sel)
-
-
-def _card_manage_embed(card: dict) -> discord.Embed:
-    printed = card.get("printed_name") or card.get("name_en") or "Unknown"
-    name_en = card.get("name_en") or ""
-    title = printed if printed == name_en else f"{printed} ({name_en})"
-    embed = discord.Embed(title=title, color=0xE74C3C)
-    if card.get("image_url"):
-        embed.set_thumbnail(url=card["image_url"])
-    embed.add_field(name="Set", value=_fmt_set(card), inline=True)
-    embed.add_field(name="Type", value=card.get("type_line") or "—", inline=True)
-    embed.add_field(name="Condition", value=_fmt_condition(card), inline=True)
-    embed.add_field(name="Price (EUR)", value=_fmt_price(card), inline=True)
-    embed.add_field(name="Container", value=f"📦 {card.get('container_name') or '—'}", inline=True)
-    if card.get("notes"):
-        embed.add_field(name="Notes", value=card["notes"], inline=False)
-    embed.set_footer(text=f"Collection ID: {card['id']}")
-    return embed

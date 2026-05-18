@@ -6,13 +6,14 @@ from typing import Optional
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QTableWidget, QTableWidgetItem, QHeaderView,
-    QLineEdit, QComboBox, QPushButton, QLabel,
-    QMessageBox, QAbstractItemView,
+    QLineEdit, QPushButton, QLabel, QComboBox,
+    QMessageBox, QAbstractItemView, QMenu, QDialog,
+    QApplication,
 )
 from PyQt6.QtCore import Qt, QTimer
 from qasync import asyncSlot
 
-from desktop.utils import display_name, lang_flag, format_price, SORT_OPTIONS
+from desktop.utils import display_name, lang_flag, format_price
 from desktop.widgets.card_detail import CardDetailPanel
 
 PAGE_SIZE = 50
@@ -26,11 +27,8 @@ class CollectionWidget(QWidget):
         self._page = 0
         self._total = 0
         self._search_text = ""
-        self._container_filter: Optional[int] = None
-        self._language_filter: Optional[str] = None
-        self._sort = "chaos"
+        self._no_container_mode = False
         self._containers: list[dict] = []
-
         self._build_ui()
 
     def db_ready(self):
@@ -50,63 +48,37 @@ class CollectionWidget(QWidget):
         left = QWidget()
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(4, 4, 4, 4)
+        left_layout.setSpacing(4)
 
-        # Toolbar row 1: search + add button
-        toolbar1 = QHBoxLayout()
+        # Toolbar: search + filters
+        toolbar = QHBoxLayout()
         self._search_edit = QLineEdit()
         self._search_edit.setPlaceholderText("Search cards…")
         self._search_edit.setClearButtonEnabled(True)
-        self._add_btn = QPushButton("+ Add card")
-        toolbar1.addWidget(self._search_edit)
-        toolbar1.addWidget(self._add_btn)
-        left_layout.addLayout(toolbar1)
-
-        # Toolbar row 2: filters
-        toolbar2 = QHBoxLayout()
-        self._container_cb = QComboBox()
-        self._container_cb.addItem("All containers", None)
-        self._lang_cb = QComboBox()
-        self._lang_cb.addItem("All languages", None)
-        for code, label in [
-            ("en", "English"), ("de", "German"), ("fr", "French"),
-            ("it", "Italian"), ("es", "Spanish"), ("pt", "Portuguese"),
-            ("ja", "Japanese"), ("ko", "Korean"), ("ru", "Russian"),
-            ("zhs", "Simplified Chinese"), ("zht", "Traditional Chinese"),
-        ]:
-            self._lang_cb.addItem(label, code)
-
-        self._sort_cb = QComboBox()
-        for val, label in SORT_OPTIONS:
-            self._sort_cb.addItem(label, val)
-
-        toolbar2.addWidget(QLabel("Container:"))
-        toolbar2.addWidget(self._container_cb)
-        toolbar2.addWidget(QLabel("Language:"))
-        toolbar2.addWidget(self._lang_cb)
-        toolbar2.addWidget(QLabel("Sort:"))
-        toolbar2.addWidget(self._sort_cb)
-        left_layout.addLayout(toolbar2)
+        toolbar.addWidget(self._search_edit, stretch=1)
+        self._no_container_btn = QPushButton("🗂 No container")
+        self._no_container_btn.setCheckable(True)
+        self._no_container_btn.setToolTip("Show only cards not assigned to any container")
+        self._no_container_btn.setFixedWidth(130)
+        toolbar.addWidget(self._no_container_btn)
+        left_layout.addLayout(toolbar)
 
         # Table
         self._table = QTableWidget(0, len(_COLUMNS))
         self._table.setHorizontalHeaderLabels(_COLUMNS)
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._table.setAlternatingRowColors(True)
+        self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         hdr = self._table.horizontalHeader()
         hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-        hdr.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
-        hdr.setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents)
-        hdr.setSectionResizeMode(7, QHeaderView.ResizeMode.ResizeToContents)
-        hdr.setSectionResizeMode(8, QHeaderView.ResizeMode.ResizeToContents)
+        for col in [0, 2, 3, 4, 5, 6, 7, 8]:
+            hdr.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
         self._table.verticalHeader().setVisible(False)
         left_layout.addWidget(self._table)
 
-        # Pagination row
+        # Pagination
         pagination = QHBoxLayout()
         self._prev_btn = QPushButton("< Prev")
         self._next_btn = QPushButton("Next >")
@@ -121,14 +93,14 @@ class CollectionWidget(QWidget):
 
         # ---- Right pane: card detail ----
         self._detail = CardDetailPanel(show_buttons=True)
-        self._detail.setMinimumWidth(280)
-        self._detail.setMaximumWidth(340)
+        self._detail.setMinimumWidth(360)
+        self._detail.setMaximumWidth(460)
         splitter.addWidget(self._detail)
-        splitter.setSizes([760, 300])
+        splitter.setSizes([680, 400])
 
         root.addWidget(splitter)
 
-        # ---- Search debounce timer ----
+        # ---- Search debounce ----
         self._search_timer = QTimer()
         self._search_timer.setSingleShot(True)
         self._search_timer.setInterval(350)
@@ -136,13 +108,11 @@ class CollectionWidget(QWidget):
 
         # ---- Signal connections ----
         self._search_edit.textChanged.connect(lambda _: self._search_timer.start())
-        self._container_cb.currentIndexChanged.connect(self._on_filter_changed)
-        self._lang_cb.currentIndexChanged.connect(self._on_filter_changed)
-        self._sort_cb.currentIndexChanged.connect(self._on_filter_changed)
         self._prev_btn.clicked.connect(self._on_prev)
         self._next_btn.clicked.connect(self._on_next)
-        self._add_btn.clicked.connect(self._on_add_card)
+        self._no_container_btn.toggled.connect(self._on_no_container_toggled)
         self._table.itemSelectionChanged.connect(self._on_selection_changed)
+        self._table.customContextMenuRequested.connect(self._on_card_context_menu)
         self._detail.edit_requested.connect(self._on_edit_card)
         self._detail.delete_requested.connect(self._on_delete_card)
 
@@ -163,12 +133,6 @@ class CollectionWidget(QWidget):
     async def _reload_containers(self):
         from desktop.db import db
         self._containers = await db.list_containers()
-        self._container_cb.blockSignals(True)
-        self._container_cb.clear()
-        self._container_cb.addItem("All containers", None)
-        for c in self._containers:
-            self._container_cb.addItem(c["name"], c["id"])
-        self._container_cb.blockSignals(False)
 
     @asyncSlot()
     async def _load_page(self):
@@ -176,19 +140,18 @@ class CollectionWidget(QWidget):
 
         query = self._search_text.strip()
         offset = self._page * PAGE_SIZE
-        container_id = self._container_cb.currentData()
-        language = self._lang_cb.currentData()
-        sort = self._sort_cb.currentData() or "chaos"
+        cid_filter = -1 if self._no_container_mode else None
 
         if query:
             cards = await db.search(query, limit=PAGE_SIZE, offset=offset)
             total = await db.count_search(query)
+            if self._no_container_mode:
+                cards = [c for c in cards if not c.get("container_id")]
+                total = len(cards)
         else:
-            cards = await db.list_cards(
-                limit=PAGE_SIZE, offset=offset,
-                sort=sort, language=language, container_id=container_id,
-            )
-            total = await db.count_cards(language=language, container_id=container_id)
+            cards = await db.list_cards(limit=PAGE_SIZE, offset=offset, sort="chaos",
+                                        container_id=cid_filter)
+            total = await db.count_cards(container_id=cid_filter)
 
         self._total = total
         self._populate_table(cards)
@@ -219,8 +182,9 @@ class CollectionWidget(QWidget):
 
     def _update_pagination(self):
         total_pages = max(1, (self._total + PAGE_SIZE - 1) // PAGE_SIZE)
-        cur_page = self._page + 1
-        self._page_label.setText(f"Page {cur_page} / {total_pages} ({self._total} cards)")
+        self._page_label.setText(
+            f"Page {self._page + 1} / {total_pages} ({self._total} cards)"
+        )
         self._prev_btn.setEnabled(self._page > 0)
         self._next_btn.setEnabled(self._page + 1 < total_pages)
 
@@ -228,12 +192,13 @@ class CollectionWidget(QWidget):
     # UI slots                                                              #
     # ------------------------------------------------------------------ #
 
-    def _on_search_changed(self):
-        self._search_text = self._search_edit.text()
+    def _on_no_container_toggled(self, checked: bool):
+        self._no_container_mode = checked
         self._page = 0
         self._load_page()
 
-    def _on_filter_changed(self):
+    def _on_search_changed(self):
+        self._search_text = self._search_edit.text()
         self._page = 0
         self._load_page()
 
@@ -249,12 +214,14 @@ class CollectionWidget(QWidget):
             self._load_page()
 
     def _on_selection_changed(self):
-        rows = self._table.selectedItems()
-        if not rows:
+        selected_rows = self._table.selectionModel().selectedRows()
+        if not selected_rows:
             self._detail.clear()
             return
-        row_idx = self._table.currentRow()
-        id_item = self._table.item(row_idx, 0)
+        if len(selected_rows) > 1:
+            self._detail.clear()
+            return
+        id_item = self._table.item(self._table.currentRow(), 0)
         if id_item is None:
             self._detail.clear()
             return
@@ -265,24 +232,86 @@ class CollectionWidget(QWidget):
         else:
             self._detail.clear()
 
-    def _on_add_card(self):
-        from desktop.dialogs.add_card import AddCardDialog
+    def _selected_card_ids(self) -> list[int]:
+        ids = []
+        for idx in self._table.selectionModel().selectedRows():
+            item = self._table.item(idx.row(), 0)
+            if item:
+                ids.append(item.data(Qt.ItemDataRole.UserRole))
+        return ids
 
-        dlg = AddCardDialog(parent=self, containers=self._containers)
-        dlg.card_confirmed.connect(self._do_add_card)
-        dlg.exec()
-
-    @asyncSlot(dict)
-    async def _do_add_card(self, card: dict):
-        from desktop.db import db
-
-        try:
-            await db.add_card(card, added_by="desktop")
-        except Exception as exc:
-            QMessageBox.critical(self, "Error", f"Could not add card:\n{exc}")
+    def _on_card_context_menu(self, pos):
+        row = self._table.rowAt(pos.y())
+        if row < 0:
             return
-        await self._reload_containers()
-        await self._load_page()
+
+        selected_ids = self._selected_card_ids()
+        cards = getattr(self, "_cards", [])
+
+        # Make sure right-clicked row is in selection; if not, treat it as single
+        id_item = self._table.item(row, 0)
+        if id_item is None:
+            return
+        clicked_id = id_item.data(Qt.ItemDataRole.UserRole)
+        if clicked_id not in selected_ids:
+            selected_ids = [clicked_id]
+
+        is_multi = len(selected_ids) > 1
+        card = next((c for c in cards if c.get("id") == clicked_id), None)
+
+        menu = QMenu(self)
+
+        # Move to container (works for single or multi)
+        move_label = f"↗ Move {len(selected_ids)} cards to container…" if is_multi else "↗ Move to container…"
+        move_act = menu.addAction(move_label)
+        move_act.triggered.connect(lambda: self._on_move_to_container(selected_ids))
+
+        if not is_multi and card:
+            menu.addSeparator()
+            resync_act = menu.addAction("↻ Resync from Scryfall")
+            resync_act.setEnabled(bool(card.get("scryfall_id")))
+            resync_act.triggered.connect(lambda: self._do_resync_card(card))
+
+            history_act = menu.addAction("📈 Price history")
+            history_act.setEnabled(bool(card.get("scryfall_id")))
+            history_act.triggered.connect(lambda: self._show_price_history(card))
+
+        menu.exec(self._table.viewport().mapToGlobal(pos))
+
+    def _on_move_to_container(self, card_ids: list[int]):
+        dlg = _MoveToContainerDialog(self._containers, len(card_ids), parent=self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._do_move_cards(card_ids, dlg.selected_container_id())
+
+    @asyncSlot()
+    async def _do_resync_card(self, card: dict):
+        from desktop.db import db, scryfall
+
+        sid = card.get("scryfall_id")
+        if not sid:
+            return
+
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            data = await scryfall.get_by_id(sid)
+            if data:
+                await db.resync_card(sid, data)
+                await self._load_page()
+                updated = await db.get_card(card["id"])
+                if updated:
+                    self._detail.set_card(updated)
+            else:
+                QMessageBox.warning(self, "Resync", "Card not found on Scryfall.")
+        except Exception as exc:
+            QMessageBox.warning(self, "Resync error", str(exc))
+        finally:
+            QApplication.restoreOverrideCursor()
+
+    def _show_price_history(self, card: dict):
+        from desktop.dialogs.price_history import PriceHistoryDialog
+
+        dlg = PriceHistoryDialog(card, parent=self)
+        dlg.exec()
 
     def _on_edit_card(self, card: dict):
         from desktop.dialogs.edit_card import EditCardDialog
@@ -298,7 +327,6 @@ class CollectionWidget(QWidget):
         for field, value in changes.items():
             await db.update_card(card_id, field, value)
         await self._load_page()
-        # Refresh detail panel
         updated = await db.get_card(card_id)
         if updated:
             self._detail.set_card(updated)
@@ -321,8 +349,51 @@ class CollectionWidget(QWidget):
         self._detail.clear()
         await self._load_page()
 
-    # Public refresh hook called from MainWindow when DB changes externally
+    @asyncSlot()
+    async def _do_move_cards(self, card_ids: list[int], container_id):
+        from desktop.db import db
+        await db.move_cards_to_container(card_ids, container_id)
+        await self._reload_containers()
+        await self._load_page()
+
     @asyncSlot()
     async def refresh(self):
         await self._reload_containers()
         await self._load_page()
+
+
+# ── Container-picker dialog ───────────────────────────────────────────────────
+
+class _MoveToContainerDialog(QDialog):
+    def __init__(self, containers: list[dict], card_count: int, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Move to container")
+        self.setMinimumWidth(300)
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+
+        layout.addWidget(QLabel(f"Move <b>{card_count}</b> card(s) to:"))
+
+        self._combo = QComboBox()
+        self._combo.addItem("— Remove from container —", None)
+        for c in containers:
+            self._combo.addItem(
+                f"{c['name']}  [{c.get('type', '')}]",
+                c["id"],
+            )
+        layout.addWidget(self._combo)
+
+        btn_row = QHBoxLayout()
+        ok_btn = QPushButton("Move")
+        ok_btn.setDefault(True)
+        cancel_btn = QPushButton("Cancel")
+        btn_row.addStretch()
+        btn_row.addWidget(cancel_btn)
+        btn_row.addWidget(ok_btn)
+        layout.addLayout(btn_row)
+
+        ok_btn.clicked.connect(self.accept)
+        cancel_btn.clicked.connect(self.reject)
+
+    def selected_container_id(self):
+        return self._combo.currentData()

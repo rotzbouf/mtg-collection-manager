@@ -1,0 +1,15 @@
+{
+  "container_types": [
+    "binder",
+    "box",
+    "deck",
+    "trade",
+    "other",
+    "overcount"
+  ],
+  "overcount_excluded_types": [
+    "deck",
+    "commander",
+    "overcount"
+  ]
+}

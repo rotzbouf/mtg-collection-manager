@@ -186,6 +186,60 @@ class ScryfallClient:
             return _extract_card(data)
         return None
 
+    async def search_cards(
+        self,
+        name: str = "",
+        set_code: Optional[str] = None,
+        lang: Optional[str] = None,
+    ) -> list[dict]:
+        """Search Scryfall with any combination of name, set and language.
+
+        Name is optional — if omitted, filters must narrow the result enough.
+        Tries an exact name match first, then falls back to a fuzzy/partial search.
+        Returns up to 50 distinct card printings.
+        """
+        safe_name = name.replace('"', "").strip()
+        safe_set = set_code if (set_code and _SET_CODE_RE.match(set_code)) else None
+        safe_lang = lang if lang else None
+
+        # Build the non-name filter string once
+        extras = []
+        if safe_set:
+            extras.append(f"set:{safe_set}")
+        if safe_lang:
+            extras.append(f"lang:{safe_lang}")
+        extra_str = " ".join(extras)
+
+        async def _search(q: str) -> list[dict]:
+            data = await self._get(
+                f"{BASE}/cards/search",
+                q=q.strip(),
+                unique="cards",
+                order="released",
+                dir="desc",
+            )
+            if data and data.get("data"):
+                return [_extract_card(c) for c in data["data"][:50]]
+            return []
+
+        if safe_name:
+            # Exact name first
+            results = await _search(f'!"{safe_name}" {extra_str}')
+            if results:
+                return results
+            # Partial / fuzzy fallback
+            safe_fuzzy = re.sub(r'[^\w\s\-\']', "", safe_name)
+            results = await _search(f"{safe_fuzzy} {extra_str}")
+            if results:
+                return results
+        elif extra_str:
+            # No name — search by filters only (e.g. all cards in a set/lang)
+            results = await _search(extra_str)
+            if results:
+                return results
+
+        return []
+
     async def resolve_card(self, name: str, set_code: Optional[str] = None) -> tuple[Optional[dict], str]:
         """
         Try German first, then English, then return (None, 'unknown') to trigger user input.

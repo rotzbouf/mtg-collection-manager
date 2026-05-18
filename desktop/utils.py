@@ -82,7 +82,7 @@ def load_pixmap(path: Path | str) -> Optional[QPixmap]:
     return p
 
 
-def scale_pixmap(pixmap: QPixmap, w: int = 223, h: int = 310) -> QPixmap:
+def scale_pixmap(pixmap: QPixmap, w: int = 280, h: int = 390) -> QPixmap:
     """Scale a pixmap to fit w×h while preserving aspect ratio."""
     return pixmap.scaled(
         w, h,

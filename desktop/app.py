@@ -21,6 +21,17 @@ from qasync import QEventLoop
 from desktop.main_window import MainWindow
 
 
+async def _shutdown(loop: QEventLoop) -> None:
+    """Cancel all pending tasks and flush the thread-pool before stopping."""
+    current = asyncio.current_task()
+    tasks = [t for t in asyncio.all_tasks() if t is not current]
+    for t in tasks:
+        t.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+    await loop.shutdown_default_executor()
+    loop.stop()
+
+
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName("MTG Collection Manager")
@@ -34,6 +45,8 @@ def main():
 
     window = MainWindow()
     window.show()
+
+    app.lastWindowClosed.connect(lambda: loop.create_task(_shutdown(loop)))
 
     with loop:
         loop.run_forever()

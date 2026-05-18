@@ -7,8 +7,6 @@ import logging
 from typing import Optional
 
 import discord
-from discord import app_commands
-from discord.ext import commands
 
 from cogs.utils import LANG_EMOJI, _fmt_price
 
@@ -337,31 +335,3 @@ class WelcomeView(discord.ui.View):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-class ShowcaseCog(commands.Cog):
-    def __init__(self, bot):
-        self.bot = bot
-
-    @app_commands.command(name="showcase", description="Show the 5 most valuable cards in your collection")
-    async def cmd_showcase(self, interaction: discord.Interaction):
-        await interaction.response.defer(thinking=True, ephemeral=True)
-        try:
-            cards, histories, charts = await _load_showcase_data(interaction, 5)
-        except Exception as e:
-            logger.warning("Showcase load failed: %s", e)
-            await interaction.followup.send("Failed to load showcase data.", ephemeral=True)
-            return
-        if not cards:
-            await interaction.followup.send(
-                "No cards with a known price in your collection yet.", ephemeral=True
-            )
-            return
-        embed, file = _showcase_send_kwargs(cards[0], 1, len(cards), histories[0], charts[0])
-        view = ShowcaseView(cards, histories, charts, index=0, target_user_id=interaction.user.id)
-        if file:
-            await interaction.followup.send(embed=embed, view=view, file=file, ephemeral=True)
-        else:
-            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
-
-
-async def setup(bot):
-    await bot.add_cog(ShowcaseCog(bot))

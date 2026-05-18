@@ -189,6 +189,12 @@ class Database:
             )
             await self._db.commit()
             logger.info("Migrated: added container_id to collection")
+        if "is_commander" not in cols:
+            await self._db.execute(
+                "ALTER TABLE collection ADD COLUMN is_commander INTEGER DEFAULT 0"
+            )
+            await self._db.commit()
+            logger.info("Migrated: added is_commander to collection")
 
         # Each row must represent exactly one physical card (quantity → individual rows)
         async with self._db.execute(
@@ -311,6 +317,16 @@ class Database:
         ) as cur:
             row_id = cur.lastrowid
         await self._db.commit()
+
+        scryfall_id = card.get("scryfall_id")
+        price_eur = card.get("price_eur")
+        if scryfall_id and price_eur is not None:
+            await self._db.execute(
+                "INSERT OR IGNORE INTO price_history (scryfall_id, price_eur) VALUES (?, ?)",
+                (scryfall_id, price_eur),
+            )
+            await self._db.commit()
+
         return row_id
 
     async def remove_card(self, card_id: int) -> bool:
@@ -325,6 +341,71 @@ class Database:
         "condition", "foil", "notes", "language",
         "price_usd", "price_eur", "container_id",
     })
+
+    async def get_scryfall_ids_missing_data(self) -> list[str]:
+        """Return scryfall_ids of cards that are missing oracle text, type line, or price."""
+        async with self._db.execute(
+            """
+            SELECT DISTINCT scryfall_id FROM collection
+            WHERE scryfall_id IS NOT NULL
+              AND (oracle_text IS NULL OR type_line IS NULL OR price_eur IS NULL)
+            """
+        ) as cur:
+            return [row[0] for row in await cur.fetchall()]
+
+    async def get_cards_needing_lang_fix(self) -> list[dict]:
+        """Cards where language != 'en' but printed_name is missing or identical to name_en.
+
+        These were added via an English Scryfall lookup even though the physical card is
+        non-English — the localized name/text/image needs to be back-filled.
+        Returns per-row dicts with id, scryfall_id, name_en, language, set_code,
+        collector_number.
+        """
+        async with self._db.execute(
+            """
+            SELECT id, scryfall_id, name_en, language, set_code, collector_number
+            FROM collection
+            WHERE language IS NOT NULL
+              AND language != 'en'
+              AND (
+                  printed_name IS NULL
+                  OR printed_name = ''
+                  OR printed_name = name_en
+              )
+            """
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+    async def fix_card_lang_data(self, card_id: int, card_data: dict) -> None:
+        """Overwrite the localized fields of a single collection row.
+
+        Updates scryfall_id (in case the stored one was the EN edition),
+        printed_name, name_de, oracle_text, flavor_text, and image_url.
+        Existing values are preserved via COALESCE when the incoming value is None.
+        """
+        await self._db.execute(
+            """
+            UPDATE collection SET
+                scryfall_id  = COALESCE(:scryfall_id, scryfall_id),
+                name_de      = COALESCE(:name_de, name_de),
+                printed_name = COALESCE(:printed_name, printed_name),
+                oracle_text  = COALESCE(:oracle_text, oracle_text),
+                flavor_text  = COALESCE(:flavor_text, flavor_text),
+                image_url    = COALESCE(:image_url, image_url),
+                updated_at   = datetime('now')
+            WHERE id = :id
+            """,
+            {
+                "id": card_id,
+                "scryfall_id": card_data.get("scryfall_id"),
+                "name_de": card_data.get("name_de") or card_data.get("printed_name"),
+                "printed_name": card_data.get("printed_name"),
+                "oracle_text": card_data.get("oracle_text"),
+                "flavor_text": card_data.get("flavor_text"),
+                "image_url": card_data.get("image_url"),
+            },
+        )
+        await self._db.commit()
 
     async def get_distinct_scryfall_ids(self) -> list[str]:
         """Return all distinct scryfall_ids present in the collection."""
@@ -403,6 +484,16 @@ class Database:
             },
         )
         await self._db.commit()
+
+        # Snapshot price into history (one entry per day)
+        price_eur = card.get("price_eur")
+        if price_eur is not None:
+            await self._db.execute(
+                "INSERT OR IGNORE INTO price_history (scryfall_id, price_eur) VALUES (?, ?)",
+                (scryfall_id, price_eur),
+            )
+            await self._db.commit()
+
         return result.rowcount
 
     async def update_card(self, card_id: int, field: str, value: Any) -> bool:
@@ -474,7 +565,9 @@ class Database:
         if language:
             conditions.append("language = ?")
             params.append(language)
-        if container_id is not None:
+        if container_id == -1:
+            conditions.append("container_id IS NULL")
+        elif container_id is not None:
             conditions.append("container_id = ?")
             params.append(container_id)
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
@@ -483,6 +576,122 @@ class Database:
         ) as cur:
             row = await cur.fetchone()
         return row[0] if row else 0
+
+    async def advanced_search(
+        self,
+        name: str = "",
+        type_line: str = "",
+        oracle_text: str = "",
+        set_code: str = "",
+        colors: list[str] | None = None,
+        colors_exclusive: bool = False,
+        rarities: list[str] | None = None,
+        cmc_min: float | None = None,
+        cmc_max: float | None = None,
+        condition: str = "",
+        language: str = "",
+        foil: int | None = None,
+        container_id: int | None = None,
+        commander_only: bool = False,
+        price_min: float | None = None,
+        price_max: float | None = None,
+        limit: int = 300,
+    ) -> list[dict]:
+        """Flexible filter search across the collection. All parameters are optional."""
+        conditions: list[str] = []
+        params: list = []
+
+        if name:
+            conditions.append(
+                "(c.name_en LIKE ? OR c.name_de LIKE ? OR c.printed_name LIKE ?)"
+            )
+            like = f"%{name}%"
+            params.extend([like, like, like])
+
+        if type_line:
+            conditions.append("c.type_line LIKE ?")
+            params.append(f"%{type_line}%")
+
+        if oracle_text:
+            conditions.append("c.oracle_text LIKE ?")
+            params.append(f"%{oracle_text}%")
+
+        if set_code:
+            conditions.append("c.set_code = ?")
+            params.append(set_code.lower())
+
+        if colors:
+            color_parts = []
+            for color in colors:
+                if color == "C":
+                    color_parts.append("c.colors = '[]'")
+                else:
+                    color_parts.append("c.colors LIKE ?")
+                    params.append(f'%"{color}"%')
+            conditions.append("(" + " OR ".join(color_parts) + ")")
+            if colors_exclusive:
+                all_colors = {"W", "U", "B", "R", "G"}
+                for excl in all_colors - {c for c in colors if c != "C"}:
+                    conditions.append("c.colors NOT LIKE ?")
+                    params.append(f'%"{excl}"%')
+
+        if rarities:
+            ph = ",".join("?" * len(rarities))
+            conditions.append(f"c.rarity IN ({ph})")
+            params.extend(rarities)
+
+        if cmc_min is not None:
+            conditions.append("c.cmc >= ?")
+            params.append(cmc_min)
+        if cmc_max is not None:
+            conditions.append("c.cmc <= ?")
+            params.append(cmc_max)
+
+        if condition:
+            conditions.append("c.condition = ?")
+            params.append(condition)
+
+        if language:
+            conditions.append("c.language = ?")
+            params.append(language)
+
+        if foil is not None:
+            conditions.append("c.foil = ?")
+            params.append(foil)
+
+        # container_id == -1  →  cards with no container
+        if container_id == -1:
+            conditions.append("c.container_id IS NULL")
+        elif container_id is not None:
+            conditions.append("c.container_id = ?")
+            params.append(container_id)
+
+        if commander_only:
+            conditions.append("c.is_commander = 1")
+
+        if price_min is not None:
+            conditions.append("c.price_eur >= ?")
+            params.append(price_min)
+        if price_max is not None:
+            conditions.append("c.price_eur <= ?")
+            params.append(price_max)
+
+        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+        params.append(limit)
+
+        async with self._db.execute(
+            f"""
+            SELECT c.*, ct.name AS container_name
+            FROM collection c
+            LEFT JOIN containers ct ON c.container_id = ct.id
+            {where}
+            ORDER BY c.name_en, c.set_code, c.collector_number
+            LIMIT ?
+            """,
+            params,
+        ) as cur:
+            rows = await cur.fetchall()
+        return [_row_to_dict(r) for r in rows]
 
     async def list_cards(
         self,
@@ -566,6 +775,7 @@ class Database:
         async with self._db.execute(
             """
             SELECT c.name_en, c.name_de, c.printed_name, c.price_eur, c.foil, c.language,
+                   c.scryfall_id, c.image_url,
                    ct.name AS container_name
             FROM collection c
             LEFT JOIN containers ct ON c.container_id = ct.id
@@ -772,34 +982,81 @@ class Database:
         await self._db.commit()
         return updated
 
-    async def get_overcount_cards(self, threshold: int = 4) -> list[dict]:
+    async def set_commander(
+        self, card_id: int, is_commander: bool, container_id: int
+    ) -> tuple[bool, str]:
+        """Mark or unmark a card as commander within its container.
+
+        Returns (success, error_message). Enforces a maximum of 2 commanders per container.
+        """
+        if is_commander:
+            async with self._db.execute(
+                "SELECT COUNT(*) FROM collection WHERE container_id=? AND is_commander=1 AND id!=?",
+                (container_id, card_id),
+            ) as cur:
+                count = (await cur.fetchone())[0]
+            if count >= 2:
+                return False, "A deck can have at most 2 commanders (e.g. Partner)."
+        await self._db.execute(
+            "UPDATE collection SET is_commander=? WHERE id=?",
+            (1 if is_commander else 0, card_id),
+        )
+        await self._db.commit()
+        return True, ""
+
+    async def update_container_type(self, container_id: int, new_type: str) -> bool:
+        async with self._db.execute(
+            "UPDATE containers SET type = ? WHERE id = ?", (new_type, container_id)
+        ) as cur:
+            updated = cur.rowcount > 0
+        await self._db.commit()
+        return updated
+
+    async def get_overcount_cards(
+        self, threshold: int = 4, excluded_types: list[str] | None = None
+    ) -> list[dict]:
         """Return cards appearing more than *threshold* times with full per-entry details.
 
-        Basic lands are excluded. Each result dict has:
-          name_en, printed_name, name_de, total, entries (list of individual row dicts).
+        Basic lands are excluded. Cards in containers whose type is in *excluded_types*
+        are ignored both for counting and for the result set.
+        Each result dict has: name_en, printed_name, name_de, total, entries.
         """
-        async with self._db.execute(
-            """
-            WITH totals AS (
-                SELECT name_en, COUNT(*) AS total
-                FROM collection
-                WHERE COALESCE(type_line, '') NOT LIKE 'Basic Land%'
-                GROUP BY name_en
-                HAVING total > ?
-            )
-            SELECT c.id, c.name_en, c.name_de, c.printed_name,
-                   c.set_code, c.set_name, c.collector_number,
-                   c.rarity, c.price_eur, c.price_usd,
-                   c.condition, c.foil, c.language,
-                   c.container_id, ct.name AS container_name,
-                   t.total
+        excl = excluded_types or []
+        if excl:
+            ph = ",".join("?" * len(excl))
+            excl_cte = f"excl_containers AS (SELECT id FROM containers WHERE type IN ({ph})),"
+            # used inside the totals CTE (after WHERE)
+            excl_and  = "AND (c.container_id IS NULL OR c.container_id NOT IN (SELECT id FROM excl_containers))"
+            # used in the outer SELECT (needs its own WHERE clause)
+            excl_where = "WHERE (c.container_id IS NULL OR c.container_id NOT IN (SELECT id FROM excl_containers))"
+        else:
+            excl_cte = ""
+            excl_and  = ""
+            excl_where = ""
+
+        sql = f"""
+        WITH {excl_cte}
+        totals AS (
+            SELECT c.name_en, COUNT(*) AS total
             FROM collection c
-            JOIN totals t ON c.name_en = t.name_en
-            LEFT JOIN containers ct ON c.container_id = ct.id
-            ORDER BY t.total DESC, c.name_en, COALESCE(c.price_eur, 0) DESC
-            """,
-            (threshold,),
-        ) as cur:
+            WHERE COALESCE(c.type_line, '') NOT LIKE 'Basic Land%'
+            {excl_and}
+            GROUP BY c.name_en
+            HAVING total > ?
+        )
+        SELECT c.id, c.name_en, c.name_de, c.printed_name,
+               c.set_code, c.set_name, c.collector_number,
+               c.rarity, c.price_eur, c.price_usd,
+               c.condition, c.foil, c.language,
+               c.container_id, ct.name AS container_name,
+               t.total
+        FROM collection c
+        JOIN totals t ON c.name_en = t.name_en
+        LEFT JOIN containers ct ON c.container_id = ct.id
+        {excl_where}
+        ORDER BY t.total DESC, c.name_en, COALESCE(c.price_eur, 0) DESC
+        """
+        async with self._db.execute(sql, (*excl, threshold)) as cur:
             rows = await cur.fetchall()
 
         cards: dict[str, dict] = {}

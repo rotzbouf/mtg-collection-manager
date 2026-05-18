@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 import ui.deps as deps
-from ui.routes import collection, containers, stats, import_export, deck, images
+from ui.routes import collection, containers, stats, import_export, images
 
 logging.basicConfig(
     level=logging.INFO,
@@ -50,7 +50,6 @@ app.include_router(collection.router)
 app.include_router(containers.router)
 app.include_router(stats.router)
 app.include_router(import_export.router)
-app.include_router(deck.router)
 app.include_router(images.router)
 
 

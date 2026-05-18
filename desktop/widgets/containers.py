@@ -7,9 +7,10 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QListWidget, QListWidgetItem, QPushButton, QLabel,
     QTableWidget, QTableWidgetItem, QHeaderView,
-    QMessageBox, QAbstractItemView, QFrame,
+    QMessageBox, QAbstractItemView, QFrame, QComboBox, QMenu, QApplication,
 )
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, QMimeData, QByteArray, QEvent
+from PyQt6.QtGui import QColor, QDrag
 from qasync import asyncSlot
 
 from desktop.utils import display_name, lang_flag, format_price
@@ -78,6 +79,19 @@ class ContainersWidget(QWidget):
         action_row.addWidget(self._rename_btn)
         action_row.addWidget(self._delete_btn)
         action_row.addStretch()
+        self._check_deck_btn = QPushButton("⚖ Check deck")
+        self._check_deck_btn.setToolTip("Check Commander deck legality (singleton rule, 100 cards)")
+        self._check_deck_btn.setVisible(False)
+        action_row.addWidget(self._check_deck_btn)
+        self._export_deck_btn = QPushButton("↓ Export deck")
+        self._export_deck_btn.setToolTip("Export decklist as MTGA/Moxfield-compatible text file")
+        self._export_deck_btn.setVisible(False)
+        action_row.addWidget(self._export_deck_btn)
+        action_row.addWidget(QLabel("Type:"))
+        self._type_combo = QComboBox()
+        self._type_combo.setMinimumWidth(100)
+        self._type_combo.setEnabled(False)
+        action_row.addWidget(self._type_combo)
         right_layout.addLayout(action_row)
 
         sep = QFrame()
@@ -91,13 +105,22 @@ class ContainersWidget(QWidget):
         self._table = QTableWidget(0, len(_COLUMNS))
         self._table.setHorizontalHeaderLabels(_COLUMNS)
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._table.setAlternatingRowColors(True)
+        self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._table.setDragEnabled(True)
+        self._table.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
         hdr = self._table.horizontalHeader()
         hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self._table.verticalHeader().setVisible(False)
+        self._table.viewport().installEventFilter(self)
         card_splitter.addWidget(self._table)
+
+        # Accept drops on the container list
+        self._list.setAcceptDrops(True)
+        self._list.viewport().setAcceptDrops(True)
+        self._list.viewport().installEventFilter(self)
 
         self._detail = CardDetailPanel(show_buttons=True)
         self._detail.setMinimumWidth(260)
@@ -116,7 +139,11 @@ class ContainersWidget(QWidget):
         self._new_btn.clicked.connect(self._on_new_container)
         self._rename_btn.clicked.connect(self._on_rename_container)
         self._delete_btn.clicked.connect(self._on_delete_container)
+        self._type_combo.currentTextChanged.connect(self._on_type_changed)
+        self._check_deck_btn.clicked.connect(self._on_check_deck)
+        self._export_deck_btn.clicked.connect(self._on_export_deck)
         self._table.itemSelectionChanged.connect(self._on_card_selected)
+        self._table.customContextMenuRequested.connect(self._on_card_context_menu)
         self._detail.edit_requested.connect(self._on_edit_card)
         self._detail.delete_requested.connect(self._on_delete_card)
 
@@ -156,20 +183,27 @@ class ContainersWidget(QWidget):
         from desktop.db import db
 
         cards = await db.list_cards(limit=500, container_id=container_id)
+        # Commanders always on top
+        cards = sorted(cards, key=lambda c: 0 if c.get("is_commander") else 1)
         self._container_cards = cards
         self._table.setRowCount(0)
         for row_idx, card in enumerate(cards):
             self._table.insertRow(row_idx)
+            is_cmd = bool(card.get("is_commander"))
 
-            def _item(text: str, cid: int | None = None) -> QTableWidgetItem:
+            def _item(text: str, cid: int | None = None, commander: bool = is_cmd) -> QTableWidgetItem:
                 item = QTableWidgetItem(str(text))
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 if cid is not None:
                     item.setData(Qt.ItemDataRole.UserRole, cid)
+                if commander:
+                    item.setBackground(QColor("#1e1600"))
+                    item.setForeground(QColor("#f0c040"))
                 return item
 
+            name_text = f"👑 {display_name(card)}" if is_cmd else display_name(card)
             self._table.setItem(row_idx, 0, _item(str(card.get("id", "")), card.get("id")))
-            self._table.setItem(row_idx, 1, _item(display_name(card)))
+            self._table.setItem(row_idx, 1, _item(name_text))
             self._table.setItem(row_idx, 2, _item((card.get("set_code") or "").upper()))
             self._table.setItem(row_idx, 3, _item(card.get("collector_number") or ""))
             self._table.setItem(row_idx, 4, _item(card.get("condition") or ""))
@@ -188,6 +222,9 @@ class ContainersWidget(QWidget):
             self._cont_stats_lbl.setText("")
             self._rename_btn.setEnabled(False)
             self._delete_btn.setEnabled(False)
+            self._type_combo.setEnabled(False)
+            self._check_deck_btn.setVisible(False)
+            self._export_deck_btn.setVisible(False)
             self._table.setRowCount(0)
             self._detail.clear()
             return
@@ -201,13 +238,232 @@ class ContainersWidget(QWidget):
         self._cont_name_lbl.setText(container["name"])
         count = container.get("card_count", 0)
         value = container.get("total_value_eur") or 0.0
-        self._cont_stats_lbl.setText(
-            f"Type: {container.get('type', '—')}  |  {count} cards  |  €{value:.2f}"
-        )
+        self._cont_stats_lbl.setText(f"{count} cards  |  €{value:.2f}")
+
+        # Populate type combo
+        import core.config as cfg
+        types = cfg.load().get("container_types", [])
+        self._type_combo.blockSignals(True)
+        self._type_combo.clear()
+        self._type_combo.addItems(types)
+        current_type = container.get("type", "")
+        if current_type in types:
+            self._type_combo.setCurrentText(current_type)
+        self._type_combo.blockSignals(False)
+        self._type_combo.setEnabled(True)
+        is_commander = current_type == "commander"
+        self._check_deck_btn.setVisible(is_commander)
+        self._export_deck_btn.setVisible(is_commander)
+
         self._rename_btn.setEnabled(True)
         self._delete_btn.setEnabled(count == 0)
         self._detail.clear()
         self._load_container_cards(cid)
+
+    @asyncSlot(str)
+    async def _on_type_changed(self, new_type: str):
+        if self._selected_container is None or not new_type:
+            return
+        from desktop.db import db
+
+        await db.update_container_type(self._selected_container["id"], new_type)
+        self._selected_container["type"] = new_type
+        is_commander = new_type == "commander"
+        self._check_deck_btn.setVisible(is_commander)
+        self._export_deck_btn.setVisible(is_commander)
+        await self._load_containers()
+
+    # ------------------------------------------------------------------ #
+    # Drag & drop — card table → container list                            #
+    # ------------------------------------------------------------------ #
+
+    _MIME_TYPE = "application/x-mtg-card-ids"
+
+    def eventFilter(self, obj, event):
+        if obj is self._table.viewport():
+            if event.type() == QEvent.Type.MouseButtonPress:
+                self._drag_start = event.pos()
+            elif event.type() == QEvent.Type.MouseMove:
+                if (
+                    event.buttons() & Qt.MouseButton.LeftButton
+                    and hasattr(self, "_drag_start")
+                    and (event.pos() - self._drag_start).manhattanLength()
+                    > QApplication.startDragDistance()
+                ):
+                    self._start_drag()
+                    return True
+
+        elif obj is self._list.viewport():
+            if event.type() == QEvent.Type.DragEnter:
+                if event.mimeData().hasFormat(self._MIME_TYPE):
+                    event.acceptProposedAction()
+                    return True
+            elif event.type() == QEvent.Type.DragMove:
+                if event.mimeData().hasFormat(self._MIME_TYPE):
+                    item = self._list.itemAt(event.position().toPoint())
+                    self._list.setCurrentItem(item)
+                    event.acceptProposedAction()
+                    return True
+            elif event.type() == QEvent.Type.Drop:
+                return self._handle_drop(event)
+
+        return super().eventFilter(obj, event)
+
+    def _start_drag(self):
+        ids = []
+        for idx in self._table.selectionModel().selectedRows():
+            item = self._table.item(idx.row(), 0)
+            if item:
+                ids.append(item.data(Qt.ItemDataRole.UserRole))
+        if not ids:
+            return
+
+        mime = QMimeData()
+        mime.setData(self._MIME_TYPE, QByteArray(",".join(str(i) for i in ids).encode()))
+
+        drag = QDrag(self._table)
+        drag.setMimeData(mime)
+        drag.exec(Qt.DropAction.MoveAction)
+
+    def _handle_drop(self, event) -> bool:
+        item = self._list.itemAt(event.position().toPoint())
+        if item is None:
+            return False
+        container_id = item.data(Qt.ItemDataRole.UserRole)
+        raw = event.mimeData().data(self._MIME_TYPE)
+        try:
+            card_ids = [int(x) for x in bytes(raw).decode().split(",") if x]
+        except ValueError:
+            return False
+        if not card_ids:
+            return False
+        event.acceptProposedAction()
+        self._do_move_cards_dnd(card_ids, container_id)
+        return True
+
+    @asyncSlot()
+    async def _do_move_cards_dnd(self, card_ids: list[int], container_id: int):
+        from desktop.db import db
+        await db.move_cards_to_container(card_ids, container_id)
+        await self._load_containers()
+        if self._selected_container:
+            await self._load_container_cards(self._selected_container["id"])
+
+    def _on_check_deck(self):
+        cards = getattr(self, "_container_cards", [])
+        name = self._selected_container.get("name", "Deck") if self._selected_container else "Deck"
+        _show_commander_check(cards, name, parent=self)
+
+    def _on_export_deck(self):
+        from pathlib import Path
+        from datetime import date
+        from PyQt6.QtWidgets import QFileDialog, QMessageBox
+        from core.deckbuilder import format_container_decklist
+
+        cards = getattr(self, "_container_cards", [])
+        deck_name = self._selected_container.get("name", "deck") if self._selected_container else "deck"
+        safe_name = deck_name.replace(" ", "_")
+
+        # Offer both export formats via two filter choices
+        path, selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "Export Deck",
+            f"{safe_name}_{date.today()}.txt",
+            "MTGA/Moxfield (*.txt);;Full with locations (*.txt);;All files (*)",
+        )
+        if not path:
+            return
+
+        mtga = "Full" not in selected_filter
+        text = format_container_decklist(cards, deck_name=deck_name, mtga=mtga)
+        try:
+            Path(path).write_text(text, encoding="utf-8")
+        except OSError as exc:
+            QMessageBox.warning(self, "Export failed", str(exc))
+
+    def _on_card_context_menu(self, pos):
+        row = self._table.rowAt(pos.y())
+        if row < 0:
+            return
+        id_item = self._table.item(row, 0)
+        if id_item is None:
+            return
+        card_id = id_item.data(Qt.ItemDataRole.UserRole)
+        cards = getattr(self, "_container_cards", [])
+        card = next((c for c in cards if c.get("id") == card_id), None)
+        if card is None or self._selected_container is None:
+            return
+
+        menu = QMenu(self)
+        if card.get("is_commander"):
+            action = menu.addAction("Remove Commander mark")
+        else:
+            action = menu.addAction("👑 Mark as Commander")
+        action.triggered.connect(lambda: self._do_toggle_commander(card))
+
+        menu.addSeparator()
+        resync_act = menu.addAction("↻ Resync from Scryfall")
+        resync_act.setEnabled(bool(card.get("scryfall_id")))
+        resync_act.triggered.connect(lambda: self._do_resync_card(card))
+
+        history_act = menu.addAction("📈 Price history")
+        history_act.setEnabled(bool(card.get("scryfall_id")))
+        history_act.triggered.connect(lambda: self._show_price_history(card))
+
+        menu.exec(self._table.viewport().mapToGlobal(pos))
+
+    @asyncSlot()
+    async def _do_toggle_commander(self, card: dict):
+        from desktop.db import db
+
+        container_id = self._selected_container["id"] if self._selected_container else None
+        if container_id is None:
+            return
+
+        new_value = not bool(card.get("is_commander"))
+        ok, err = await db.set_commander(card["id"], new_value, container_id)
+        if not ok:
+            QMessageBox.warning(self, "Commander limit", err)
+            return
+
+        await self._load_container_cards(container_id)
+        # Restore card selection in detail panel
+        updated = next((c for c in self._container_cards if c.get("id") == card["id"]), None)
+        if updated:
+            self._detail.set_card(updated)
+
+    @asyncSlot()
+    async def _do_resync_card(self, card: dict):
+        from desktop.db import db, scryfall
+
+        sid = card.get("scryfall_id")
+        if not sid:
+            return
+
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            data = await scryfall.get_by_id(sid)
+            if data:
+                await db.resync_card(sid, data)
+                if self._selected_container:
+                    await self._load_container_cards(self._selected_container["id"])
+                updated = next(
+                    (c for c in self._container_cards if c.get("id") == card["id"]), None
+                )
+                if updated:
+                    self._detail.set_card(updated)
+            else:
+                QMessageBox.warning(self, "Resync", "Card not found on Scryfall.")
+        except Exception as exc:
+            QMessageBox.warning(self, "Resync error", str(exc))
+        finally:
+            QApplication.restoreOverrideCursor()
+
+    def _show_price_history(self, card: dict):
+        from desktop.dialogs.price_history import PriceHistoryDialog
+
+        dlg = PriceHistoryDialog(card, parent=self)
+        dlg.exec()
 
     def _on_card_selected(self):
         rows = self._table.selectedItems()
@@ -322,3 +578,109 @@ class ContainersWidget(QWidget):
     @asyncSlot()
     async def refresh(self):
         await self._load_containers()
+
+
+# ── Commander deck legality check ─────────────────────────────────────────────
+
+# Basic lands that are exempt from the singleton rule.
+_BASIC_LAND_NAMES = {
+    "Plains", "Island", "Swamp", "Mountain", "Forest", "Wastes",
+    "Snow-Covered Plains", "Snow-Covered Island", "Snow-Covered Swamp",
+    "Snow-Covered Mountain", "Snow-Covered Forest", "Snow-Covered Wastes",
+}
+
+
+def _is_basic_land(card: dict) -> bool:
+    if card.get("name_en", "") in _BASIC_LAND_NAMES:
+        return True
+    # type_line may be English ("Basic Land — Plains") or localized;
+    # the English check covers most cases, the name check covers the rest.
+    return (card.get("type_line") or "").startswith("Basic Land")
+
+
+def _show_commander_check(cards: list[dict], deck_name: str, parent=None):
+    from collections import Counter
+    from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QScrollArea, QWidget, QDialogButtonBox
+
+    total = len(cards)
+    basics   = [c for c in cards if _is_basic_land(c)]
+    nonbasic = [c for c in cards if not _is_basic_land(c)]
+    commanders = [c for c in cards if c.get("is_commander")]
+
+    # Singleton check: count non-basic cards by English name
+    name_counts = Counter(c.get("name_en") or display_name(c) for c in nonbasic)
+    duplicates  = {name: cnt for name, cnt in name_counts.items() if cnt > 1}
+
+    issues: list[str] = []
+
+    if total != 100:
+        diff = total - 100
+        issues.append(
+            f"Kartenzahl: {total} / 100  "
+            f"({'%+d' % diff} Karte{'n' if abs(diff) != 1 else ''})"
+        )
+
+    if not commanders:
+        issues.append("Kein Commander markiert  (Rechtsklick → 👑 Mark as Commander)")
+    elif len(commanders) > 2:
+        issues.append(f"{len(commanders)} Commander markiert — maximal 2 erlaubt (Partner)")
+
+    for name, cnt in sorted(duplicates.items()):
+        issues.append(f'Duplikat: „{name}" kommt {cnt}× vor')
+
+    # ── Build dialog ──────────────────────────────────────────────────────
+    dlg = QDialog(parent)
+    dlg.setWindowTitle(f"Deck-Check — {deck_name}")
+    dlg.setMinimumWidth(480)
+    layout = QVBoxLayout(dlg)
+    layout.setSpacing(10)
+
+    # Summary line
+    if issues:
+        summary = QLabel(f"<b style='color:#e05c5c;'>❌ {len(issues)} Problem(e) gefunden</b>")
+    else:
+        summary = QLabel("<b style='color:#7ec8a0;'>✅ Deck ist legal</b>")
+    summary.setStyleSheet("font-size: 15px; padding: 4px 0;")
+    layout.addWidget(summary)
+
+    # Stats
+    commander_names = "  ·  ".join(
+        display_name(c) for c in commanders
+    ) if commanders else "—"
+    stats = QLabel(
+        f"Karten gesamt: <b>{total}</b>  ·  "
+        f"Nicht-Länder: <b>{len(nonbasic)}</b>  ·  "
+        f"Standardländer: <b>{len(basics)}</b><br>"
+        f"Commander: <b>{commander_names}</b>"
+    )
+    stats.setWordWrap(True)
+    layout.addWidget(stats)
+
+    if issues:
+        from PyQt6.QtWidgets import QFrame
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet("color: #333;")
+        layout.addWidget(sep)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        inner = QWidget()
+        inner_layout = QVBoxLayout(inner)
+        inner_layout.setSpacing(4)
+        for issue in issues:
+            lbl = QLabel(f"• {issue}")
+            lbl.setWordWrap(True)
+            lbl.setStyleSheet("color: #e07070; font-size: 12px;")
+            inner_layout.addWidget(lbl)
+        inner_layout.addStretch()
+        scroll.setWidget(inner)
+        scroll.setMaximumHeight(min(40 + len(issues) * 28, 300))
+        layout.addWidget(scroll)
+
+    btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
+    btns.accepted.connect(dlg.accept)
+    layout.addWidget(btns)
+
+    dlg.exec()

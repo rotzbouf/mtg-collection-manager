@@ -1,6 +1,8 @@
 """Reusable card detail panel (right pane)."""
 from __future__ import annotations
 
+import re
+from pathlib import Path
 from typing import Optional
 
 from PyQt6.QtWidgets import (
@@ -8,12 +10,98 @@ from PyQt6.QtWidgets import (
     QScrollArea, QFrame, QSizePolicy,
 )
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QPixmap
+from PyQt6.QtGui import QPixmap, QPainter
+from PyQt6.QtSvg import QSvgRenderer
 from qasync import asyncSlot
 
 from desktop.utils import display_name, lang_flag, format_price, scale_pixmap, async_pixmap
 
 _PLACEHOLDER_STYLE = "background: #1e1e2e; border-radius: 8px; color: #555; font-size: 12px;"
+
+_MANA_DIR = Path(__file__).parent.parent.parent / "images" / "mana"
+_MANA_DIR.mkdir(parents=True, exist_ok=True)
+_MANA_ICON_SIZE = 22  # px
+
+
+def _parse_mana(mana_str: str) -> list[str]:
+    """'{2}{W}{G/U}' → ['2', 'W', 'GU']"""
+    return [s.replace("/", "") for s in re.findall(r"\{([^}]+)\}", mana_str)]
+
+
+def _symbol_url(symbol: str) -> str:
+    return f"https://svgs.scryfall.io/card-symbols/{symbol}.svg"
+
+
+async def _symbol_pixmap(symbol: str) -> Optional[QPixmap]:
+    path = _MANA_DIR / f"{symbol}.svg"
+    if not path.exists():
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as s:
+                async with s.get(_symbol_url(symbol), timeout=aiohttp.ClientTimeout(total=5)) as r:
+                    if r.status == 200:
+                        path.write_bytes(await r.read())
+                    else:
+                        return None
+        except Exception:
+            return None
+    try:
+        renderer = QSvgRenderer(str(path))
+        pixmap = QPixmap(_MANA_ICON_SIZE, _MANA_ICON_SIZE)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        renderer.render(painter)
+        painter.end()
+        return pixmap
+    except Exception:
+        return None
+
+
+class ManaWidget(QWidget):
+    """Displays a mana cost string as a row of SVG icons."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._layout = QHBoxLayout(self)
+        self._layout.setContentsMargins(0, 2, 0, 2)
+        self._layout.setSpacing(3)
+        self._layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        self._mana_str = ""
+
+    def set_mana(self, mana_str: str):
+        self._mana_str = mana_str
+        self._reload()
+
+    def clear_mana(self):
+        self._mana_str = ""
+        self._clear_icons()
+
+    def _clear_icons(self):
+        while self._layout.count():
+            item = self._layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+    @asyncSlot()
+    async def _reload(self):
+        self._clear_icons()
+        symbols = _parse_mana(self._mana_str)
+        if not symbols:
+            lbl = QLabel("—")
+            lbl.setStyleSheet("font-size: 13px;")
+            self._layout.addWidget(lbl)
+            return
+        for symbol in symbols:
+            pixmap = await _symbol_pixmap(symbol)
+            lbl = QLabel()
+            if pixmap:
+                lbl.setPixmap(pixmap)
+                lbl.setFixedSize(_MANA_ICON_SIZE, _MANA_ICON_SIZE)
+                lbl.setToolTip(f"{{{symbol}}}")
+            else:
+                lbl.setText(f"{{{symbol}}}")
+                lbl.setStyleSheet("font-size: 12px;")
+            self._layout.addWidget(lbl)
 
 
 class CardDetailPanel(QWidget):
@@ -46,11 +134,12 @@ class CardDetailPanel(QWidget):
         self._img_label.setPixmap(QPixmap())
         for lbl in (
             self._lbl_name, self._lbl_set, self._lbl_type,
-            self._lbl_oracle, self._lbl_mana, self._lbl_cmc,
+            self._lbl_oracle, self._lbl_cmc,
             self._lbl_pt, self._lbl_price_eur, self._lbl_price_usd,
             self._lbl_lang, self._lbl_cond,
         ):
             lbl.setText("")
+        self._mana_widget.clear_mana()
         if self._show_buttons:
             self._edit_btn.setEnabled(False)
             self._delete_btn.setEnabled(False)
@@ -66,7 +155,7 @@ class CardDetailPanel(QWidget):
 
         # Image
         self._img_label = QLabel()
-        self._img_label.setFixedSize(223, 310)
+        self._img_label.setFixedSize(280, 390)
         self._img_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._img_label.setStyleSheet(_PLACEHOLDER_STYLE)
         root.addWidget(self._img_label, alignment=Qt.AlignmentFlag.AlignHCenter)
@@ -86,14 +175,24 @@ class CardDetailPanel(QWidget):
             lbl = QLabel()
             lbl.setWordWrap(True)
             lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            info.addWidget(QLabel(f"<small><b>{label}</b></small>"))
+            lbl.setStyleSheet("font-size: 13px;")
+            header = QLabel(f"<b>{label}</b>")
+            header.setStyleSheet("font-size: 11px; color: #888;")
+            info.addWidget(header)
             info.addWidget(lbl)
             return lbl
 
         self._lbl_name = _row("Name")
         self._lbl_set = _row("Set")
         self._lbl_type = _row("Type")
-        self._lbl_mana = _row("Mana cost")
+
+        # Mana cost — icon row
+        mana_header = QLabel("<b>Mana cost</b>")
+        mana_header.setStyleSheet("font-size: 11px; color: #888;")
+        info.addWidget(mana_header)
+        self._mana_widget = ManaWidget()
+        info.addWidget(self._mana_widget)
+
         self._lbl_cmc = _row("CMC")
         self._lbl_oracle = _row("Oracle text")
         self._lbl_pt = _row("P / T / Loyalty")
@@ -132,7 +231,7 @@ class CardDetailPanel(QWidget):
             f"#{card.get('collector_number', '')}"
         )
         self._lbl_type.setText(card.get("type_line") or "")
-        self._lbl_mana.setText(card.get("mana_cost") or "—")
+        self._mana_widget.set_mana(card.get("mana_cost") or "")
         cmc = card.get("cmc")
         self._lbl_cmc.setText(str(int(cmc)) if cmc is not None else "—")
         oracle = card.get("oracle_text") or ""

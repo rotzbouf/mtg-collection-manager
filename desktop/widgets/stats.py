@@ -4,22 +4,172 @@ from __future__ import annotations
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QScrollArea,
     QLabel, QPushButton, QFrame, QTableWidget,
-    QTableWidgetItem, QHeaderView, QSizePolicy, QGroupBox,
-    QGridLayout,
+    QTableWidgetItem, QHeaderView, QSizePolicy,
 )
 from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QPixmap
 from qasync import asyncSlot
 
-from desktop.utils import display_name
+from desktop.utils import async_pixmap
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Table helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _bold_font():
+    from PyQt6.QtGui import QFont
+    f = QFont()
+    f.setBold(True)
+    return f
+
+
+def _base_table(rows: int, cols: int) -> QTableWidget:
+    t = QTableWidget(rows, cols)
+    t.verticalHeader().setVisible(False)
+    t.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+    t.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+    t.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+    t.setAlternatingRowColors(True)
+    t.setShowGrid(False)
+    t.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+    return t
+
+
+def _fit_table(t: QTableWidget) -> QTableWidget:
+    """Resize all columns to content, then fix the widget width/height to match."""
+    t.resizeColumnsToContents()
+    t.resizeRowsToContents()
+    total_w = sum(t.columnWidth(c) for c in range(t.columnCount())) + 6
+    total_h = t.horizontalHeader().height() + sum(
+        t.rowHeight(r) for r in range(t.rowCount())
+    ) + 6
+    t.setFixedSize(total_w, total_h)
+    return t
+
+
+def _kv_table(rows: list[tuple[str, str]]) -> QTableWidget:
+    t = _base_table(len(rows), 2)
+    t.horizontalHeader().setVisible(False)
+    for r, (k, v) in enumerate(rows):
+        key_item = QTableWidgetItem(f"  {k}")
+        key_item.setForeground(Qt.GlobalColor.gray)
+        val_item = QTableWidgetItem(v)
+        val_item.setFont(_bold_font())
+        t.setItem(r, 0, key_item)
+        t.setItem(r, 1, val_item)
+    return _fit_table(t)
+
+
+def _header_table(headers: list[str], rows: list[list[str]]) -> QTableWidget:
+    t = _base_table(len(rows), len(headers))
+    t.setHorizontalHeaderLabels(headers)
+    for r, row in enumerate(rows):
+        for c, val in enumerate(row):
+            t.setItem(r, c, QTableWidgetItem(f"  {val}" if c == 0 else val))
+    return _fit_table(t)
+
+
+def _section_header(text: str) -> QLabel:
+    lbl = QLabel(f"<b>{text}</b>")
+    lbl.setStyleSheet("font-size: 13px; padding-top: 10px;")
+    return lbl
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Card embed
+# ─────────────────────────────────────────────────────────────────────────────
+
+_EMBED_IMG_W = 140
+_EMBED_IMG_H = 196
+_EMBED_W     = 168
+
+
+class _CardEmbed(QFrame):
+    """Small embed: card thumbnail + name + price."""
+
+    def __init__(self, card: dict, parent=None):
+        super().__init__(parent)
+        self._card = card
+        self.setFrameShape(QFrame.Shape.StyledPanel)
+        self.setFrameShadow(QFrame.Shadow.Raised)
+        self.setFixedWidth(_EMBED_W)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
+        self._build_ui()
+
+    def _build_ui(self):
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(8, 8, 8, 8)
+        lay.setSpacing(5)
+
+        self._img_lbl = QLabel()
+        self._img_lbl.setFixedSize(_EMBED_IMG_W, _EMBED_IMG_H)
+        self._img_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._img_lbl.setStyleSheet(
+            "background:#1e1e2e; border-radius:6px; color:#555; font-size:10px;"
+        )
+        self._img_lbl.setText("⋯")
+        lay.addWidget(self._img_lbl, alignment=Qt.AlignmentFlag.AlignHCenter)
+
+        card = self._card
+        name_en = card.get("name_en") or ""
+        loc = card.get("printed_name") or card.get("name_de") or name_en
+        display = f"{loc}\n({name_en})" if loc and loc != name_en else name_en
+
+        name_lbl = QLabel(display)
+        name_lbl.setWordWrap(True)
+        name_lbl.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+        name_lbl.setStyleSheet("font-size:11px; font-weight:bold;")
+        lay.addWidget(name_lbl)
+
+        eur = card.get("price_eur")
+        price_lbl = QLabel(f"€{float(eur):.2f}" if eur else "—")
+        price_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        price_lbl.setStyleSheet("font-size:14px; color:#4CAF50; font-weight:bold;")
+        lay.addWidget(price_lbl)
+
+        if card.get("foil"):
+            foil_lbl = QLabel("★ Foil")
+            foil_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            foil_lbl.setStyleSheet("font-size:10px; color:#FFD700;")
+            lay.addWidget(foil_lbl)
+
+        lay.addStretch()
+
+    def load_image(self):
+        self._do_load_image()
+
+    @asyncSlot()
+    async def _do_load_image(self):
+        card = self._card
+        pixmap = await async_pixmap(card.get("scryfall_id"), card.get("image_url"))
+        if pixmap:
+            scaled = pixmap.scaled(
+                _EMBED_IMG_W, _EMBED_IMG_H,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            self._img_lbl.setPixmap(scaled)
+            self._img_lbl.setText("")
+        else:
+            self._img_lbl.setText("No image")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stats widget
+# ─────────────────────────────────────────────────────────────────────────────
 
 class StatsWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._embeds: list[_CardEmbed] = []
         self._build_ui()
 
     def db_ready(self):
         QTimer.singleShot(0, self._load_stats)
+
+    def refresh(self):
+        self._load_stats()
 
     # ------------------------------------------------------------------ #
     # UI                                                                    #
@@ -28,8 +178,8 @@ class StatsWidget(QWidget):
     def _build_ui(self):
         root = QVBoxLayout(self)
         root.setContentsMargins(8, 8, 8, 8)
+        root.setSpacing(0)
 
-        # Refresh button
         top_row = QHBoxLayout()
         top_row.addWidget(QLabel("<h2>Collection Statistics</h2>"))
         top_row.addStretch()
@@ -38,14 +188,14 @@ class StatsWidget(QWidget):
         root.addLayout(top_row)
         self._refresh_btn.clicked.connect(self._load_stats)
 
-        # Scrollable area
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
 
         inner = QWidget()
         self._inner_layout = QVBoxLayout(inner)
-        self._inner_layout.setSpacing(16)
+        self._inner_layout.setSpacing(6)
+        self._inner_layout.setContentsMargins(4, 0, 8, 8)
         scroll.setWidget(inner)
         root.addWidget(scroll)
 
@@ -56,7 +206,6 @@ class StatsWidget(QWidget):
     @asyncSlot()
     async def _load_stats(self):
         from desktop.db import db
-
         stats = await db.stats()
         container_stats = await db.container_stats()
         self._render_stats(stats, container_stats)
@@ -66,114 +215,121 @@ class StatsWidget(QWidget):
     # ------------------------------------------------------------------ #
 
     def _render_stats(self, stats: dict, container_stats: list[dict]):
-        # Clear previous content
-        while self._inner_layout.count():
-            item = self._inner_layout.takeAt(0)
+        lay = self._inner_layout
+        while lay.count():
+            item = lay.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
+            elif item.layout():
+                # recursively clear nested layouts
+                _clear_layout(item.layout())
+        self._embeds = []
 
-        layout = self._inner_layout
+        # ── Row 1: Overview + Rarity side by side ─────────────────────── #
+        lay.addWidget(_section_header("Overview"))
+        row1 = QHBoxLayout()
+        row1.setSpacing(24)
+        row1.setAlignment(Qt.AlignmentFlag.AlignLeft)
 
-        # ---- Overview ----
-        layout.addWidget(self._section_header("Overview"))
-        overview = QGridLayout()
-        self._add_kv(overview, 0, "Total cards", str(stats.get("total_cards", 0)))
-        self._add_kv(overview, 1, "Unique cards", str(stats.get("unique_cards", 0)))
-        self._add_kv(overview, 2, "Total value (EUR)", f"€{stats.get('total_value_eur', 0):.2f}")
-        self._add_kv(overview, 3, "Total value (USD)", f"${stats.get('total_value_usd', 0):.2f}")
-        self._add_kv(overview, 4, "Foil cards", str(stats.get("foil_total", 0)))
-        self._add_kv(overview, 5, "Foil value (EUR)", f"€{stats.get('foil_eur', 0):.2f}")
-        frame = QFrame()
-        frame.setLayout(overview)
-        layout.addWidget(frame)
+        overview_rows = [
+            ("Total cards",       str(stats.get("total_cards", 0))),
+            ("Unique cards",      str(stats.get("unique_cards", 0))),
+            ("Foil cards",        str(stats.get("foil_total", 0))),
+            ("Total value (EUR)", f"€{stats.get('total_value_eur', 0):.2f}"),
+            ("Total value (USD)", f"${stats.get('total_value_usd', 0):.2f}"),
+            ("Foil value (EUR)",  f"€{stats.get('foil_eur', 0):.2f}"),
+        ]
+        row1.addWidget(_kv_table(overview_rows))
 
-        # ---- Language breakdown ----
-        layout.addWidget(self._section_header("Language Breakdown"))
-        lang_grid = QGridLayout()
-        for col_idx, (key, label) in enumerate([
-            ("en", "English"),
-            ("de", "German"),
-        ]):
-            lang_grid.addWidget(QLabel(f"<b>{label}</b>"), 0, col_idx * 3)
-            total = stats.get(f"{key}_total", 0)
-            nf = stats.get(f"{key}_nonfoil", 0)
-            f_ = stats.get(f"{key}_foil", 0)
-            nf_eur = stats.get(f"{key}_nonfoil_eur", 0)
-            f_eur = stats.get(f"{key}_foil_eur", 0)
-            lang_grid.addWidget(QLabel(f"Total: {total}"), 1, col_idx * 3)
-            lang_grid.addWidget(QLabel(f"Non-foil: {nf}  (€{nf_eur:.2f})"), 2, col_idx * 3)
-            lang_grid.addWidget(QLabel(f"Foil: {f_}  (€{f_eur:.2f})"), 3, col_idx * 3)
-        lang_frame = QFrame()
-        lang_frame.setLayout(lang_grid)
-        layout.addWidget(lang_frame)
-
-        # ---- Rarity breakdown ----
-        layout.addWidget(self._section_header("Rarity Breakdown"))
-        rarity_grid = QGridLayout()
-        headers = ["Rarity", "Count", "Value (EUR)"]
-        for col, h in enumerate(headers):
-            lbl = QLabel(f"<b>{h}</b>")
-            rarity_grid.addWidget(lbl, 0, col)
-        for row_idx, (key, label) in enumerate([
-            ("r_common", "Common"),
+        rarity_rows = []
+        for key, label in [
+            ("r_common",   "Common"),
             ("r_uncommon", "Uncommon"),
-            ("r_rare", "Rare"),
-            ("r_mythic", "Mythic"),
-        ], start=1):
-            rarity_grid.addWidget(QLabel(label), row_idx, 0)
-            rarity_grid.addWidget(QLabel(str(stats.get(key, 0))), row_idx, 1)
-            eur_key = key + "_eur"
-            rarity_grid.addWidget(QLabel(f"€{stats.get(eur_key, 0):.2f}"), row_idx, 2)
-        rarity_frame = QFrame()
-        rarity_frame.setLayout(rarity_grid)
-        layout.addWidget(rarity_frame)
+            ("r_rare",     "Rare"),
+            ("r_mythic",   "Mythic"),
+        ]:
+            rarity_rows.append([
+                label,
+                str(stats.get(key, 0)),
+                f"€{stats.get(key + '_eur', 0):.2f}",
+            ])
+        rarity_tbl = _header_table(["Rarity", "Count", "Value (EUR)"], rarity_rows)
+        row1_right = QVBoxLayout()
+        row1_right.setSpacing(2)
+        row1_right.addWidget(_section_header("Rarity"))
+        row1_right.addWidget(rarity_tbl)
+        row1.addLayout(row1_right)
 
-        # ---- Top 5 most valuable ----
-        layout.addWidget(self._section_header("Top 5 Most Valuable Cards"))
+        row1.addStretch()
+        lay.addLayout(row1)
+
+        # ── Row 2: Language breakdown ──────────────────────────────────── #
+        lay.addWidget(_section_header("Language Breakdown"))
+        lang_rows = []
+        for code, label in [("en", "English 🇬🇧"), ("de", "German 🇩🇪")]:
+            lang_rows.append([
+                label,
+                str(stats.get(f"{code}_total", 0)),
+                str(stats.get(f"{code}_nonfoil", 0)),
+                f"€{stats.get(f'{code}_nonfoil_eur', 0):.2f}",
+                str(stats.get(f"{code}_foil", 0)),
+                f"€{stats.get(f'{code}_foil_eur', 0):.2f}",
+            ])
+        lang_row = QHBoxLayout()
+        lang_row.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        lang_row.addWidget(_header_table(
+            ["Language", "Total", "Non-foil", "NF value", "Foil", "Foil value"],
+            lang_rows,
+        ))
+        lang_row.addStretch()
+        lay.addLayout(lang_row)
+
+        # ── Row 3: Top 5 most valuable ────────────────────────────────── #
+        lay.addWidget(_section_header("Top 5 Most Valuable Cards"))
         top_cards = stats.get("top_cards", [])
-        top_table = QTableWidget(len(top_cards), 4)
-        top_table.setHorizontalHeaderLabels(["Name", "Foil", "Language", "Price (EUR)"])
-        top_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        top_table.verticalHeader().setVisible(False)
-        top_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        for row_idx, card in enumerate(top_cards):
-            name = card.get("printed_name") or card.get("name_de") or card.get("name_en") or ""
-            name_en = card.get("name_en") or ""
-            display = f"{name} ({name_en})" if name and name != name_en else name_en
-            top_table.setItem(row_idx, 0, QTableWidgetItem(display))
-            top_table.setItem(row_idx, 1, QTableWidgetItem("★" if card.get("foil") else ""))
-            top_table.setItem(row_idx, 2, QTableWidgetItem((card.get("language") or "").upper()))
-            eur = card.get("price_eur")
-            top_table.setItem(row_idx, 3, QTableWidgetItem(f"€{eur:.2f}" if eur else "—"))
-        top_table.setMaximumHeight(180)
-        layout.addWidget(top_table)
+        embeds_row = QHBoxLayout()
+        embeds_row.setSpacing(10)
+        embeds_row.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        for card in top_cards:
+            embed = _CardEmbed(card)
+            embeds_row.addWidget(embed)
+            self._embeds.append(embed)
+        lay.addLayout(embeds_row)
 
-        # ---- Containers ----
+        QTimer.singleShot(50, self._load_embed_images)
+
+        # ── Row 4: Containers ─────────────────────────────────────────── #
         if container_stats:
-            layout.addWidget(self._section_header("Containers"))
-            ct_table = QTableWidget(len(container_stats), 4)
-            ct_table.setHorizontalHeaderLabels(["Name", "Type", "Cards", "Value (EUR)"])
-            ct_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-            ct_table.verticalHeader().setVisible(False)
-            ct_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-            for row_idx, c in enumerate(container_stats):
-                ct_table.setItem(row_idx, 0, QTableWidgetItem(c.get("name") or ""))
-                ct_table.setItem(row_idx, 1, QTableWidgetItem(c.get("type") or ""))
-                ct_table.setItem(row_idx, 2, QTableWidgetItem(str(c.get("card_count", 0))))
+            lay.addWidget(_section_header("Containers"))
+            ct_rows = []
+            for c in container_stats:
                 eur = c.get("total_value_eur") or 0.0
-                ct_table.setItem(row_idx, 3, QTableWidgetItem(f"€{eur:.2f}"))
-            ct_table.setMaximumHeight(min(50 + len(container_stats) * 26, 300))
-            layout.addWidget(ct_table)
+                ct_rows.append([
+                    c.get("name") or "",
+                    c.get("type") or "",
+                    str(c.get("card_count", 0)),
+                    f"€{eur:.2f}",
+                ])
+            ct_row = QHBoxLayout()
+            ct_row.setAlignment(Qt.AlignmentFlag.AlignLeft)
+            ct_row.addWidget(_header_table(
+                ["Name", "Type", "Cards", "Value (EUR)"],
+                ct_rows,
+            ))
+            ct_row.addStretch()
+            lay.addLayout(ct_row)
 
-        layout.addStretch()
+        lay.addStretch()
 
-    @staticmethod
-    def _section_header(text: str) -> QLabel:
-        lbl = QLabel(f"<h3>{text}</h3>")
-        lbl.setContentsMargins(0, 8, 0, 0)
-        return lbl
+    def _load_embed_images(self):
+        for embed in self._embeds:
+            embed.load_image()
 
-    @staticmethod
-    def _add_kv(grid: QGridLayout, row: int, key: str, value: str):
-        grid.addWidget(QLabel(f"{key}:"), row, 0)
-        grid.addWidget(QLabel(f"<b>{value}</b>"), row, 1)
+
+def _clear_layout(layout):
+    while layout.count():
+        item = layout.takeAt(0)
+        if item.widget():
+            item.widget().deleteLater()
+        elif item.layout():
+            _clear_layout(item.layout())

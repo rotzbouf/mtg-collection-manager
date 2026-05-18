@@ -49,25 +49,15 @@ GUILD_ID = os.getenv("DISCORD_GUILD_ID")
 DEBUG_SCAN_PREVIEW = os.getenv("DEBUG_SCAN_PREVIEW", "0") == "1"
 
 ALL_COGS = [
-    "cogs.containers",
-    "cogs.collection",
     "cogs.admin",
     "cogs.import_export",
-    "cogs.stats",
-    "cogs.deck",
-    "cogs.showcase",
     "cogs.backup",
     "cogs.scan",
 ]
 
-_READ_ONLY_COMMANDS = {
-    "search", "list", "stats", "export",
-    "container list", "showcase",
-}
+_READ_ONLY_COMMANDS = {"export"}
 
-DECK_CHANNEL_ID   = int(os.getenv("DISCORD_DECKBUILDER_CHANNEL_ID", 0)) or None
-SEARCH_CHANNEL_ID = int(os.getenv("DISCORD_SEARCH_CHANNEL_ID",      0)) or None
-SCAN_CHANNEL_ID   = int(os.getenv("DISCORD_SCAN_CHANNEL_ID",        0)) or None
+SCAN_CHANNEL_ID   = int(os.getenv("DISCORD_SCAN_CHANNEL_ID", 0)) or None
 
 
 class MTGCommandTree(app_commands.CommandTree):
@@ -76,19 +66,7 @@ class MTGCommandTree(app_commands.CommandTree):
         if cmd is None:
             return True
         name = cmd.qualified_name
-        if name.startswith("deck"):
-            if DECK_CHANNEL_ID and interaction.channel_id != DECK_CHANNEL_ID:
-                await interaction.response.send_message(
-                    f"Deck commands only work in <#{DECK_CHANNEL_ID}>.", ephemeral=True
-                )
-                return False
-        elif name == "search":
-            if SEARCH_CHANNEL_ID and interaction.channel_id != SEARCH_CHANNEL_ID:
-                await interaction.response.send_message(
-                    f"Search only works in <#{SEARCH_CHANNEL_ID}>.", ephemeral=True
-                )
-                return False
-        elif name not in _READ_ONLY_COMMANDS:
+        if name not in _READ_ONLY_COMMANDS:
             if SCAN_CHANNEL_ID and interaction.channel_id != SCAN_CHANNEL_ID:
                 await interaction.response.send_message(
                     f"This command only works in <#{SCAN_CHANNEL_ID}>.", ephemeral=True

@@ -1,10 +1,12 @@
 """Deck builder tab widget."""
 from __future__ import annotations
 
+from pathlib import Path
+
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QComboBox, QPushButton,
-    QTextEdit, QMessageBox,
+    QTextEdit, QMessageBox, QFileDialog,
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QGuiApplication
@@ -21,6 +23,8 @@ FORMATS = [
 class DeckWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._result: dict | None = None
+        self._last_fmt: str = ""
         self._build_ui()
 
     # ------------------------------------------------------------------ #
@@ -76,18 +80,31 @@ class DeckWidget(QWidget):
         self._output.setFont(_monofont())
         root.addWidget(self._output)
 
-        # Copy button
-        copy_row = QHBoxLayout()
+        # Action buttons row
+        action_row = QHBoxLayout()
         self._copy_btn = QPushButton("Copy to clipboard")
         self._copy_btn.setEnabled(False)
-        copy_row.addWidget(self._copy_btn)
-        copy_row.addStretch()
-        root.addLayout(copy_row)
+        action_row.addWidget(self._copy_btn)
+
+        self._export_full_btn = QPushButton("Export .txt")
+        self._export_full_btn.setToolTip("Save decklist with container locations (picking reference)")
+        self._export_full_btn.setEnabled(False)
+        action_row.addWidget(self._export_full_btn)
+
+        self._export_mtga_btn = QPushButton("Export MTGA/Moxfield")
+        self._export_mtga_btn.setToolTip("Save clean format importable into MTGA, Moxfield, etc.")
+        self._export_mtga_btn.setEnabled(False)
+        action_row.addWidget(self._export_mtga_btn)
+
+        action_row.addStretch()
+        root.addLayout(action_row)
 
         # Signals
         self._fmt_cb.currentIndexChanged.connect(self._on_format_changed)
         self._build_btn.clicked.connect(self._on_build)
         self._copy_btn.clicked.connect(self._on_copy)
+        self._export_full_btn.clicked.connect(lambda: self._on_export(mtga=False))
+        self._export_mtga_btn.clicked.connect(lambda: self._on_export(mtga=True))
         self._on_format_changed()
 
     def _on_format_changed(self):
@@ -113,6 +130,8 @@ class DeckWidget(QWidget):
         self._stats_label.setText("Loading collection…")
         self._output.setPlainText("")
         self._copy_btn.setEnabled(False)
+        self._export_full_btn.setEnabled(False)
+        self._export_mtga_btn.setEnabled(False)
 
         try:
             pool = await db.get_all()
@@ -183,14 +202,50 @@ class DeckWidget(QWidget):
                 f"€{val:.2f}"
             )
 
+        self._result = result
+        self._last_fmt = fmt
         self._output.setPlainText(text)
         self._copy_btn.setEnabled(True)
+        self._export_full_btn.setEnabled(True)
+        self._export_mtga_btn.setEnabled(True)
         self._build_btn.setEnabled(True)
 
     def _on_copy(self):
         text = self._output.toPlainText()
         if text:
             QGuiApplication.clipboard().setText(text)
+
+    def _on_export(self, mtga: bool):
+        from datetime import date
+        from core.deckbuilder import (
+            format_commander_decklist, format_commander_decklist_mtga,
+            format_60_decklist, format_60_decklist_mtga,
+        )
+
+        result = self._result
+        fmt = self._last_fmt
+        if not result:
+            return
+
+        if fmt == "commander":
+            cmd_name = (result["commander"].get("name_en") or "deck").replace(" ", "_")
+            suffix = "_mtga" if mtga else "_full"
+            default_name = f"{cmd_name}{suffix}_{date.today()}.txt"
+            text = format_commander_decklist_mtga(result) if mtga else format_commander_decklist(result)
+        else:
+            suffix = "_mtga" if mtga else "_full"
+            default_name = f"{fmt}{suffix}_{date.today()}.txt"
+            text = format_60_decklist_mtga(result) if mtga else format_60_decklist(result)
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Decklist", default_name,
+            "Text files (*.txt);;All files (*)",
+        )
+        if path:
+            try:
+                Path(path).write_text(text, encoding="utf-8")
+            except OSError as exc:
+                QMessageBox.warning(self, "Export failed", str(exc))
 
 
 def _monofont():

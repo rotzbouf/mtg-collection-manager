@@ -398,3 +398,87 @@ def format_60_decklist(result: dict) -> str:
     if manifest:
         lines.append(manifest)
     return "\n".join(lines)
+
+
+# ── MTGA / Moxfield clean export ──────────────────────────────────────────────
+
+def _mtga_line(card: dict, count: int = 1) -> str:
+    name = card.get("name_en") or "?"
+    set_code = (card.get("set_code") or "").upper()
+    cn = card.get("collector_number") or ""
+    if set_code and cn:
+        return f"{count} {name} ({set_code}) {cn}"
+    return f"{count} {name}"
+
+
+def format_commander_decklist_mtga(result: dict) -> str:
+    """Commander decklist in MTGA/Moxfield import format."""
+    cmd = result["commander"]
+    lines = ["Commander", _mtga_line(cmd), "", "Deck"]
+    for _group, cards in sorted(result["groups"].items()):
+        for c in cards:
+            lines.append(_mtga_line(c))
+    coll_basics = result.get("basics_from_collection") or []
+    text_basics = result.get("basics") or {}
+    for c in coll_basics:
+        lines.append(_mtga_line(c))
+    for land, n in sorted(text_basics.items()):
+        lines.append(f"{n} {land}")
+    return "\n".join(lines)
+
+
+def format_60_decklist_mtga(result: dict) -> str:
+    """60-card decklist in MTGA/Moxfield import format."""
+    lines = ["Deck"]
+    for card, n in result["deck"]:
+        lines.append(_mtga_line(card, n))
+    coll_basics = result.get("basics_from_collection") or []
+    text_basics = result.get("basics") or {}
+    if coll_basics or text_basics:
+        lines.append("")
+    for c in coll_basics:
+        lines.append(_mtga_line(c))
+    for land, n in sorted(text_basics.items()):
+        lines.append(f"{n} {land}")
+    return "\n".join(lines)
+
+
+def format_container_decklist(cards: list[dict], deck_name: str = "", mtga: bool = True) -> str:
+    """Export a container's physical cards as a decklist.
+
+    Commander-flagged cards appear under 'Commander', the rest under 'Deck'
+    grouped by type. mtga=True produces clean Moxfield/MTGA lines; mtga=False
+    adds container-location comments and a picking manifest.
+    """
+    commanders = [c for c in cards if c.get("is_commander")]
+    rest = [c for c in cards if not c.get("is_commander")]
+
+    lines: list[str] = []
+    if deck_name:
+        lines += [f"// {deck_name}", ""]
+
+    if commanders:
+        lines.append("Commander")
+        for c in commanders:
+            lines.append(_mtga_line(c) if mtga else f"1 {_display_name(c)}  // 📦 {c.get('container_name') or '—'}")
+        lines.append("")
+
+    if rest:
+        groups: dict[str, list[dict]] = {}
+        for c in rest:
+            groups.setdefault(_type_group(c), []).append(c)
+        lines.append("Deck")
+        for group, group_cards in sorted(groups.items()):
+            if not mtga:
+                lines.append(f"// {group}")
+            for c in group_cards:
+                lines.append(_mtga_line(c) if mtga else f"1 {_display_name(c)}  // 📦 {c.get('container_name') or '—'}")
+            if not mtga:
+                lines.append("")
+
+    if not mtga:
+        manifest = _location_manifest(commanders + rest)
+        if manifest:
+            lines.append(manifest)
+
+    return "\n".join(lines)

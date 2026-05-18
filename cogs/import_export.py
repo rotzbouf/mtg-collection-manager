@@ -12,7 +12,7 @@ from discord.ext import commands
 import core.exporter as exp
 import core.importer as imp
 from cogs.auth import require_guest, require_collector
-from cogs.containers import container_autocomplete
+from cogs.utils import container_autocomplete
 
 logger = logging.getLogger(__name__)
 
