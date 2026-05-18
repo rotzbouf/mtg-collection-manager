@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QHeaderView, QFileDialog, QMessageBox, QFrame,
     QProgressBar, QTabWidget, QLineEdit, QGroupBox,
     QFormLayout, QScrollArea, QCheckBox, QListWidget,
-    QListWidgetItem, QPlainTextEdit,
+    QListWidgetItem, QPlainTextEdit, QComboBox,
 )
 from PyQt6.QtCore import Qt, QProcess, QProcessEnvironment
 from qasync import asyncSlot
@@ -59,6 +59,15 @@ _ENV_GROUPS: list[tuple[str, list[tuple[str, str, str, bool]]]] = [
     ("Backup", [
         ("BACKUP_DIR", "Backup Directory",
          "Directory where backup files are stored (relative to project root or absolute).",
+         False),
+    ]),
+    ("Cardmarket (RapidAPI)", [
+        ("RAPIDAPI_KEY", "RapidAPI Key",
+         "Your RapidAPI subscription key — used as the X-RapidAPI-Key header.",
+         True),
+        ("RAPIDAPI_HOST", "API Host",
+         "The Cardmarket API host on RapidAPI, e.g. cardmarket.p.rapidapi.com "
+         "(used as the X-RapidAPI-Host header and base URL).",
          False),
     ]),
     ("Debug", [
@@ -343,6 +352,49 @@ class SettingsWidget(QWidget):
         layout.addWidget(self._divider())
         layout.addSpacing(4)
 
+        # ── Price Source ────────────────────────────────────────────────── #
+        layout.addWidget(self._section_header("Price Source"))
+        layout.addWidget(QLabel(
+            "Choose where EUR prices are fetched from during a Scryfall sync.\n"
+            "Scryfall is the default; Cardmarket gives more accurate EU market prices."
+        ))
+
+        src_row = QHBoxLayout()
+        src_row.addWidget(QLabel("Source:"))
+        self._price_src_combo = QComboBox()
+        self._price_src_combo.addItem("Scryfall", "scryfall")
+        self._price_src_combo.addItem("Cardmarket", "cardmarket")
+        current_src = cfg.load().get("price_source", "scryfall")
+        self._price_src_combo.setCurrentIndex(0 if current_src == "scryfall" else 1)
+        self._price_src_combo.setFixedWidth(160)
+        src_row.addWidget(self._price_src_combo)
+        src_row.addStretch()
+        layout.addLayout(src_row)
+
+        # Cardmarket info + test (shown only when Cardmarket is selected)
+        self._cm_group = QWidget()
+        cm_vbox = QVBoxLayout(self._cm_group)
+        cm_vbox.setContentsMargins(0, 4, 0, 0)
+        cm_vbox.setSpacing(6)
+        cm_vbox.addWidget(QLabel(
+            "Set RAPIDAPI_KEY and RAPIDAPI_HOST in the Environment tab, then save .env."
+        ))
+        cm_test_row = QHBoxLayout()
+        self._cm_test_btn = QPushButton("Test connection")
+        cm_test_row.addWidget(self._cm_test_btn)
+        cm_test_row.addStretch()
+        cm_vbox.addLayout(cm_test_row)
+        self._cm_status = QLabel("")
+        self._cm_status.setStyleSheet("color: #888; font-size: 11px;")
+        cm_vbox.addWidget(self._cm_status)
+
+        layout.addWidget(self._cm_group)
+        self._cm_group.setVisible(current_src == "cardmarket")
+
+        layout.addSpacing(4)
+        layout.addWidget(self._divider())
+        layout.addSpacing(4)
+
         # ── Export Collection ───────────────────────────────────────────── #
         layout.addWidget(self._section_header("Export Collection"))
         layout.addWidget(QLabel(
@@ -463,6 +515,8 @@ class SettingsWidget(QWidget):
         self._record_prices_btn.clicked.connect(self._on_record_prices)
         self._backup_dir_browse_btn.clicked.connect(self._on_browse_backup_dir)
         self._backup_dir_save_btn.clicked.connect(self._on_save_backup_dir)
+        self._price_src_combo.currentIndexChanged.connect(self._on_price_source_changed)
+        self._cm_test_btn.clicked.connect(self._on_test_cm_connection)
 
         scroll.setWidget(inner)
         outer_layout.addWidget(scroll)
@@ -978,6 +1032,16 @@ class SettingsWidget(QWidget):
             self._sync_progress.setValue(1)
             return
 
+        # Build Cardmarket client if configured as price source
+        cm = None
+        if cfg.load().get("price_source") == "cardmarket":
+            from core.cardmarket import CardmarketClient
+            _env = self._read_env()
+            _key = _env.get("RAPIDAPI_KEY", "")
+            _host = _env.get("RAPIDAPI_HOST", "")
+            if _key and _host:
+                cm = CardmarketClient(_key, _host)
+
         self._sync_progress.setRange(0, total)
         updated = failed = 0
 
@@ -989,12 +1053,21 @@ class SettingsWidget(QWidget):
             try:
                 card = await scryfall.get_by_id(sid)
                 if card:
+                    if cm:
+                        cm_price = await cm.get_price(
+                            card.get("name_en", ""), card.get("set_code", "")
+                        )
+                        if cm_price is not None:
+                            card["price_eur"] = cm_price
                     await db.resync_card(sid, card)
                     updated += 1
                 else:
                     failed += 1
             except Exception:
                 failed += 1
+
+        if cm:
+            await cm.close()
 
         await db.record_prices()
 
@@ -1071,6 +1144,49 @@ class SettingsWidget(QWidget):
             self._price_status.setText(f"Error: {exc}")
         finally:
             self._record_prices_btn.setEnabled(True)
+
+    # ------------------------------------------------------------------ #
+    # Price source                                                          #
+    # ------------------------------------------------------------------ #
+
+    def _on_price_source_changed(self, index: int) -> None:
+        source = self._price_src_combo.itemData(index)
+        self._cm_group.setVisible(source == "cardmarket")
+        config = cfg.load()
+        config["price_source"] = source
+        try:
+            cfg.save(config)
+        except Exception:
+            pass
+
+    @asyncSlot()
+    async def _on_test_cm_connection(self) -> None:
+        # Read credentials live from the env fields (even before .env is saved to disk)
+        api_key = self._env_fields.get("RAPIDAPI_KEY", QLineEdit()).text().strip()
+        api_host = self._env_fields.get("RAPIDAPI_HOST", QLineEdit()).text().strip()
+        if not api_key or not api_host:
+            self._cm_status.setText("⚠ Enter RAPIDAPI_KEY and RAPIDAPI_HOST in the Environment tab first.")
+            self._cm_status.setStyleSheet("color: #e9a020; font-size: 11px;")
+            return
+        self._cm_test_btn.setEnabled(False)
+        self._cm_status.setText("Testing…")
+        self._cm_status.setStyleSheet("color: #888; font-size: 11px;")
+        try:
+            from core.cardmarket import CardmarketClient
+            client = CardmarketClient(api_key, api_host)
+            ok, msg = await client.test_connection()
+            await client.close()
+            if ok:
+                self._cm_status.setText(f"✓ {msg}")
+                self._cm_status.setStyleSheet("color: #4caf50; font-size: 11px;")
+            else:
+                self._cm_status.setText(f"✗ {msg}")
+                self._cm_status.setStyleSheet("color: #e94560; font-size: 11px;")
+        except Exception as exc:
+            self._cm_status.setText(f"Error: {exc}")
+            self._cm_status.setStyleSheet("color: #e94560; font-size: 11px;")
+        finally:
+            self._cm_test_btn.setEnabled(True)
 
     # ------------------------------------------------------------------ #
     # Backup                                                                #
