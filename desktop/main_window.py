@@ -1,6 +1,8 @@
 """Main application window."""
 from __future__ import annotations
 
+import asyncio
+
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QPushButton, QStackedWidget, QLabel, QSizePolicy,
@@ -97,6 +99,13 @@ class MainWindow(QMainWindow):
         sidebar_layout.addWidget(settings_btn)
         self._nav_buttons["settings"] = settings_btn
 
+        # Price sync status
+        self._sync_lbl = QLabel("")
+        self._sync_lbl.setWordWrap(True)
+        self._sync_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._sync_lbl.setStyleSheet("color: #888; font-size: 9px; padding: 2px 8px;")
+        sidebar_layout.addWidget(self._sync_lbl)
+
         # DB path indicator
         from desktop.db import db
         db_lbl = QLabel(f"DB: {db.path}")
@@ -181,6 +190,42 @@ class MainWindow(QMainWindow):
     def _init_db(self):
         self._do_init_db()
 
+    async def _refresh_all_prices(self):
+        from desktop.db import db, scryfall
+
+        try:
+            ids = await db.get_distinct_scryfall_ids()
+        except Exception:
+            return
+
+        total = len(ids)
+        if total == 0:
+            return
+
+        self._sync_lbl.setText(f"Prices 0 / {total}…")
+        updated = 0
+        for i, sid in enumerate(ids, 1):
+            try:
+                data = await scryfall.get_by_id(sid)
+                if data:
+                    await db.update_card_prices(
+                        sid, data.get("price_eur"), data.get("price_usd")
+                    )
+                    updated += 1
+            except Exception:
+                pass
+            if i % 5 == 0 or i == total:
+                self._sync_lbl.setText(f"Prices {i} / {total}…")
+
+        # Snapshot updated prices into price_history
+        try:
+            await db.record_prices()
+        except Exception:
+            pass
+
+        self._sync_lbl.setText(f"✓ {updated} prices updated")
+        QTimer.singleShot(6000, lambda: self._sync_lbl.setText(""))
+
     @asyncSlot()
     async def _do_init_db(self):
         from desktop.db import db
@@ -201,9 +246,11 @@ class MainWindow(QMainWindow):
             if hasattr(widget, "db_ready"):
                 widget.db_ready()
 
-        # Record today's prices in the background — INSERT OR IGNORE so it's
-        # a no-op if already run today.
+        # Record today's prices (snapshot) — INSERT OR IGNORE, no-op if run today.
         try:
             await db.record_prices()
         except Exception:
             pass
+
+        # Refresh all prices from Scryfall in the background.
+        asyncio.ensure_future(self._refresh_all_prices())
