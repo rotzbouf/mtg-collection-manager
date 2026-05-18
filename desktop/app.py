@@ -22,13 +22,23 @@ from desktop.main_window import MainWindow
 
 
 async def _shutdown(loop: QEventLoop) -> None:
-    """Cancel all pending tasks and flush the thread-pool before stopping."""
+    """Cancel pending tasks, flush the thread-pool with a timeout, then stop."""
     current = asyncio.current_task()
+
+    # 1. Cancel every outstanding coroutine task.
     tasks = [t for t in asyncio.all_tasks() if t is not current]
     for t in tasks:
         t.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
-    await loop.shutdown_default_executor()
+
+    # 2. Wait for thread-pool threads (asyncio.to_thread) to drain, but give
+    #    them at most 2 s — image loads or DB calls that are mid-flight are
+    #    abandoned rather than keeping the process alive indefinitely.
+    try:
+        await asyncio.wait_for(loop.shutdown_default_executor(), timeout=2.0)
+    except asyncio.TimeoutError:
+        pass
+
     loop.stop()
 
 
