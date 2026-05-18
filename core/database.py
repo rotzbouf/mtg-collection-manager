@@ -207,6 +207,57 @@ class Database:
             await self._db.commit()
             logger.info("Migrated: added deck_format to containers")
 
+        # Normalised price table — one row per scryfall_id, shared by all physical copies.
+        async with self._db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='card_prices'"
+        ) as cur:
+            has_price_table = (await cur.fetchone()) is not None
+        if not has_price_table:
+            await self._db.execute("""
+                CREATE TABLE card_prices (
+                    scryfall_id TEXT PRIMARY KEY,
+                    price_eur   REAL,
+                    price_usd   REAL,
+                    updated_at  TEXT DEFAULT (datetime('now'))
+                )
+            """)
+            # Seed from existing collection prices (best value per scryfall_id)
+            await self._db.execute("""
+                INSERT OR IGNORE INTO card_prices (scryfall_id, price_eur, price_usd)
+                SELECT scryfall_id, MAX(price_eur), MAX(price_usd)
+                FROM collection
+                WHERE scryfall_id IS NOT NULL
+                GROUP BY scryfall_id
+            """)
+            await self._db.commit()
+            logger.info("Migrated: created card_prices table")
+
+        # View that resolves prices from card_prices, falling back to collection.
+        # Recreated every startup so it stays in sync with any column additions.
+        # NOTE: if new columns are added to `collection` via future migrations,
+        # add them here too (before the next startup recreates the view).
+        await self._db.execute("DROP VIEW IF EXISTS collection_with_prices")
+        await self._db.execute("""
+            CREATE VIEW collection_with_prices AS
+            SELECT
+                c.id, c.scryfall_id, c.oracle_id,
+                c.name_en, c.name_de, c.printed_name,
+                c.set_code, c.set_name, c.collector_number, c.released_at,
+                c.rarity, c.colors, c.color_identity, c.mana_cost, c.cmc,
+                c.type_line, c.oracle_text, c.flavor_text,
+                c.power, c.toughness, c.loyalty, c.keywords, c.legalities,
+                COALESCE(cp.price_eur, c.price_eur) AS price_eur,
+                COALESCE(cp.price_usd, c.price_usd) AS price_usd,
+                c.price_tix, c.image_url,
+                c.language, c.condition, c.foil, c.quantity, c.notes,
+                c.added_by, c.added_at, c.updated_at,
+                c.container_id, c.is_commander,
+                c.chaos_key, c.color_order, c.type_order
+            FROM collection c
+            LEFT JOIN card_prices cp ON c.scryfall_id = cp.scryfall_id
+        """)
+        await self._db.commit()
+
         # Each row must represent exactly one physical card (quantity → individual rows)
         async with self._db.execute(
             "SELECT * FROM collection WHERE quantity > 1"
@@ -331,11 +382,25 @@ class Database:
 
         scryfall_id = card.get("scryfall_id")
         price_eur = card.get("price_eur")
-        if scryfall_id and price_eur is not None:
-            await self._db.execute(
-                "INSERT OR IGNORE INTO price_history (scryfall_id, price_eur) VALUES (?, ?)",
-                (scryfall_id, price_eur),
-            )
+        price_usd = card.get("price_usd")
+        if scryfall_id:
+            if price_eur is not None or price_usd is not None:
+                await self._db.execute(
+                    """
+                    INSERT INTO card_prices (scryfall_id, price_eur, price_usd, updated_at)
+                    VALUES (?, ?, ?, datetime('now'))
+                    ON CONFLICT(scryfall_id) DO UPDATE SET
+                        price_eur  = COALESCE(excluded.price_eur, price_eur),
+                        price_usd  = COALESCE(excluded.price_usd, price_usd),
+                        updated_at = datetime('now')
+                    """,
+                    (scryfall_id, price_eur, price_usd),
+                )
+            if price_eur is not None:
+                await self._db.execute(
+                    "INSERT OR IGNORE INTO price_history (scryfall_id, price_eur) VALUES (?, ?)",
+                    (scryfall_id, price_eur),
+                )
             await self._db.commit()
 
         return row_id
@@ -357,9 +422,10 @@ class Database:
         """Return scryfall_ids of cards that are missing oracle text, type line, or price."""
         async with self._db.execute(
             """
-            SELECT DISTINCT scryfall_id FROM collection
-            WHERE scryfall_id IS NOT NULL
-              AND (oracle_text IS NULL OR type_line IS NULL OR price_eur IS NULL)
+            SELECT DISTINCT c.scryfall_id FROM collection c
+            LEFT JOIN card_prices cp ON c.scryfall_id = cp.scryfall_id
+            WHERE c.scryfall_id IS NOT NULL
+              AND (c.oracle_text IS NULL OR c.type_line IS NULL OR cp.price_eur IS NULL)
             """
         ) as cur:
             return [row[0] for row in await cur.fetchall()]
@@ -496,14 +562,26 @@ class Database:
         )
         await self._db.commit()
 
-        # Snapshot price into history (one entry per day)
         price_eur = card.get("price_eur")
+        price_usd = card.get("price_usd")
+        if price_eur is not None or price_usd is not None:
+            await self._db.execute(
+                """
+                INSERT INTO card_prices (scryfall_id, price_eur, price_usd, updated_at)
+                VALUES (?, ?, ?, datetime('now'))
+                ON CONFLICT(scryfall_id) DO UPDATE SET
+                    price_eur  = COALESCE(excluded.price_eur, price_eur),
+                    price_usd  = COALESCE(excluded.price_usd, price_usd),
+                    updated_at = datetime('now')
+                """,
+                (scryfall_id, price_eur, price_usd),
+            )
         if price_eur is not None:
             await self._db.execute(
                 "INSERT OR IGNORE INTO price_history (scryfall_id, price_eur) VALUES (?, ?)",
                 (scryfall_id, price_eur),
             )
-            await self._db.commit()
+        await self._db.commit()
 
         return result.rowcount
 
@@ -530,7 +608,7 @@ class Database:
         async with self._db.execute(
             """
             SELECT c.*, ct.name as container_name
-            FROM collection c
+            FROM collection_with_prices c
             LEFT JOIN containers ct ON c.container_id = ct.id
             WHERE c.id = ?
             """,
@@ -554,9 +632,12 @@ class Database:
     async def search(self, query: str, limit: int = 20, offset: int = 0) -> list[dict]:
         async with self._db.execute(
             """
-            SELECT c.*, ct.name as container_name
+            SELECT c.*, ct.name as container_name,
+                   COALESCE(cp.price_eur, c.price_eur) AS price_eur,
+                   COALESCE(cp.price_usd, c.price_usd) AS price_usd
             FROM collection c
             LEFT JOIN containers ct ON c.container_id = ct.id
+            LEFT JOIN card_prices cp ON c.scryfall_id = cp.scryfall_id
             JOIN collection_fts fts ON c.id = fts.rowid
             WHERE collection_fts MATCH ?
             ORDER BY c.chaos_key
@@ -693,7 +774,7 @@ class Database:
         async with self._db.execute(
             f"""
             SELECT c.*, ct.name AS container_name
-            FROM collection c
+            FROM collection_with_prices c
             LEFT JOIN containers ct ON c.container_id = ct.id
             {where}
             ORDER BY c.name_en, c.set_code, c.collector_number
@@ -729,7 +810,7 @@ class Database:
         async with self._db.execute(
             f"""
             SELECT c.*, ct.name as container_name
-            FROM collection c
+            FROM collection_with_prices c
             LEFT JOIN containers ct ON c.container_id = ct.id
             {where} ORDER BY {order} LIMIT ? OFFSET ?
             """,
@@ -774,7 +855,7 @@ class Database:
                 ROUND(SUM(CASE WHEN foil=1 THEN COALESCE(price_eur,0) ELSE 0 END),2)  AS foil_eur,
                 ROUND(SUM(COALESCE(price_eur,0)),2)                                    AS total_value_eur,
                 ROUND(SUM(COALESCE(price_usd,0)),2)                                    AS total_value_usd
-            FROM collection
+            FROM collection_with_prices
             """
         ) as cur:
             row = await cur.fetchone()
@@ -788,7 +869,7 @@ class Database:
             SELECT c.name_en, c.name_de, c.printed_name, c.price_eur, c.foil, c.language,
                    c.scryfall_id, c.image_url,
                    ct.name AS container_name
-            FROM collection c
+            FROM collection_with_prices c
             LEFT JOIN containers ct ON c.container_id = ct.id
             WHERE c.price_eur IS NOT NULL
             ORDER BY c.price_eur DESC
@@ -815,7 +896,7 @@ class Database:
             placeholders = ",".join("?" * len(exclude_container_types))
             sql = f"""
                 SELECT c.*, ct.name as container_name
-                FROM collection c
+                FROM collection_with_prices c
                 LEFT JOIN containers ct ON c.container_id = ct.id
                 WHERE ct.type IS NULL OR ct.type NOT IN ({placeholders})
                 ORDER BY c.chaos_key
@@ -826,7 +907,7 @@ class Database:
             async with self._db.execute(
                 """
                 SELECT c.*, ct.name as container_name
-                FROM collection c
+                FROM collection_with_prices c
                 LEFT JOIN containers ct ON c.container_id = ct.id
                 ORDER BY c.chaos_key
                 """
@@ -839,13 +920,12 @@ class Database:
     # ------------------------------------------------------------------ #
 
     async def record_prices(self) -> int:
-        """Snapshot today's EUR price for every distinct scryfall_id in the collection."""
+        """Snapshot today's EUR price for every distinct scryfall_id in card_prices."""
         async with self._db.execute(
             """
-            SELECT scryfall_id, MAX(price_eur) AS price_eur
-            FROM collection
+            SELECT scryfall_id, price_eur
+            FROM card_prices
             WHERE scryfall_id IS NOT NULL AND price_eur IS NOT NULL
-            GROUP BY scryfall_id
             """
         ) as cur:
             rows = await cur.fetchall()
@@ -858,12 +938,15 @@ class Database:
         return len(rows)
 
     async def get_null_price_cards(self) -> list[dict]:
-        """Return distinct cards with price_eur IS NULL that have a known scryfall_id."""
+        """Return distinct cards with no price in card_prices that have a known scryfall_id."""
         async with self._db.execute(
             """
-            SELECT DISTINCT scryfall_id, name_en
-            FROM collection
-            WHERE scryfall_id IS NOT NULL AND price_eur IS NULL AND name_en IS NOT NULL
+            SELECT DISTINCT c.scryfall_id, c.name_en
+            FROM collection c
+            LEFT JOIN card_prices cp ON c.scryfall_id = cp.scryfall_id
+            WHERE c.scryfall_id IS NOT NULL
+              AND (cp.scryfall_id IS NULL OR cp.price_eur IS NULL)
+              AND c.name_en IS NOT NULL
             """
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
@@ -874,18 +957,20 @@ class Database:
         price_eur: Optional[float],
         price_usd: Optional[float],
     ) -> None:
-        """Set price_eur / price_usd for all rows with this scryfall_id.
+        """Upsert price into card_prices (canonical price table).
 
-        Uses COALESCE so a None value never overwrites an existing price.
+        None values never overwrite an existing price.
         """
         await self._db.execute(
             """
-            UPDATE collection
-            SET price_eur = COALESCE(?, price_eur),
-                price_usd = COALESCE(?, price_usd)
-            WHERE scryfall_id = ?
+            INSERT INTO card_prices (scryfall_id, price_eur, price_usd, updated_at)
+            VALUES (?, ?, ?, datetime('now'))
+            ON CONFLICT(scryfall_id) DO UPDATE SET
+                price_eur  = COALESCE(excluded.price_eur, price_eur),
+                price_usd  = COALESCE(excluded.price_usd, price_usd),
+                updated_at = datetime('now')
             """,
-            (price_eur, price_usd, scryfall_id),
+            (scryfall_id, price_eur, price_usd),
         )
         await self._db.commit()
 
@@ -912,7 +997,7 @@ class Database:
                    c.power, c.toughness, c.loyalty,
                    c.colors, c.color_identity, c.keywords,
                    ct.name AS container_name
-            FROM collection c
+            FROM collection_with_prices c
             LEFT JOIN containers ct ON c.container_id = ct.id
             WHERE c.price_eur IS NOT NULL
             ORDER BY c.price_eur DESC
@@ -943,11 +1028,12 @@ class Database:
                 ct.id,
                 ct.name,
                 ct.type,
-                COUNT(c.id)                                        AS card_count,
-                ROUND(SUM(COALESCE(c.price_eur, 0)), 2)            AS total_value_eur,
-                MAX(COALESCE(c.price_eur, 0))                      AS max_card_eur
+                COUNT(c.id)                                                            AS card_count,
+                ROUND(SUM(COALESCE(cp.price_eur, c.price_eur, 0)), 2)                 AS total_value_eur,
+                MAX(COALESCE(cp.price_eur, c.price_eur, 0))                           AS max_card_eur
             FROM containers ct
             LEFT JOIN collection c ON c.container_id = ct.id
+            LEFT JOIN card_prices cp ON c.scryfall_id = cp.scryfall_id
             GROUP BY ct.id, ct.name, ct.type
             ORDER BY total_value_eur DESC
             """
@@ -960,9 +1046,10 @@ class Database:
             """
             SELECT ct.*,
                 COUNT(c.id) as card_count,
-                ROUND(SUM(COALESCE(c.price_eur, 0)), 2) as total_value_eur
+                ROUND(SUM(COALESCE(cp.price_eur, c.price_eur, 0)), 2) as total_value_eur
             FROM containers ct
             LEFT JOIN collection c ON c.container_id = ct.id
+            LEFT JOIN card_prices cp ON c.scryfall_id = cp.scryfall_id
             GROUP BY ct.id
             ORDER BY ct.name
             """
@@ -1081,7 +1168,7 @@ class Database:
                c.scryfall_id, c.image_url,
                c.container_id, ct.name AS container_name,
                t.total
-        FROM collection c
+        FROM collection_with_prices c
         JOIN totals t ON c.name_en = t.name_en
         LEFT JOIN containers ct ON c.container_id = ct.id
         {excl_where}
