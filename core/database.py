@@ -810,16 +810,28 @@ class Database:
         ) as cur:
             return [(r["scryfall_id"], r["image_url"]) for r in await cur.fetchall()]
 
-    async def get_all(self) -> list[dict]:
-        async with self._db.execute(
+    async def get_all(self, exclude_container_types: list[str] | None = None) -> list[dict]:
+        if exclude_container_types:
+            placeholders = ",".join("?" * len(exclude_container_types))
+            sql = f"""
+                SELECT c.*, ct.name as container_name
+                FROM collection c
+                LEFT JOIN containers ct ON c.container_id = ct.id
+                WHERE ct.type IS NULL OR ct.type NOT IN ({placeholders})
+                ORDER BY c.chaos_key
             """
-            SELECT c.*, ct.name as container_name
-            FROM collection c
-            LEFT JOIN containers ct ON c.container_id = ct.id
-            ORDER BY c.chaos_key
-            """
-        ) as cur:
-            rows = await cur.fetchall()
+            async with self._db.execute(sql, exclude_container_types) as cur:
+                rows = await cur.fetchall()
+        else:
+            async with self._db.execute(
+                """
+                SELECT c.*, ct.name as container_name
+                FROM collection c
+                LEFT JOIN containers ct ON c.container_id = ct.id
+                ORDER BY c.chaos_key
+                """
+            ) as cur:
+                rows = await cur.fetchall()
         return [_row_to_dict(r) for r in rows]
 
     # ------------------------------------------------------------------ #
