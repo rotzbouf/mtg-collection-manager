@@ -82,13 +82,22 @@ class ContainersWidget(QWidget):
         action_row.addWidget(self._delete_btn)
         action_row.addStretch()
         self._check_deck_btn = QPushButton("⚖ Check deck")
-        self._check_deck_btn.setToolTip("Check Commander deck legality (singleton rule, 100 cards)")
+        self._check_deck_btn.setToolTip("Check deck legality (commander: singleton rule, 100 cards)")
         self._check_deck_btn.setVisible(False)
         action_row.addWidget(self._check_deck_btn)
         self._export_deck_btn = QPushButton("↓ Export deck")
         self._export_deck_btn.setToolTip("Export decklist as MTGA/Moxfield-compatible text file")
         self._export_deck_btn.setVisible(False)
         action_row.addWidget(self._export_deck_btn)
+        action_row.addWidget(QLabel("Format:"))
+        self._format_combo = QComboBox()
+        self._format_combo.addItem("— no format —", None)
+        self._format_combo.addItem("⚔ Commander", "commander")
+        self._format_combo.addItem("60-card Standard", "standard")
+        self._format_combo.addItem("60-card Timeless", "timeless")
+        self._format_combo.setMinimumWidth(140)
+        self._format_combo.setEnabled(False)
+        action_row.addWidget(self._format_combo)
         action_row.addWidget(QLabel("Type:"))
         self._type_combo = QComboBox()
         self._type_combo.setMinimumWidth(100)
@@ -141,6 +150,7 @@ class ContainersWidget(QWidget):
         self._new_btn.clicked.connect(self._on_new_container)
         self._rename_btn.clicked.connect(self._on_rename_container)
         self._delete_btn.clicked.connect(self._on_delete_container)
+        self._format_combo.currentIndexChanged.connect(self._on_deck_format_changed)
         self._type_combo.currentTextChanged.connect(self._on_type_changed)
         self._check_deck_btn.clicked.connect(self._on_check_deck)
         self._export_deck_btn.clicked.connect(self._on_export_deck)
@@ -182,18 +192,43 @@ class ContainersWidget(QWidget):
 
     @asyncSlot()
     async def _load_container_cards(self, container_id: int):
+        from collections import Counter
         from desktop.db import db
 
         cards = await db.list_cards(limit=500, container_id=container_id)
         # Commanders always on top
         cards = sorted(cards, key=lambda c: 0 if c.get("is_commander") else 1)
         self._container_cards = cards
+
+        # Detect duplicates for commander-format decks
+        deck_format = self._selected_container.get("deck_format") if self._selected_container else None
+        is_commander_deck = deck_format == "commander"
+        if is_commander_deck:
+            name_counts: Counter = Counter(
+                (c.get("name_en") or "").lower()
+                for c in cards
+                if not _is_basic_land(c)
+            )
+            duplicate_names = {name for name, cnt in name_counts.items() if cnt > 1}
+        else:
+            duplicate_names: set = set()
+
         self._table.setRowCount(0)
         for row_idx, card in enumerate(cards):
             self._table.insertRow(row_idx)
             is_cmd = bool(card.get("is_commander"))
+            is_dup = (
+                is_commander_deck
+                and not _is_basic_land(card)
+                and (card.get("name_en") or "").lower() in duplicate_names
+            )
 
-            def _item(text: str, cid: int | None = None, commander: bool = is_cmd) -> QTableWidgetItem:
+            def _item(
+                text: str,
+                cid: int | None = None,
+                commander: bool = is_cmd,
+                duplicate: bool = is_dup,
+            ) -> QTableWidgetItem:
                 item = QTableWidgetItem(str(text))
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 if cid is not None:
@@ -201,9 +236,14 @@ class ContainersWidget(QWidget):
                 if commander:
                     item.setBackground(QColor("#1e1600"))
                     item.setForeground(QColor("#f0c040"))
+                elif duplicate:
+                    item.setBackground(QColor("#3a1010"))
+                    item.setForeground(QColor("#e07070"))
                 return item
 
             name_text = f"👑 {display_name(card)}" if is_cmd else display_name(card)
+            if is_dup:
+                name_text = f"⚠ {name_text}"
             self._table.setItem(row_idx, 0, _item(str(card.get("id", "")), card.get("id")))
             self._table.setItem(row_idx, 1, _item(name_text))
             self._table.setItem(row_idx, 2, _item((card.get("set_code") or "").upper()))
@@ -225,6 +265,7 @@ class ContainersWidget(QWidget):
             self._rename_btn.setEnabled(False)
             self._delete_btn.setEnabled(False)
             self._type_combo.setEnabled(False)
+            self._format_combo.setEnabled(False)
             self._check_deck_btn.setVisible(False)
             self._export_deck_btn.setVisible(False)
             self._table.setRowCount(0)
@@ -253,9 +294,18 @@ class ContainersWidget(QWidget):
             self._type_combo.setCurrentText(current_type)
         self._type_combo.blockSignals(False)
         self._type_combo.setEnabled(True)
-        is_commander = current_type == "commander"
-        self._check_deck_btn.setVisible(is_commander)
-        self._export_deck_btn.setVisible(is_commander)
+
+        # Populate deck format combo
+        self._format_combo.blockSignals(True)
+        deck_format = container.get("deck_format")
+        idx = self._format_combo.findData(deck_format)
+        self._format_combo.setCurrentIndex(max(0, idx))
+        self._format_combo.blockSignals(False)
+        self._format_combo.setEnabled(True)
+
+        is_deck = deck_format is not None
+        self._check_deck_btn.setVisible(is_deck)
+        self._export_deck_btn.setVisible(is_deck)
 
         self._rename_btn.setEnabled(True)
         self._delete_btn.setEnabled(count == 0)
@@ -270,10 +320,22 @@ class ContainersWidget(QWidget):
 
         await db.update_container_type(self._selected_container["id"], new_type)
         self._selected_container["type"] = new_type
-        is_commander = new_type == "commander"
-        self._check_deck_btn.setVisible(is_commander)
-        self._export_deck_btn.setVisible(is_commander)
         await self._load_containers()
+
+    @asyncSlot(int)
+    async def _on_deck_format_changed(self, _index: int):
+        if self._selected_container is None:
+            return
+        from desktop.db import db
+
+        deck_format = self._format_combo.currentData()
+        await db.set_container_deck_format(self._selected_container["id"], deck_format)
+        self._selected_container["deck_format"] = deck_format
+        is_deck = deck_format is not None
+        self._check_deck_btn.setVisible(is_deck)
+        self._export_deck_btn.setVisible(is_deck)
+        await self._load_containers()
+        await self._load_container_cards(self._selected_container["id"])
 
     # ------------------------------------------------------------------ #
     # Drag & drop — card table → container list                            #
@@ -417,14 +479,16 @@ class ContainersWidget(QWidget):
         if n == 1:
             card = next((c for c in cards if c.get("id") == selected_ids[0]), None)
             if card:
+                deck_format = self._selected_container.get("deck_format") if self._selected_container else None
                 menu.addSeparator()
-                if card.get("is_commander"):
-                    act = menu.addAction("Remove Commander mark")
-                else:
-                    act = menu.addAction("👑 Mark as Commander")
-                act.triggered.connect(lambda: self._do_toggle_commander(card))
+                if deck_format == "commander":
+                    if card.get("is_commander"):
+                        act = menu.addAction("Remove Commander mark")
+                    else:
+                        act = menu.addAction("👑 Mark as Commander")
+                    act.triggered.connect(lambda: self._do_toggle_commander(card))
+                    menu.addSeparator()
 
-                menu.addSeparator()
                 resync_act = menu.addAction("↻ Resync from Scryfall")
                 resync_act.setEnabled(bool(card.get("scryfall_id")))
                 resync_act.triggered.connect(lambda: self._do_resync_card(card))

@@ -118,7 +118,7 @@ class DeckWidget(QWidget):
 
     @asyncSlot()
     async def _on_build(self):
-        from desktop.db import db, scryfall
+        from desktop.db import db
         from core.deckbuilder import (
             build_commander_deck, build_60_deck,
             format_commander_decklist, format_60_decklist,
@@ -144,28 +144,19 @@ class DeckWidget(QWidget):
         if fmt == "commander":
             cmd_name = self._cmd_edit.text().strip()
             if cmd_name:
-                # Look up the commander in the pool first, then Scryfall
                 commander = next(
-                    (
-                        c for c in pool
-                        if (c.get("name_en") or "").lower() == cmd_name.lower()
-                    ),
+                    (c for c in pool if (c.get("name_en") or "").lower() == cmd_name.lower()),
                     None,
                 )
                 if commander is None:
-                    self._stats_label.setText("Commander not found in collection — searching Scryfall…")
-                    try:
-                        commander, _lang = await scryfall.resolve_card(cmd_name)
-                    except Exception as exc:
-                        QMessageBox.critical(self, "Error", str(exc))
-                        self._build_btn.setEnabled(True)
-                        self._stats_label.setText("")
-                        return
-                    if commander is None:
-                        QMessageBox.warning(self, "Not found", f"'{cmd_name}' not found on Scryfall.")
-                        self._build_btn.setEnabled(True)
-                        self._stats_label.setText("")
-                        return
+                    QMessageBox.warning(
+                        self, "Not in collection",
+                        f"'{cmd_name}' was not found in your collection.\n"
+                        "Only cards you own can be used in the deck."
+                    )
+                    self._build_btn.setEnabled(True)
+                    self._stats_label.setText("")
+                    return
             else:
                 # Auto-pick best commander
                 ranked = rank_commanders(pool)
@@ -184,11 +175,15 @@ class DeckWidget(QWidget):
 
             result = build_commander_deck(commander, pool)
             text = format_commander_decklist(result)
-            total = result["collection_count"] + len(result.get("basics", {}))
             val = result.get("value_eur", 0)
+            missing = result.get("basics_missing") or {}
+            missing_str = (
+                "  |  ⚠ Basics missing: " + ", ".join(f"{n}× {land}" for land, n in sorted(missing.items()))
+                if missing else ""
+            )
             self._stats_label.setText(
                 f"Commander: {commander.get('name_en', '')}  |  "
-                f"{result['collection_count']} from collection  |  "
+                f"{result['collection_count']} from collection{missing_str}  |  "
                 f"€{val:.2f}"
             )
         else:

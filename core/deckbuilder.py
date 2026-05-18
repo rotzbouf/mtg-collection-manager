@@ -200,8 +200,8 @@ def build_commander_deck(commander: dict, pool: list[dict]) -> dict:
         else:
             desired_basics["Wastes"] = basics_needed
 
-    # Fill from collection first, fall back to text-only entries
-    basics_from_collection, basics_text = _take_basics_from_pool(pool, desired_basics)
+    # Fill basics from collection only; track what's still missing
+    basics_from_collection, basics_missing = _take_basics_from_pool(pool, desired_basics)
 
     # Identify top themes present in the selected cards
     theme_counts: Counter = Counter()
@@ -214,11 +214,10 @@ def build_commander_deck(commander: dict, pool: list[dict]) -> dict:
     for c in deck:
         groups.setdefault(_type_group(c), []).append(c)
 
-    total_basics = len(basics_from_collection) + sum(basics_text.values())
     return {
         "commander":              commander,
         "deck":                   deck,
-        "basics":                 basics_text,
+        "basics_missing":         basics_missing,
         "basics_from_collection": basics_from_collection,
         "groups":                 groups,
         "themes":                 top_themes,
@@ -283,11 +282,11 @@ def build_60_deck(pool: list[dict], fmt: str) -> dict:
     else:
         desired_basics["Wastes"] = 24
 
-    basics_from_collection, basics_text = _take_basics_from_pool(pool, desired_basics)
+    basics_from_collection, basics_missing = _take_basics_from_pool(pool, desired_basics)
 
     return {
         "deck":                   deck_cards,
-        "basics":                 basics_text,
+        "basics_missing":         basics_missing,
         "basics_from_collection": basics_from_collection,
         "strategy":               strategy.replace("tribal_", "").title(),
         "format":                 fmt,
@@ -359,14 +358,14 @@ def format_commander_decklist(result: dict) -> str:
             lines.append(f"1 {_display_name(c)}  // 📦 {container}")
         lines.append("")
     coll_basics = result.get("basics_from_collection") or []
-    text_basics = result.get("basics") or {}
-    if coll_basics or text_basics:
+    missing_basics = result.get("basics_missing") or {}
+    if coll_basics or missing_basics:
         lines.append("Basic Lands")
         for c in coll_basics:
             container = c.get("container_name") or "—"
             lines.append(f"1 {_display_name(c)}  // 📦 {container}")
-        for land, n in sorted(text_basics.items()):
-            lines.append(f"{n} {land}")
+        for land, n in sorted(missing_basics.items()):
+            lines.append(f"{n} {land}  // ⚠ not in collection")
 
     all_cards = (
         [result["commander"]] if result["commander"].get("id") else []
@@ -384,14 +383,14 @@ def format_60_decklist(result: dict) -> str:
         container = card.get("container_name") or "—"
         lines.append(f"{n} {_display_name(card)}  // 📦 {container}")
     coll_basics = result.get("basics_from_collection") or []
-    text_basics = result.get("basics") or {}
-    if coll_basics or text_basics:
+    missing_basics = result.get("basics_missing") or {}
+    if coll_basics or missing_basics:
         lines.append("")
         for c in coll_basics:
             container = c.get("container_name") or "—"
             lines.append(f"1 {_display_name(c)}  // 📦 {container}")
-        for land, n in sorted(text_basics.items()):
-            lines.append(f"{n} {land}")
+        for land, n in sorted(missing_basics.items()):
+            lines.append(f"{n} {land}  // ⚠ not in collection")
 
     all_cards = [c for c, _ in result["deck"]] + coll_basics
     manifest = _location_manifest(all_cards)
@@ -419,10 +418,10 @@ def format_commander_decklist_mtga(result: dict) -> str:
         for c in cards:
             lines.append(_mtga_line(c))
     coll_basics = result.get("basics_from_collection") or []
-    text_basics = result.get("basics") or {}
+    missing_basics = result.get("basics_missing") or {}
     for c in coll_basics:
         lines.append(_mtga_line(c))
-    for land, n in sorted(text_basics.items()):
+    for land, n in sorted(missing_basics.items()):
         lines.append(f"{n} {land}")
     return "\n".join(lines)
 
@@ -433,12 +432,12 @@ def format_60_decklist_mtga(result: dict) -> str:
     for card, n in result["deck"]:
         lines.append(_mtga_line(card, n))
     coll_basics = result.get("basics_from_collection") or []
-    text_basics = result.get("basics") or {}
-    if coll_basics or text_basics:
+    missing_basics = result.get("basics_missing") or {}
+    if coll_basics or missing_basics:
         lines.append("")
     for c in coll_basics:
         lines.append(_mtga_line(c))
-    for land, n in sorted(text_basics.items()):
+    for land, n in sorted(missing_basics.items()):
         lines.append(f"{n} {land}")
     return "\n".join(lines)
 

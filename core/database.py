@@ -196,6 +196,17 @@ class Database:
             await self._db.commit()
             logger.info("Migrated: added is_commander to collection")
 
+        async with self._db.execute("PRAGMA table_info(containers)") as cur:
+            cont_cols = {row[1] for row in await cur.fetchall()}
+        if "deck_format" not in cont_cols:
+            await self._db.execute("ALTER TABLE containers ADD COLUMN deck_format TEXT")
+            # Carry over existing containers typed as "commander"
+            await self._db.execute(
+                "UPDATE containers SET deck_format = 'commander' WHERE type = 'commander'"
+            )
+            await self._db.commit()
+            logger.info("Migrated: added deck_format to containers")
+
         # Each row must represent exactly one physical card (quantity → individual rows)
         async with self._db.execute(
             "SELECT * FROM collection WHERE quantity > 1"
@@ -1011,6 +1022,13 @@ class Database:
             updated = cur.rowcount > 0
         await self._db.commit()
         return updated
+
+    async def set_container_deck_format(self, container_id: int, deck_format: Optional[str]) -> None:
+        await self._db.execute(
+            "UPDATE containers SET deck_format = ? WHERE id = ?",
+            (deck_format, container_id),
+        )
+        await self._db.commit()
 
     async def get_overcount_cards(
         self, threshold: int = 4, excluded_types: list[str] | None = None
