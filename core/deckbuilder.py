@@ -228,19 +228,35 @@ def build_commander_deck(commander: dict, pool: list[dict]) -> dict:
 
 # ── Timeless / Standard ────────────────────────────────────────────────────────
 
-def build_60_deck(pool: list[dict], fmt: str) -> dict:
+def get_available_strategies(pool: list[dict]) -> list[tuple[str, str]]:
+    """Return (theme_key, display_name) pairs sorted by card count in pool, highest first."""
+    theme_hits: Counter = Counter()
+    for c in pool:
+        for t in get_card_themes(c):
+            theme_hits[t] += 1
+    return [
+        (t, t.replace("tribal_", "").title())
+        for t, _ in theme_hits.most_common()
+        if theme_hits[t] > 0
+    ]
+
+
+def build_60_deck(pool: list[dict], fmt: str, forced_strategy: str | None = None) -> dict:
     """Build a 60-card deck (36 non-lands + 24 basics) for timeless or standard."""
     legal_nonland = [
         c for c in pool
         if is_legal(c, fmt) and "Land" not in (c.get("type_line") or "")
     ]
 
-    # Detect dominant strategy
-    theme_hits: Counter = Counter()
-    for c in legal_nonland:
-        for t in get_card_themes(c):
-            theme_hits[t] += 1
-    strategy = theme_hits.most_common(1)[0][0] if theme_hits else "goodstuff"
+    # Detect dominant strategy (or use forced one)
+    if forced_strategy:
+        strategy = forced_strategy
+    else:
+        theme_hits: Counter = Counter()
+        for c in legal_nonland:
+            for t in get_card_themes(c):
+                theme_hits[t] += 1
+        strategy = theme_hits.most_common(1)[0][0] if theme_hits else "goodstuff"
 
     themed = [c for c in legal_nonland if strategy in get_card_themes(c)]
     others = [c for c in legal_nonland if c not in themed]
