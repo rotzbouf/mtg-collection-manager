@@ -38,8 +38,8 @@ All three interfaces read and write the same `mtg_collection.db` (SQLite WAL mod
 | **Showcase** | Displays the 5 most valuable cards with image, details, and a price-history chart |
 | **Price history** | Prices are snapshotted daily; history chart auto-appears once 2+ data points exist |
 | **Null-price refresh** | Cards added without a EUR price are automatically re-checked against Scryfall daily |
-| **Overcount** | Cards with more than 4 copies — shown via the Overcounted Cards button in `/stats`, with per-container breakdown |
-| **Backup & restore** | `/backup create` saves a server copy and sends a `.db.xz` attachment; web UI also supports create/restore |
+| **Overcount** | Cards with more than N copies — configurable threshold; shown via the Overcounted Cards button in `/stats` and in the desktop Overcount tab with card detail panel and move/remove actions |
+| **Backup & restore** | `/backup create` saves a server copy and sends a `.db.xz` attachment; web UI and desktop app also support create/restore with a confirmation dialog |
 | **Local image cache** | Card images downloaded at startup and served locally; no repeated Scryfall hits |
 | **Resync** | Re-fetches fresh Scryfall data (text, prices, image) for one or all cards |
 
@@ -269,6 +269,19 @@ All features are available: collection browsing/editing, containers, statistics,
 
 Launches a native PyQt6 application. Requires a display (X11 or Wayland).
 The app connects directly to the same SQLite database used by the bot and web UI.
+
+**Desktop-specific features:**
+
+| Tab | What it offers |
+|---|---|
+| **Collection** | Paginated card list; text search + ID search field; multi-select with context menu to move/remove; edit, resync, price history, delete per card |
+| **Add Card** | Name lookup with set/condition/foil/language/container picker; confirms with collection ID and current container fill count |
+| **Search** | Full-text search across all fields; multi-select rows; context menu to move or remove cards from a container |
+| **Containers** | Browse cards per container; multi-select context menu for move/remove; single-card actions: commander toggle, resync, price history |
+| **Overcount** | Cards exceeding a configurable copy threshold; split view with card detail panel; multi-select move/remove via context menu |
+| **Stats** | Totals, rarity breakdown, language split, top-5 by value |
+| **Import / Export** | Moxfield CSV, full CSV, JSON import and export; backup create/restore with confirmation |
+| **Settings** | Environment variables, container types, overcount exclusions, backup directory with folder picker |
 
 ---
 
