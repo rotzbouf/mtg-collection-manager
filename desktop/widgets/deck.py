@@ -134,7 +134,7 @@ class DeckWidget(QWidget):
         self._export_mtga_btn.setEnabled(False)
 
         try:
-            pool = await db.get_all(exclude_container_types=["deck"])
+            pool = await db.get_all(exclude_container_types=["deck", "commander"])
         except Exception as exc:
             QMessageBox.critical(self, "Error", f"Failed to load collection:\n{exc}")
             self._build_btn.setEnabled(True)
