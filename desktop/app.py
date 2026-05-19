@@ -46,12 +46,13 @@ async def _shutdown(loop: QEventLoop) -> None:
 
 def _configure_logging() -> None:
     root = logging.getLogger()
-    root.setLevel(logging.DEBUG)
+    root.setLevel(logging.DEBUG)  # QtLogHandler in the UI needs DEBUG
     fmt = logging.Formatter("%(asctime)s %(levelname)-8s %(name)s: %(message)s")
     os.makedirs("logs", exist_ok=True)
     fh = logging.handlers.RotatingFileHandler(
         "logs/mtg_desktop.log", maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
     )
+    fh.setLevel(logging.INFO)  # keep the file readable — no aiosqlite internals
     fh.setFormatter(fmt)
     root.addHandler(fh)
 

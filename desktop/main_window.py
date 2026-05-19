@@ -216,6 +216,7 @@ class MainWindow(QMainWindow):
         to_refresh = [sid for sid in ids if sid not in priced_today]
         total = len(to_refresh)
         if total == 0:
+            logger.info("Price refresh: all %d cards already priced today, skipping", len(ids))
             self._sync_lbl.setText("✓ Prices up to date")
             QTimer.singleShot(4000, lambda: self._sync_lbl.setText(""))
             return
