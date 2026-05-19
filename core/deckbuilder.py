@@ -104,6 +104,21 @@ def _type_group(card: dict) -> str:
     return "Other"
 
 
+# ── Curve analysis ───────────────────────────────────────────────────────────
+
+def curve_analysis(nonland_cards: list[tuple[dict, int]]) -> dict[int, int]:
+    """Return a CMC-bucket histogram for the given (card, quantity) pairs.
+
+    Buckets: 0-5 are exact CMC values; 6 catches everything ≥ 6.
+    """
+    buckets: dict[int, int] = {}
+    for card, qty in nonland_cards:
+        cmc = int(card.get("cmc") or 0)
+        bucket = min(cmc, 6)
+        buckets[bucket] = buckets.get(bucket, 0) + qty
+    return buckets
+
+
 # ── Basic land allocation ─────────────────────────────────────────────────────
 
 def _take_basics_from_pool(pool: list[dict], needed: dict[str, int]) -> tuple[list[dict], dict[str, int]]:

@@ -1,4 +1,20 @@
 {
+  "discord": {
+    "token": "",
+    "guild_id": "",
+    "scan_channel_id": "",
+    "showcase_channel_id": "",
+    "guest_role": "",
+    "collector_role": "",
+    "admin_role": ""
+  },
+  "app": {
+    "backup_dir": "/home/laurent/Dokumente",
+    "price_source": "cardmarket",
+    "ui_port": 8080,
+    "ui_host": "0.0.0.0",
+    "debug_scan_preview": false
+  },
   "container_types": [
     "binder",
     "box",
@@ -10,7 +26,5 @@
     "deck",
     "commander",
     "overcount"
-  ],
-  "backup_dir": "/home/laurent/Dokumente",
-  "price_source": "cardmarket"
+  ]
 }

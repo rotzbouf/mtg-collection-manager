@@ -6,6 +6,27 @@ import warnings
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Load discord settings from config.json (env vars from .env / Docker take precedence)
+try:
+    from core.config import get_discord as _get_discord
+    _disc = _get_discord()
+    _MAP = {
+        "token":               "DISCORD_TOKEN",
+        "guild_id":            "DISCORD_GUILD_ID",
+        "scan_channel_id":     "DISCORD_SCAN_CHANNEL_ID",
+        "showcase_channel_id": "DISCORD_SHOWCASE_CHANNEL_ID",
+        "guest_role":          "DISCORD_GUEST_ROLE",
+        "collector_role":      "DISCORD_COLLECTOR_ROLE",
+        "admin_role":          "DISCORD_ADMIN_ROLE",
+    }
+    for cfg_key, env_key in _MAP.items():
+        if not os.environ.get(env_key) and _disc.get(cfg_key):
+            os.environ[env_key] = str(_disc[cfg_key])
+    del _disc, _MAP, _get_discord
+except Exception:
+    pass
+
 os.environ.setdefault("CUDA_VISIBLE_DEVICES", "0")
 os.environ.setdefault("MPLBACKEND", "Agg")
 warnings.filterwarnings("ignore", message=".*pin_memory.*")

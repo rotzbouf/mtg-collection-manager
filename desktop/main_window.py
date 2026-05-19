@@ -19,6 +19,7 @@ from desktop.widgets.containers import ContainersWidget
 from desktop.widgets.stats import StatsWidget
 from desktop.widgets.settings import SettingsWidget
 from desktop.widgets.deck import DeckWidget
+from desktop.widgets.deck_analysis import DeckAnalysisWidget
 from desktop.widgets.overcount import OvercountWidget
 from desktop.widgets.logs_page import LogsWidget, QtLogHandler
 
@@ -34,6 +35,7 @@ _NAV_ITEMS = [
     ("Containers",  "containers"),
     ("Statistics",  "stats"),
     ("Deck Builder","deck"),
+    ("Deck Analysis","deck_analysis"),
     ("Overcount",   "overcount"),
     ("Logs",        "logs"),
 ]
@@ -160,6 +162,8 @@ class MainWindow(QMainWindow):
             return SettingsWidget()
         if key == "deck":
             return DeckWidget()
+        if key == "deck_analysis":
+            return DeckAnalysisWidget()
         if key == "overcount":
             return OvercountWidget()
         if key == "logs":

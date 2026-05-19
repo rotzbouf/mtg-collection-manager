@@ -102,6 +102,12 @@ class DeckWidget(QWidget):
         self._stats_label.setWordWrap(True)
         root.addWidget(self._stats_label)
 
+        self._curve_label = QLabel("")
+        self._curve_label.setFont(_monofont())
+        self._curve_label.setStyleSheet("color: #666; font-size: 9px;")
+        self._curve_label.setWordWrap(False)
+        root.addWidget(self._curve_label)
+
         # Output
         root.addWidget(QLabel("<b>Decklist:</b>"))
         self._output = QTextEdit()
@@ -228,6 +234,7 @@ class DeckWidget(QWidget):
         self._export_full_btn.setEnabled(False)
         self._export_mtga_btn.setEnabled(False)
         self._save_btn.setEnabled(False)
+        self._curve_label.setText("")
 
         try:
             pool = await db.get_all(exclude_container_types=["deck", "commander"])
@@ -288,10 +295,11 @@ class DeckWidget(QWidget):
                 "  |  ⚠ Basics missing: " + ", ".join(f"{n}× {land}" for land, n in sorted(missing.items()))
                 if missing else ""
             )
+            themes_str = ("  |  " + ", ".join(result.get("themes") or [])) if result.get("themes") else ""
             self._stats_label.setText(
                 f"Commander: {commander.get('name_en', '')}  |  "
                 f"{result['collection_count']} from collection{missing_str}  |  "
-                f"€{val:.2f}"
+                f"€{val:.2f}{themes_str}"
             )
         else:
             forced = self._strategy_cb.currentData()
@@ -313,11 +321,28 @@ class DeckWidget(QWidget):
         self._result = result
         self._last_fmt = fmt
         self._output.setPlainText(text)
+        self._curve_label.setText(self._compact_curve(result.get("curve") or {}))
         self._copy_btn.setEnabled(True)
         self._export_full_btn.setEnabled(True)
         self._export_mtga_btn.setEnabled(True)
         self._save_btn.setEnabled(True)
         self._build_btn.setEnabled(True)
+
+    @staticmethod
+    def _compact_curve(curve: dict) -> str:
+        if not curve:
+            return ""
+        max_count = max(curve.values(), default=1)
+        BAR = 8
+        labels = {0: "0", 1: "1", 2: "2", 3: "3", 4: "4", 5: "5", 6: "6+"}
+        parts = []
+        for b in range(7):
+            n = curve.get(b, 0)
+            if n == 0:
+                continue
+            bar = "█" * max(1, round(n / max_count * BAR))
+            parts.append(f"{labels[b]}:{bar}{n}")
+        return "  ".join(parts)
 
     def _on_copy(self):
         text = self._output.toPlainText()

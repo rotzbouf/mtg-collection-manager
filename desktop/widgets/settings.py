@@ -1,4 +1,4 @@
-"""Settings widget — Import / Export, Backup / Restore, .env editor, and bot control."""
+"""Settings widget — Import / Export, Backup / Restore, config editor, and bot control."""
 from __future__ import annotations
 
 import asyncio
@@ -26,51 +26,51 @@ _MAX_LOG_LINES = 500
 _DEFAULT_UI_PORT = "8080"
 _DEFAULT_UI_HOST = "0.0.0.0"
 
-# Absolute path to the project-root .env file
-_ENV_PATH = Path(__file__).parent.parent.parent / ".env"
-
-# (group_title, [(env_key, field_label, tooltip, is_secret)])
-_ENV_GROUPS: list[tuple[str, list[tuple[str, str, str, bool]]]] = [
+# (group_title, [(dotted_config_key, field_label, tooltip, is_secret)])
+# dotted_config_key format: "section.key"  e.g. "discord.token"
+_CONFIG_GROUPS: list[tuple[str, list[tuple[str, str, str, bool]]]] = [
     ("Discord", [
-        ("DISCORD_TOKEN", "Bot Token",
+        ("discord.token",               "Bot Token",
          "Your Discord bot token from the Developer Portal. Required to run the bot.",
          True),
-        ("DISCORD_GUILD_ID", "Guild ID",
-         "Restrict slash command sync to a single guild for faster updates during "
-         "development. Leave blank for global sync.",
+        ("discord.guild_id",            "Guild ID",
+         "Restrict slash command sync to a single guild for faster updates during development. Leave blank for global sync.",
          False),
-        ("DISCORD_SCAN_CHANNEL_ID", "Scan Channel ID",
+        ("discord.scan_channel_id",     "Scan Channel ID",
          "Channel where card images are auto-scanned and all collection commands work.",
          False),
-        ("DISCORD_SHOWCASE_CHANNEL_ID", "Showcase Channel ID",
-         "Channel where the welcome showcase is shown when someone writes. "
-         "Leave blank to allow any channel.",
+        ("discord.showcase_channel_id", "Showcase Channel ID",
+         "Channel where the welcome showcase is shown when someone writes. Leave blank to allow any channel.",
          False),
     ]),
     ("Roles", [
-        ("DISCORD_GUEST_ROLE", "Guest Role",
-         "Role name or ID required for read-only commands (list, search, stats, export). "
-         "Leave blank = everyone.",
+        ("discord.guest_role",      "Guest Role",
+         "Role name or ID required for read-only commands. Leave blank = everyone.",
          False),
-        ("DISCORD_COLLECTOR_ROLE", "Collector Role",
+        ("discord.collector_role",  "Collector Role",
          "Role required to add / scan cards and create containers.",
          False),
-        ("DISCORD_ADMIN_ROLE", "Admin Role",
+        ("discord.admin_role",      "Admin Role",
          "Role required to remove cards, delete / rename containers, and run admin commands.",
          False),
     ]),
-    ("Debug", [
-        ("DEBUG_SCAN_PREVIEW", "Debug Scan Preview",
-         "Set to 1 to send a debug preview image after each scan (OCR zone visible). "
-         "Keep at 0 in production.",
+    ("App", [
+        ("app.backup_dir",         "Backup Directory",
+         "Directory where backup files are stored (relative to project root or absolute).",
+         False),
+        ("app.price_source",       "Price Source",
+         "Price data source: 'cardmarket' or 'scryfall'.",
+         False),
+        ("app.debug_scan_preview", "Debug Scan Preview",
+         "Set to 1 to send a debug preview image after each scan. Keep at 0 in production.",
          False),
     ]),
     ("Web Server", [
-        ("UI_PORT", "Port",
+        ("app.ui_port", "Port",
          "Port the web UI server listens on (default: 8080).",
          False),
-        ("UI_HOST", "Host",
-         "Host/IP the web UI server binds to (default: 0.0.0.0 — all interfaces).",
+        ("app.ui_host", "Host",
+         "Host/IP the web UI server binds to (default: 0.0.0.0).",
          False),
     ]),
 ]
@@ -99,7 +99,7 @@ class SettingsWidget(QWidget):
         tabs = QTabWidget()
         tabs.addTab(self._build_services_tab(), "Services")
         tabs.addTab(self._build_maintenance_tab(), "Maintenance")
-        tabs.addTab(self._build_env_tab(), "Environment (.env)")
+        tabs.addTab(self._build_env_tab(), "Configuration")
         tabs.addTab(self._build_containers_tab(), "Containers & Overcount")
         root.addWidget(tabs)
 
@@ -348,8 +348,8 @@ class SettingsWidget(QWidget):
         self._webui_process.setWorkingDirectory(str(_PROJECT_ROOT))
 
         env = QProcessEnvironment.systemEnvironment()
-        port_field = self._env_fields.get("UI_PORT")
-        host_field = self._env_fields.get("UI_HOST")
+        port_field = self._env_fields.get("app.ui_port")
+        host_field = self._env_fields.get("app.ui_host")
         if port_field and port_field.text().strip():
             env.insert("UI_PORT", port_field.text().strip())
         if host_field and host_field.text().strip():
@@ -395,8 +395,8 @@ class SettingsWidget(QWidget):
             )
 
     def _on_webui_state_changed(self, state: QProcess.ProcessState):
-        port_field = self._env_fields.get("UI_PORT") if hasattr(self, "_env_fields") else None
-        port = (port_field.text().strip() if port_field else "") or _DEFAULT_UI_PORT
+        port_field = self._env_fields.get("app.ui_port") if hasattr(self, "_env_fields") else None
+        port = (port_field.text().strip() if port_field else "") or str(_DEFAULT_UI_PORT)
 
         if state == QProcess.ProcessState.NotRunning:
             self._webui_status_lbl.setText("○ Stopped")
@@ -584,7 +584,8 @@ class SettingsWidget(QWidget):
         dir_row.addWidget(QLabel("Default directory:"))
         self._backup_dir_edit = QLineEdit()
         self._backup_dir_edit.setPlaceholderText("(none — dialog opens at last location)")
-        self._backup_dir_edit.setText(cfg.load().get("backup_dir", ""))
+        import core.config as _cfg_local
+        self._backup_dir_edit.setText(_cfg_local.get_app().get("backup_dir", ""))
         dir_row.addWidget(self._backup_dir_edit, stretch=1)
         self._backup_dir_browse_btn = QPushButton("Browse…")
         self._backup_dir_browse_btn.setFixedWidth(80)
@@ -656,9 +657,9 @@ class SettingsWidget(QWidget):
 
         self._env_fields: dict[str, QLineEdit] = {}
 
-        current = self._read_env()
+        current = self._read_config_values()
 
-        for group_title, fields in _ENV_GROUPS:
+        for group_title, fields in _CONFIG_GROUPS:
             box = QGroupBox(group_title)
             form = QFormLayout(box)
             form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
@@ -703,8 +704,8 @@ class SettingsWidget(QWidget):
 
         # Save button + status
         save_row = QHBoxLayout()
-        self._env_save_btn = QPushButton("Save .env")
-        self._env_save_btn.setFixedWidth(120)
+        self._env_save_btn = QPushButton("Save config.json")
+        self._env_save_btn.setFixedWidth(140)
         self._env_status = QLabel("")
         self._env_status.setStyleSheet("color: #888;")
         save_row.addWidget(self._env_save_btn)
@@ -713,35 +714,35 @@ class SettingsWidget(QWidget):
         layout.addLayout(save_row)
         layout.addStretch()
 
-        self._env_save_btn.clicked.connect(self._on_save_env)
+        self._env_save_btn.clicked.connect(self._on_save_config)
 
         scroll.setWidget(inner)
         outer_layout.addWidget(scroll)
         return outer
 
     @staticmethod
-    def _read_env() -> dict[str, str]:
-        values: dict[str, str] = {}
-        if _ENV_PATH.exists():
-            for line in _ENV_PATH.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    k, _, v = line.partition("=")
-                    values[k.strip()] = v.strip()
-        return values
+    def _read_config_values() -> dict[str, str]:
+        """Return flat {dotted_key: str_value} from config.json."""
+        import core.config as _cfg
+        config = _cfg.load()
+        flat: dict[str, str] = {}
+        for section_key in ("discord", "app"):
+            section = config.get(section_key, {})
+            for k, v in section.items():
+                flat[f"{section_key}.{k}"] = str(v) if v is not None else ""
+        return flat
 
-    def _on_save_env(self):
-        lines: list[str] = []
-        for group_title, fields in _ENV_GROUPS:
-            lines.append(f"# --- {group_title} ---")
-            for key, _label, _tooltip, _secret in fields:
-                val = self._env_fields[key].text().strip()
-                lines.append(f"{key}={val}")
-            lines.append("")
-
+    def _on_save_config(self):
+        import core.config as _cfg
+        config = _cfg.load()
+        for group_title, fields in _CONFIG_GROUPS:
+            for dotted_key, _label, _tooltip, _secret in fields:
+                section, _, key = dotted_key.partition(".")
+                val = self._env_fields[dotted_key].text().strip()
+                config.setdefault(section, {})[key] = val
         try:
-            _ENV_PATH.write_text("\n".join(lines), encoding="utf-8")
-            self._env_status.setText(f"Saved to {_ENV_PATH}")
+            _cfg.save(config)
+            self._env_status.setText("Saved to config.json")
             self._env_status.setStyleSheet("color: #4caf50;")
         except Exception as exc:
             self._env_status.setText(f"Error: {exc}")
@@ -1258,7 +1259,7 @@ class SettingsWidget(QWidget):
             self._backup_dir_status.setStyleSheet("color: #e94560; font-size: 11px;")
             return
         config = cfg.load()
-        config["backup_dir"] = directory
+        config.setdefault("app", {})["backup_dir"] = directory
         try:
             cfg.save(config)
             self._backup_dir_status.setText("Saved.")
@@ -1272,7 +1273,7 @@ class SettingsWidget(QWidget):
         from datetime import date
         from desktop.db import db
 
-        default_dir = cfg.load().get("backup_dir", "").strip()
+        default_dir = cfg.get_app().get("backup_dir", "").strip()
         default_name = f"mtg_backup_{date.today()}.db"
         default_path = str(Path(default_dir) / default_name) if default_dir else default_name
 
