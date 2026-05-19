@@ -7,7 +7,7 @@ from pathlib import Path
 _CONFIG_PATH = Path(__file__).parent.parent / "config.json"
 
 # These types are always present and cannot be removed by the user.
-BUILTIN_TYPES: list[str] = ["binder", "box", "deck", "commander", "trade", "other"]
+BUILTIN_TYPES: list[str] = ["binder", "box", "deck", "commander", "overcount"]
 
 _DEFAULTS: dict = {
     "container_types": list(BUILTIN_TYPES),

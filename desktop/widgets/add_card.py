@@ -266,9 +266,15 @@ class AddCardWidget(QWidget):
         right.addWidget(self._foil_cb)
 
         right.addWidget(QLabel("Container:"))
+        container_row = QHBoxLayout()
         self._container_cb = QComboBox()
         self._container_cb.addItem("(no container)", None)
-        right.addWidget(self._container_cb)
+        container_row.addWidget(self._container_cb, stretch=1)
+        self._new_container_btn = QPushButton("+")
+        self._new_container_btn.setFixedWidth(28)
+        self._new_container_btn.setToolTip("Create new container")
+        container_row.addWidget(self._new_container_btn)
+        right.addLayout(container_row)
 
         right.addSpacing(8)
         self._add_btn = QPushButton("Add to Collection")
@@ -287,6 +293,7 @@ class AddCardWidget(QWidget):
         layout.addWidget(self._preview_widget)
 
         self._add_btn.clicked.connect(self._on_add)
+        self._new_container_btn.clicked.connect(self._on_new_container)
         return w
 
     # ------------------------------------------------------------------ #
@@ -331,6 +338,26 @@ class AddCardWidget(QWidget):
                 self._container_cb.setCurrentIndex(i)
                 break
         self._container_cb.blockSignals(False)
+
+    def _on_new_container(self):
+        from desktop.dialogs.container_dialog import ContainerDialog
+        dlg = ContainerDialog(mode="create", parent=self)
+        dlg.confirmed.connect(self._do_create_container)
+        dlg.exec()
+
+    @asyncSlot()
+    async def _do_create_container(self, name: str, ctype: str):
+        from desktop.db import db
+        try:
+            new_id = await db.create_container(name, type=ctype)
+        except Exception as exc:
+            QMessageBox.critical(self, "Error", f"Could not create container:\n{exc}")
+            return
+        await self._load_containers()
+        for i in range(self._container_cb.count()):
+            if self._container_cb.itemData(i) == new_id:
+                self._container_cb.setCurrentIndex(i)
+                break
 
     # ------------------------------------------------------------------ #
     # Slots                                                                 #

@@ -228,14 +228,14 @@ def build_commander_deck(commander: dict, pool: list[dict]) -> dict:
 
 # ── Timeless / Standard ────────────────────────────────────────────────────────
 
-def get_available_strategies(pool: list[dict]) -> list[tuple[str, str]]:
-    """Return (theme_key, display_name) pairs sorted by card count in pool, highest first."""
+def get_available_strategies(pool: list[dict]) -> list[tuple[str, str, int]]:
+    """Return (theme_key, display_name, card_count) triples sorted by count, highest first."""
     theme_hits: Counter = Counter()
     for c in pool:
         for t in get_card_themes(c):
             theme_hits[t] += 1
     return [
-        (t, t.replace("tribal_", "").title())
+        (t, t.replace("tribal_", "").title(), theme_hits[t])
         for t, _ in theme_hits.most_common()
         if theme_hits[t] > 0
     ]

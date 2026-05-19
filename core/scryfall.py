@@ -20,7 +20,8 @@ _SET_CODE_RE = re.compile(r"^[a-zA-Z0-9]{1,10}$")
 
 # German MTG set codes that are purely German editions (very old)
 _DE_SETS = {"por", "ptk", "s99"}
-_ID_CACHE_TTL = 86_400.0  # 24 hours — card data doesn't change often
+_CARD_DATA_TTL = 30 * 86_400.0  # 30 days — oracle text / type / image rarely change
+_PRICE_TTL     =      86_400.0  # 24 h   — EUR/USD prices refresh daily
 
 
 def _extract_card(data: dict, preferred_lang: Optional[str] = None) -> dict:
@@ -102,7 +103,8 @@ class ScryfallClient:
         self._session: Optional[aiohttp.ClientSession] = None
         self._last_request = 0.0
         self._semaphore = asyncio.Semaphore(1)
-        self._id_cache: dict[str, tuple[dict, float]] = {}
+        # (card_dict, data_fetched_at, price_fetched_at)
+        self._id_cache: dict[str, tuple[dict, float, float]] = {}
 
     async def _session_get(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -179,14 +181,26 @@ class ScryfallClient:
 
     async def get_by_id(self, scryfall_id: str, force_refresh: bool = False) -> Optional[dict]:
         now = time.monotonic()
-        if not force_refresh:
-            cached, ts = self._id_cache.get(scryfall_id, (None, 0.0))
-            if cached is not None and now - ts < _ID_CACHE_TTL:
-                return cached
+        if not force_refresh and scryfall_id in self._id_cache:
+            card, data_ts, price_ts = self._id_cache[scryfall_id]
+            if now - data_ts < _CARD_DATA_TTL:
+                if now - price_ts < _PRICE_TTL:
+                    return card  # both fresh — no network call
+                # Card data still valid; only prices are stale — lightweight refresh
+                raw = await self._get(f"{BASE}/cards/{scryfall_id}")
+                if raw and raw.get("object") == "card":
+                    prices = raw.get("prices", {})
+                    card = dict(card)
+                    card["price_eur"] = _safe_float(prices.get("eur"))
+                    card["price_usd"] = _safe_float(prices.get("usd"))
+                    card["price_tix"] = _safe_float(prices.get("tix"))
+                    self._id_cache[scryfall_id] = (card, data_ts, now)
+                return card
+        # Full fetch — card data missing or older than 30 days
         data = await self._get(f"{BASE}/cards/{scryfall_id}")
         if data and data.get("object") == "card":
             card = _extract_card(data)
-            self._id_cache[scryfall_id] = (card, now)
+            self._id_cache[scryfall_id] = (card, now, now)
             return card
         return None
 

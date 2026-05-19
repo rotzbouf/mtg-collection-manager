@@ -18,10 +18,13 @@ from qasync import asyncSlot
 
 import core.config as cfg
 
-_PROJECT_ROOT = Path(__file__).parent.parent.parent
-_VENV_PYTHON  = _PROJECT_ROOT / "venv" / "bin" / "python"
-_BOT_SCRIPT   = _PROJECT_ROOT / "bot.py"
+_PROJECT_ROOT  = Path(__file__).parent.parent.parent
+_VENV_PYTHON   = _PROJECT_ROOT / "venv" / "bin" / "python"
+_BOT_SCRIPT    = _PROJECT_ROOT / "bot.py"
 _MAX_LOG_LINES = 500
+
+_DEFAULT_UI_PORT = "8080"
+_DEFAULT_UI_HOST = "0.0.0.0"
 
 # Absolute path to the project-root .env file
 _ENV_PATH = Path(__file__).parent.parent.parent / ".env"
@@ -56,15 +59,18 @@ _ENV_GROUPS: list[tuple[str, list[tuple[str, str, str, bool]]]] = [
          "Role required to remove cards, delete / rename containers, and run admin commands.",
          False),
     ]),
-    ("Backup", [
-        ("BACKUP_DIR", "Backup Directory",
-         "Directory where backup files are stored (relative to project root or absolute).",
-         False),
-    ]),
     ("Debug", [
         ("DEBUG_SCAN_PREVIEW", "Debug Scan Preview",
          "Set to 1 to send a debug preview image after each scan (OCR zone visible). "
          "Keep at 0 in production.",
+         False),
+    ]),
+    ("Web Server", [
+        ("UI_PORT", "Port",
+         "Port the web UI server listens on (default: 8080).",
+         False),
+        ("UI_HOST", "Host",
+         "Host/IP the web UI server binds to (default: 0.0.0.0 — all interfaces).",
          False),
     ]),
 ]
@@ -77,6 +83,7 @@ class SettingsWidget(QWidget):
         self._import_format: str = ""
         self._sync_cancelled = False
         self._bot_process: QProcess | None = None
+        self._webui_process: QProcess | None = None
         self._build_ui()
 
     # ------------------------------------------------------------------ #
@@ -90,7 +97,7 @@ class SettingsWidget(QWidget):
         root.addWidget(QLabel("<h2>Settings</h2>"))
 
         tabs = QTabWidget()
-        tabs.addTab(self._build_bot_tab(), "Discord Bot")
+        tabs.addTab(self._build_services_tab(), "Services")
         tabs.addTab(self._build_maintenance_tab(), "Maintenance")
         tabs.addTab(self._build_env_tab(), "Environment (.env)")
         tabs.addTab(self._build_containers_tab(), "Containers & Overcount")
@@ -105,68 +112,134 @@ class SettingsWidget(QWidget):
         self._backup_btn.clicked.connect(self._on_backup)
         self._restore_btn.clicked.connect(self._on_restore)
 
-    def _build_bot_tab(self) -> QWidget:
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
+    def _build_services_tab(self) -> QWidget:
+        outer = QWidget()
+        outer_layout = QVBoxLayout(outer)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+
+        inner = QWidget()
+        layout = QVBoxLayout(inner)
         layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(10)
+        layout.setSpacing(12)
 
-        layout.addWidget(self._section_header("Discord Bot"))
+        # ── Discord Bot ──────────────────────────────────────────────── #
+        bot_box = QGroupBox("Discord Bot")
+        bot_layout = QVBoxLayout(bot_box)
+        bot_layout.setSpacing(8)
 
-        # Status row
-        status_row = QHBoxLayout()
-        status_row.addWidget(QLabel("Status:"))
+        bot_status_row = QHBoxLayout()
+        bot_status_row.addWidget(QLabel("Status:"))
         self._bot_status_lbl = QLabel("○ Stopped")
         self._bot_status_lbl.setStyleSheet("font-weight: bold; color: #888;")
-        status_row.addWidget(self._bot_status_lbl)
-        status_row.addStretch()
-        layout.addLayout(status_row)
+        bot_status_row.addWidget(self._bot_status_lbl)
+        bot_status_row.addStretch()
+        bot_layout.addLayout(bot_status_row)
 
-        # Python / script path info
         python_path = str(_VENV_PYTHON) if _VENV_PYTHON.exists() else sys.executable
         info = QLabel(f"<small>{python_path}  ·  {_BOT_SCRIPT.name}</small>")
         info.setStyleSheet("color: #555;")
-        layout.addWidget(info)
+        bot_layout.addWidget(info)
 
-        layout.addSpacing(4)
-
-        # Control buttons
-        btn_row = QHBoxLayout()
+        bot_btn_row = QHBoxLayout()
         self._bot_start_btn = QPushButton("▶  Start bot")
         self._bot_stop_btn  = QPushButton("■  Stop bot")
         self._bot_stop_btn.setEnabled(False)
-        btn_row.addWidget(self._bot_start_btn)
-        btn_row.addWidget(self._bot_stop_btn)
-        btn_row.addStretch()
-        layout.addLayout(btn_row)
+        bot_btn_row.addWidget(self._bot_start_btn)
+        bot_btn_row.addWidget(self._bot_stop_btn)
+        bot_btn_row.addStretch()
+        bot_layout.addLayout(bot_btn_row)
 
-        layout.addWidget(self._divider())
-
-        # Log output
-        layout.addWidget(QLabel("<b>Log output</b>"))
         self._bot_log = QPlainTextEdit()
         self._bot_log.setReadOnly(True)
         self._bot_log.setMaximumBlockCount(_MAX_LOG_LINES)
+        self._bot_log.setMaximumHeight(160)
         self._bot_log.setStyleSheet(
             "background: #0d0d1a; color: #cccccc; font-family: monospace; font-size: 11px;"
         )
-        layout.addWidget(self._bot_log, stretch=1)
+        bot_layout.addWidget(self._bot_log)
 
-        log_ctrl = QHBoxLayout()
+        bot_log_ctrl = QHBoxLayout()
         self._bot_clear_btn = QPushButton("Clear log")
         self._bot_autoscroll_cb = QCheckBox("Auto-scroll")
         self._bot_autoscroll_cb.setChecked(True)
-        log_ctrl.addWidget(self._bot_clear_btn)
-        log_ctrl.addWidget(self._bot_autoscroll_cb)
-        log_ctrl.addStretch()
-        layout.addLayout(log_ctrl)
+        bot_log_ctrl.addWidget(self._bot_clear_btn)
+        bot_log_ctrl.addWidget(self._bot_autoscroll_cb)
+        bot_log_ctrl.addStretch()
+        bot_layout.addLayout(bot_log_ctrl)
 
-        # Signals
         self._bot_start_btn.clicked.connect(self._on_bot_start)
         self._bot_stop_btn.clicked.connect(self._on_bot_stop)
         self._bot_clear_btn.clicked.connect(self._bot_log.clear)
 
-        return tab
+        layout.addWidget(bot_box)
+
+        # ── Web UI Server ────────────────────────────────────────────── #
+        webui_box = QGroupBox("Web UI Server")
+        webui_layout = QVBoxLayout(webui_box)
+        webui_layout.setSpacing(8)
+
+        webui_status_row = QHBoxLayout()
+        webui_status_row.addWidget(QLabel("Status:"))
+        self._webui_status_lbl = QLabel("○ Stopped")
+        self._webui_status_lbl.setStyleSheet("font-weight: bold; color: #888;")
+        webui_status_row.addWidget(self._webui_status_lbl)
+        webui_status_row.addStretch()
+        webui_layout.addLayout(webui_status_row)
+
+        webui_url_row = QHBoxLayout()
+        webui_url_row.addWidget(QLabel("URL:"))
+        self._webui_url_lbl = QLabel("")
+        self._webui_url_lbl.setStyleSheet("color: #89b4fa;")
+        webui_url_row.addWidget(self._webui_url_lbl)
+        self._webui_copy_btn = QPushButton("Copy")
+        self._webui_copy_btn.setFixedWidth(54)
+        self._webui_copy_btn.setEnabled(False)
+        webui_url_row.addWidget(self._webui_copy_btn)
+        webui_url_row.addStretch()
+        webui_layout.addLayout(webui_url_row)
+
+        webui_btn_row = QHBoxLayout()
+        self._webui_start_btn = QPushButton("▶  Start server")
+        self._webui_stop_btn  = QPushButton("■  Stop server")
+        self._webui_stop_btn.setEnabled(False)
+        webui_btn_row.addWidget(self._webui_start_btn)
+        webui_btn_row.addWidget(self._webui_stop_btn)
+        webui_btn_row.addStretch()
+        webui_layout.addLayout(webui_btn_row)
+
+        self._webui_log = QPlainTextEdit()
+        self._webui_log.setReadOnly(True)
+        self._webui_log.setMaximumBlockCount(_MAX_LOG_LINES)
+        self._webui_log.setMaximumHeight(160)
+        self._webui_log.setStyleSheet(
+            "background: #0d0d1a; color: #cccccc; font-family: monospace; font-size: 11px;"
+        )
+        webui_layout.addWidget(self._webui_log)
+
+        webui_log_ctrl = QHBoxLayout()
+        self._webui_clear_btn = QPushButton("Clear log")
+        self._webui_autoscroll_cb = QCheckBox("Auto-scroll")
+        self._webui_autoscroll_cb.setChecked(True)
+        webui_log_ctrl.addWidget(self._webui_clear_btn)
+        webui_log_ctrl.addWidget(self._webui_autoscroll_cb)
+        webui_log_ctrl.addStretch()
+        webui_layout.addLayout(webui_log_ctrl)
+
+        self._webui_start_btn.clicked.connect(self._on_webui_start)
+        self._webui_stop_btn.clicked.connect(self._on_webui_stop)
+        self._webui_clear_btn.clicked.connect(self._webui_log.clear)
+        self._webui_copy_btn.clicked.connect(self._on_webui_copy_url)
+
+        layout.addWidget(webui_box)
+        layout.addStretch()
+
+        scroll.setWidget(inner)
+        outer_layout.addWidget(scroll)
+        return outer
 
     # ------------------------------------------------------------------ #
     # Bot process control                                                   #
@@ -218,14 +291,8 @@ class SettingsWidget(QWidget):
     def _append_log(self, text: str, error: bool = False):
         if not text:
             return
-        # Colour error lines slightly differently via HTML — QPlainTextEdit
-        # doesn't support inline HTML, so we use appendPlainText and rely on
-        # the monochrome styling.  stderr lines get a prefix for visibility.
         for line in text.splitlines():
-            if error:
-                self._bot_log.appendPlainText(f"[err] {line}")
-            else:
-                self._bot_log.appendPlainText(line)
+            self._bot_log.appendPlainText(f"[err] {line}" if error else line)
         if self._bot_autoscroll_cb.isChecked():
             self._bot_log.verticalScrollBar().setValue(
                 self._bot_log.verticalScrollBar().maximum()
@@ -250,16 +317,118 @@ class SettingsWidget(QWidget):
 
     def _on_bot_finished(self, exit_code: int, exit_status: QProcess.ExitStatus):
         if exit_status == QProcess.ExitStatus.CrashExit:
-            self._append_log(f"[bot] Process crashed.")
+            self._append_log("[bot] Process crashed.")
         else:
             self._append_log(f"[bot] Exited with code {exit_code}.")
 
     def bot_stop_for_close(self) -> bool:
-        """Called by MainWindow.closeEvent. Returns True if bot was running (so caller can wait)."""
+        """Called by MainWindow.closeEvent. Returns True if any service was running."""
+        stopped_any = False
         if self._bot_process and self._bot_process.state() != QProcess.ProcessState.NotRunning:
             self._bot_process.terminate()
-            return True
-        return False
+            stopped_any = True
+        if self._webui_process and self._webui_process.state() != QProcess.ProcessState.NotRunning:
+            self._webui_process.terminate()
+            stopped_any = True
+        return stopped_any
+
+    # ------------------------------------------------------------------ #
+    # Web UI server process control                                         #
+    # ------------------------------------------------------------------ #
+
+    def _on_webui_start(self):
+        if self._webui_process and self._webui_process.state() != QProcess.ProcessState.NotRunning:
+            return
+
+        python = str(_VENV_PYTHON) if _VENV_PYTHON.exists() else sys.executable
+
+        self._webui_process = QProcess(self)
+        self._webui_process.setProgram(python)
+        self._webui_process.setArguments(["-m", "server.ui.app"])
+        self._webui_process.setWorkingDirectory(str(_PROJECT_ROOT))
+
+        env = QProcessEnvironment.systemEnvironment()
+        port_field = self._env_fields.get("UI_PORT")
+        host_field = self._env_fields.get("UI_HOST")
+        if port_field and port_field.text().strip():
+            env.insert("UI_PORT", port_field.text().strip())
+        if host_field and host_field.text().strip():
+            env.insert("UI_HOST", host_field.text().strip())
+        self._webui_process.setProcessEnvironment(env)
+
+        self._webui_process.readyReadStandardOutput.connect(self._on_webui_stdout)
+        self._webui_process.readyReadStandardError.connect(self._on_webui_stderr)
+        self._webui_process.stateChanged.connect(self._on_webui_state_changed)
+        self._webui_process.finished.connect(self._on_webui_finished)
+
+        self._webui_process.start()
+
+    def _on_webui_stop(self):
+        if self._webui_process is None:
+            return
+        state = self._webui_process.state()
+        if state == QProcess.ProcessState.Running:
+            self._webui_process.terminate()
+        elif state == QProcess.ProcessState.Starting:
+            self._webui_process.kill()
+
+    def _on_webui_stdout(self):
+        if self._webui_process is None:
+            return
+        raw = bytes(self._webui_process.readAllStandardOutput()).decode("utf-8", errors="replace")
+        self._append_webui_log(raw.rstrip())
+
+    def _on_webui_stderr(self):
+        if self._webui_process is None:
+            return
+        raw = bytes(self._webui_process.readAllStandardError()).decode("utf-8", errors="replace")
+        self._append_webui_log(raw.rstrip(), error=True)
+
+    def _append_webui_log(self, text: str, error: bool = False):
+        if not text:
+            return
+        for line in text.splitlines():
+            self._webui_log.appendPlainText(f"[err] {line}" if error else line)
+        if self._webui_autoscroll_cb.isChecked():
+            self._webui_log.verticalScrollBar().setValue(
+                self._webui_log.verticalScrollBar().maximum()
+            )
+
+    def _on_webui_state_changed(self, state: QProcess.ProcessState):
+        port_field = self._env_fields.get("UI_PORT") if hasattr(self, "_env_fields") else None
+        port = (port_field.text().strip() if port_field else "") or _DEFAULT_UI_PORT
+
+        if state == QProcess.ProcessState.NotRunning:
+            self._webui_status_lbl.setText("○ Stopped")
+            self._webui_status_lbl.setStyleSheet("font-weight: bold; color: #888;")
+            self._webui_start_btn.setEnabled(True)
+            self._webui_stop_btn.setEnabled(False)
+            self._webui_url_lbl.setText("")
+            self._webui_copy_btn.setEnabled(False)
+        elif state == QProcess.ProcessState.Starting:
+            self._webui_status_lbl.setText("⏳ Starting…")
+            self._webui_status_lbl.setStyleSheet("font-weight: bold; color: #d4af37;")
+            self._webui_start_btn.setEnabled(False)
+            self._webui_stop_btn.setEnabled(False)
+        elif state == QProcess.ProcessState.Running:
+            self._webui_status_lbl.setText("● Running")
+            self._webui_status_lbl.setStyleSheet("font-weight: bold; color: #7ec8a0;")
+            self._webui_start_btn.setEnabled(False)
+            self._webui_stop_btn.setEnabled(True)
+            self._webui_url_lbl.setText(f"http://localhost:{port}")
+            self._webui_copy_btn.setEnabled(True)
+
+    def _on_webui_finished(self, exit_code: int, exit_status: QProcess.ExitStatus):
+        if exit_status == QProcess.ExitStatus.CrashExit:
+            self._append_webui_log("[webui] Process crashed.")
+        else:
+            self._append_webui_log(f"[webui] Exited with code {exit_code}.")
+
+    def _on_webui_copy_url(self):
+        from PyQt6.QtWidgets import QApplication
+        url = self._webui_url_lbl.text()
+        if url:
+            QApplication.clipboard().setText(url)
 
     def _build_maintenance_tab(self) -> QWidget:
         outer = QWidget()

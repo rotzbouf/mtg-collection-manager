@@ -5,8 +5,13 @@ import asyncio
 from pathlib import Path
 from typing import Optional
 
-from PyQt6.QtGui import QPixmap
+from PyQt6.QtGui import QPixmap, QIcon, QPainter
 from PyQt6.QtCore import Qt
+from PyQt6.QtSvg import QSvgRenderer
+
+_MANA_DIR = Path(__file__).parent.parent / "images" / "mana"
+_WUBRG_ORDER = {c: i for i, c in enumerate("WUBRGC")}
+_COLOR_ICON_SIZE = 16  # px per symbol in combo-box rows
 
 LANG_FLAGS: dict[str, str] = {
     "en":  "GB",
@@ -38,6 +43,39 @@ RARITY_COLORS: dict[str, str] = {
     "rare":     "#c8a951",
     "mythic":   "#e05c1a",
 }
+
+
+def color_identity_icon(colors: list[str]) -> Optional[QIcon]:
+    """Return a QIcon with color-identity mana symbols stitched side by side.
+
+    Colors are sorted in WUBRG order.  Returns None if no SVGs are found.
+    """
+    ordered = sorted(colors, key=lambda c: _WUBRG_ORDER.get(c.upper(), 99))
+    s = _COLOR_ICON_SIZE
+    pixmaps: list[QPixmap] = []
+    for c in ordered:
+        path = _MANA_DIR / f"{c.upper()}.svg"
+        if not path.exists():
+            continue
+        renderer = QSvgRenderer(str(path))
+        px = QPixmap(s, s)
+        px.fill(Qt.GlobalColor.transparent)
+        p = QPainter(px)
+        renderer.render(p)
+        p.end()
+        pixmaps.append(px)
+
+    if not pixmaps:
+        return None
+
+    total_w = s * len(pixmaps)
+    composite = QPixmap(total_w, s)
+    composite.fill(Qt.GlobalColor.transparent)
+    p = QPainter(composite)
+    for i, px in enumerate(pixmaps):
+        p.drawPixmap(i * s, 0, px)
+    p.end()
+    return QIcon(composite)
 
 
 def display_name(card: dict) -> str:

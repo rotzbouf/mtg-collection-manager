@@ -4,8 +4,6 @@
     "box",
     "deck",
     "commander",
-    "trade",
-    "other",
     "overcount"
   ],
   "overcount_excluded_types": [

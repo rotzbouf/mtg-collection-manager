@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QGuiApplication
+from desktop.utils import color_identity_icon
 from qasync import asyncSlot
 
 
@@ -124,8 +125,8 @@ class DeckWidget(QWidget):
         self._export_mtga_btn.setEnabled(False)
         action_row.addWidget(self._export_mtga_btn)
 
-        self._save_btn = QPushButton("📦 Save to container…")
-        self._save_btn.setToolTip("Move all deck cards into a new container")
+        self._save_btn = QPushButton("📦 Move to deck container…")
+        self._save_btn.setToolTip("Move all deck cards from their current containers into a new dedicated container")
         self._save_btn.setEnabled(False)
         action_row.addWidget(self._save_btn)
 
@@ -175,8 +176,8 @@ class DeckWidget(QWidget):
         self._strategy_cb.blockSignals(True)
         self._strategy_cb.clear()
         self._strategy_cb.addItem("— Auto-detect —", None)
-        for key, display in strategies:
-            self._strategy_cb.addItem(display, key)
+        for key, display, count in strategies:
+            self._strategy_cb.addItem(f"{display}  ({count} cards)", key)
         self._strategy_cb.blockSignals(False)
 
     def _populate_cmd_combo(self, filter_text: str):
@@ -192,7 +193,11 @@ class DeckWidget(QWidget):
         for i, cmd in enumerate(self._commanders):
             name = cmd.get("name_en") or ""
             if not filt or filt in name.lower():
-                self._cmd_combo.addItem(name, cmd)
+                icon = color_identity_icon(cmd.get("color_identity") or [])
+                if icon:
+                    self._cmd_combo.addItem(icon, name, cmd)
+                else:
+                    self._cmd_combo.addItem(name, cmd)
                 if cmd.get("id") == prev_id:
                     restore_idx = self._cmd_combo.count() - 1
         if restore_idx:
@@ -358,7 +363,8 @@ class DeckWidget(QWidget):
     def _on_save_to_container(self):
         if not self._result:
             return
-        dlg = _NewDeckContainerDialog(self._last_fmt, parent=self)
+        card_ids = self._collect_card_ids()
+        dlg = _NewDeckContainerDialog(self._last_fmt, self._result, len(card_ids), parent=self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             name, ctype, deck_format = dlg.values()
             asyncio.ensure_future(self._do_save_to_container(name, ctype, deck_format))
@@ -430,25 +436,57 @@ class DeckWidget(QWidget):
 # ── New deck container dialog ─────────────────────────────────────────────────
 
 class _NewDeckContainerDialog(QDialog):
-    def __init__(self, deck_format: str, parent=None):
+    def __init__(self, deck_format: str, result: dict, card_count: int, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Save deck to container")
-        self.setMinimumWidth(380)
+        self.setWindowTitle("Move deck to container")
+        self.setMinimumWidth(420)
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
+
+        # Summary label
+        if deck_format == "commander":
+            cmd_name = (result.get("commander") or {}).get("name_en") or ""
+            summary = f"Commander: {cmd_name}  ·  {card_count} cards will be moved"
+        else:
+            strategy = result.get("strategy", "")
+            summary = f"Strategy: {strategy}  ·  {card_count} cards will be moved"
+        lbl = QLabel(summary)
+        lbl.setStyleSheet("color: #888; font-size: 11px;")
+        lbl.setWordWrap(True)
+        layout.addWidget(lbl)
+
+        info = QLabel(
+            "Cards are moved from their current containers into the new one.\n"
+            "The decklist's location manifest shows where each card originally was."
+        )
+        info.setStyleSheet("color: #666; font-size: 10px;")
+        info.setWordWrap(True)
+        layout.addWidget(info)
 
         form = QFormLayout()
         form.setSpacing(8)
 
         self._name_edit = QLineEdit()
         self._name_edit.setPlaceholderText("e.g. Atraxa Commander Deck")
+        # Auto-populate name
+        if deck_format == "commander":
+            cmd_name = (result.get("commander") or {}).get("name_en") or ""
+            if cmd_name:
+                self._name_edit.setText(f"{cmd_name} EDH")
+        else:
+            strategy = result.get("strategy", "")
+            if strategy:
+                self._name_edit.setText(f"{strategy.replace('tribal_', '').title()} {deck_format.title()}")
         form.addRow("Name:", self._name_edit)
 
         import core.config as cfg
         types = cfg.load().get("container_types", ["binder", "deck", "box"])
         self._type_cb = QComboBox()
         self._type_cb.addItems(types)
-        if "deck" in types:
+        preferred = "commander" if deck_format == "commander" else "deck"
+        if preferred in types:
+            self._type_cb.setCurrentText(preferred)
+        elif "deck" in types:
             self._type_cb.setCurrentText("deck")
         form.addRow("Type:", self._type_cb)
 
@@ -467,6 +505,7 @@ class _NewDeckContainerDialog(QDialog):
         btns = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
+        btns.button(QDialogButtonBox.StandardButton.Ok).setText("Move cards")
         btns.accepted.connect(self._on_accept)
         btns.rejected.connect(self.reject)
         layout.addWidget(btns)

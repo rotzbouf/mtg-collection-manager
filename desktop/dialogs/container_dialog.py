@@ -7,8 +7,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import pyqtSignal
 
-
-CONTAINER_TYPES = ["binder", "box", "deck", "wishlist", "other"]
+import core.config as cfg
 
 
 class ContainerDialog(QDialog):
@@ -37,7 +36,7 @@ class ContainerDialog(QDialog):
         form.addRow("Name:", self._name_edit)
 
         self._type_cb = QComboBox()
-        self._type_cb.addItems(CONTAINER_TYPES)
+        self._type_cb.addItems(cfg.load().get("container_types", cfg.BUILTIN_TYPES))
         if self._mode == "create":
             form.addRow("Type:", self._type_cb)
 
