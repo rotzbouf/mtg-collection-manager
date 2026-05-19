@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
@@ -19,6 +20,9 @@ from desktop.widgets.stats import StatsWidget
 from desktop.widgets.settings import SettingsWidget
 from desktop.widgets.deck import DeckWidget
 from desktop.widgets.overcount import OvercountWidget
+from desktop.widgets.logs_page import LogsWidget, QtLogHandler
+
+logger = logging.getLogger(__name__)
 
 _SIDEBAR_WIDTH = 160
 
@@ -31,6 +35,7 @@ _NAV_ITEMS = [
     ("Statistics",  "stats"),
     ("Deck Builder","deck"),
     ("Overcount",   "overcount"),
+    ("Logs",        "logs"),
 ]
 
 
@@ -40,8 +45,15 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("MTG Collection Manager")
         self.setMinimumSize(1100, 700)
         self._db_initialized = False
+        self._log_handler = self._setup_log_handler()
         self._build_ui()
         QTimer.singleShot(0, self._init_db)
+
+    def _setup_log_handler(self) -> QtLogHandler:
+        handler = QtLogHandler(level=logging.DEBUG)
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)-8s %(name)s: %(message)s"))
+        logging.getLogger().addHandler(handler)
+        return handler
 
     # ------------------------------------------------------------------ #
     # UI                                                                    #
@@ -150,6 +162,8 @@ class MainWindow(QMainWindow):
             return DeckWidget()
         if key == "overcount":
             return OvercountWidget()
+        if key == "logs":
+            return LogsWidget(handler=self._log_handler)
         return QWidget()
 
     # ------------------------------------------------------------------ #
@@ -195,16 +209,21 @@ class MainWindow(QMainWindow):
 
         try:
             ids = await db.get_distinct_scryfall_ids()
+            priced_today = await db.get_recently_priced_ids()
         except Exception:
             return
 
-        total = len(ids)
+        to_refresh = [sid for sid in ids if sid not in priced_today]
+        total = len(to_refresh)
         if total == 0:
+            self._sync_lbl.setText("✓ Prices up to date")
+            QTimer.singleShot(4000, lambda: self._sync_lbl.setText(""))
             return
 
+        logger.info("Refreshing prices for %d/%d cards not yet priced today", total, len(ids))
         self._sync_lbl.setText(f"Prices 0 / {total}…")
         updated = 0
-        for i, sid in enumerate(ids, 1):
+        for i, sid in enumerate(to_refresh, 1):
             try:
                 data = await scryfall.get_by_id(sid)
                 if data:
@@ -217,7 +236,6 @@ class MainWindow(QMainWindow):
             if i % 5 == 0 or i == total:
                 self._sync_lbl.setText(f"Prices {i} / {total}…")
 
-        # Snapshot updated prices into price_history
         try:
             await db.record_prices()
         except Exception:

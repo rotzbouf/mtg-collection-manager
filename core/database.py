@@ -9,6 +9,7 @@ import tempfile
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from .sanitize import sanitize_fts_query
 from .sorting import compute_chaos_key, color_sort_order, type_sort_order
 
 logger = logging.getLogger(__name__)
@@ -172,6 +173,7 @@ class Database:
         self.path = path
         self._db: Optional[aiosqlite.Connection] = None
         self._restore_lock = asyncio.Lock()
+        self._write_lock = asyncio.Lock()
 
     async def initialize(self):
         self._db = await aiosqlite.connect(self.path)
@@ -306,6 +308,10 @@ class Database:
     # ------------------------------------------------------------------ #
 
     async def add_card(self, card: dict, added_by: str = "") -> int:
+        async with self._write_lock:
+            return await self._add_card_locked(card, added_by)
+
+    async def _add_card_locked(self, card: dict, added_by: str = "") -> int:
         colors = card.get("colors", [])
         type_line = card.get("type_line", "")
         _cmc = card.get("cmc", 0)
@@ -406,12 +412,13 @@ class Database:
         return row_id
 
     async def remove_card(self, card_id: int) -> bool:
-        async with self._db.execute(
-            "DELETE FROM collection WHERE id = ?", (card_id,)
-        ) as cur:
-            deleted = cur.rowcount > 0
-        await self._db.commit()
-        return deleted
+        async with self._write_lock:
+            async with self._db.execute(
+                "DELETE FROM collection WHERE id = ?", (card_id,)
+            ) as cur:
+                deleted = cur.rowcount > 0
+            await self._db.commit()
+            return deleted
 
     _UPDATABLE_FIELDS = frozenset({
         "condition", "foil", "notes", "language",
@@ -460,29 +467,30 @@ class Database:
         printed_name, name_de, oracle_text, flavor_text, and image_url.
         Existing values are preserved via COALESCE when the incoming value is None.
         """
-        await self._db.execute(
-            """
-            UPDATE collection SET
-                scryfall_id  = COALESCE(:scryfall_id, scryfall_id),
-                name_de      = COALESCE(:name_de, name_de),
-                printed_name = COALESCE(:printed_name, printed_name),
-                oracle_text  = COALESCE(:oracle_text, oracle_text),
-                flavor_text  = COALESCE(:flavor_text, flavor_text),
-                image_url    = COALESCE(:image_url, image_url),
-                updated_at   = datetime('now')
-            WHERE id = :id
-            """,
-            {
-                "id": card_id,
-                "scryfall_id": card_data.get("scryfall_id"),
-                "name_de": card_data.get("name_de") or card_data.get("printed_name"),
-                "printed_name": card_data.get("printed_name"),
-                "oracle_text": card_data.get("oracle_text"),
-                "flavor_text": card_data.get("flavor_text"),
-                "image_url": card_data.get("image_url"),
-            },
-        )
-        await self._db.commit()
+        async with self._write_lock:
+            await self._db.execute(
+                """
+                UPDATE collection SET
+                    scryfall_id  = COALESCE(:scryfall_id, scryfall_id),
+                    name_de      = COALESCE(:name_de, name_de),
+                    printed_name = COALESCE(:printed_name, printed_name),
+                    oracle_text  = COALESCE(:oracle_text, oracle_text),
+                    flavor_text  = COALESCE(:flavor_text, flavor_text),
+                    image_url    = COALESCE(:image_url, image_url),
+                    updated_at   = datetime('now')
+                WHERE id = :id
+                """,
+                {
+                    "id": card_id,
+                    "scryfall_id": card_data.get("scryfall_id"),
+                    "name_de": card_data.get("name_de") or card_data.get("printed_name"),
+                    "printed_name": card_data.get("printed_name"),
+                    "oracle_text": card_data.get("oracle_text"),
+                    "flavor_text": card_data.get("flavor_text"),
+                    "image_url": card_data.get("image_url"),
+                },
+            )
+            await self._db.commit()
 
     async def get_distinct_scryfall_ids(self) -> list[str]:
         """Return all distinct scryfall_ids present in the collection."""
@@ -491,12 +499,26 @@ class Database:
         ) as cur:
             return [row[0] for row in await cur.fetchall()]
 
+    async def get_recently_priced_ids(self) -> set[str]:
+        """Return scryfall_ids whose price was updated today (UTC date).
+
+        Used by the startup price-refresh loop to skip cards already priced today.
+        """
+        async with self._db.execute(
+            "SELECT scryfall_id FROM card_prices WHERE date(updated_at) = date('now')"
+        ) as cur:
+            return {row[0] for row in await cur.fetchall()}
+
     async def resync_card(self, scryfall_id: str, card: dict) -> int:
         """Overwrite all Scryfall-sourced fields for every row with this scryfall_id.
 
         Preserves collection metadata (language, condition, foil, notes, container_id).
         Recomputes sort keys. Returns number of rows updated.
         """
+        async with self._write_lock:
+            return await self._resync_card_locked(scryfall_id, card)
+
+    async def _resync_card_locked(self, scryfall_id: str, card: dict) -> int:
         colors = card.get("colors", [])
         type_line = card.get("type_line", "")
         cmc = card.get("cmc", 0) or 0
@@ -591,14 +613,15 @@ class Database:
         # field is a verified member of a frozenset of literal column names —
         # safe to interpolate; parameterised queries cannot bind column identifiers.
         col = field  # noqa: S608 — allowlist-validated above
-        now = datetime.now(timezone.utc).isoformat()
-        async with self._db.execute(
-            f"UPDATE collection SET {col} = ?, updated_at = ? WHERE id = ?",
-            (value, now, card_id),
-        ) as cur:
-            updated = cur.rowcount > 0
-        await self._db.commit()
-        return updated
+        async with self._write_lock:
+            now = datetime.now(timezone.utc).isoformat()
+            async with self._db.execute(
+                f"UPDATE collection SET {col} = ?, updated_at = ? WHERE id = ?",
+                (value, now, card_id),
+            ) as cur:
+                updated = cur.rowcount > 0
+            await self._db.commit()
+            return updated
 
     # ------------------------------------------------------------------ #
     # Read operations                                                       #
@@ -618,18 +641,24 @@ class Database:
         return _row_to_dict(row) if row else None
 
     async def count_search(self, query: str) -> int:
+        safe = sanitize_fts_query(query)
+        if not safe:
+            return 0
         async with self._db.execute(
             """
             SELECT COUNT(*) FROM collection c
             JOIN collection_fts fts ON c.id = fts.rowid
             WHERE collection_fts MATCH ?
             """,
-            (query,),
+            (safe,),
         ) as cur:
             row = await cur.fetchone()
         return row[0] if row else 0
 
     async def search(self, query: str, limit: int = 20, offset: int = 0) -> list[dict]:
+        safe = sanitize_fts_query(query)
+        if not safe:
+            return []
         async with self._db.execute(
             """
             SELECT c.*, ct.name as container_name,
@@ -643,7 +672,7 @@ class Database:
             ORDER BY c.chaos_key
             LIMIT ? OFFSET ?
             """,
-            (query, limit, offset),
+            (safe, limit, offset),
         ) as cur:
             rows = await cur.fetchall()
         return [_row_to_dict(r) for r in rows]
@@ -921,21 +950,22 @@ class Database:
 
     async def record_prices(self) -> int:
         """Snapshot today's EUR price for every distinct scryfall_id in card_prices."""
-        async with self._db.execute(
-            """
-            SELECT scryfall_id, price_eur
-            FROM card_prices
-            WHERE scryfall_id IS NOT NULL AND price_eur IS NOT NULL
-            """
-        ) as cur:
-            rows = await cur.fetchall()
-        for row in rows:
-            await self._db.execute(
-                "INSERT OR IGNORE INTO price_history (scryfall_id, price_eur) VALUES (?, ?)",
-                (row["scryfall_id"], row["price_eur"]),
-            )
-        await self._db.commit()
-        return len(rows)
+        async with self._write_lock:
+            async with self._db.execute(
+                """
+                SELECT scryfall_id, price_eur
+                FROM card_prices
+                WHERE scryfall_id IS NOT NULL AND price_eur IS NOT NULL
+                """
+            ) as cur:
+                rows = await cur.fetchall()
+            for row in rows:
+                await self._db.execute(
+                    "INSERT OR IGNORE INTO price_history (scryfall_id, price_eur) VALUES (?, ?)",
+                    (row["scryfall_id"], row["price_eur"]),
+                )
+            await self._db.commit()
+            return len(rows)
 
     async def get_null_price_cards(self) -> list[dict]:
         """Return distinct cards with no price in card_prices that have a known scryfall_id."""
@@ -961,18 +991,19 @@ class Database:
 
         None values never overwrite an existing price.
         """
-        await self._db.execute(
-            """
-            INSERT INTO card_prices (scryfall_id, price_eur, price_usd, updated_at)
-            VALUES (?, ?, ?, datetime('now'))
-            ON CONFLICT(scryfall_id) DO UPDATE SET
-                price_eur  = COALESCE(excluded.price_eur, price_eur),
-                price_usd  = COALESCE(excluded.price_usd, price_usd),
-                updated_at = datetime('now')
-            """,
-            (scryfall_id, price_eur, price_usd),
-        )
-        await self._db.commit()
+        async with self._write_lock:
+            await self._db.execute(
+                """
+                INSERT INTO card_prices (scryfall_id, price_eur, price_usd, updated_at)
+                VALUES (?, ?, ?, datetime('now'))
+                ON CONFLICT(scryfall_id) DO UPDATE SET
+                    price_eur  = COALESCE(excluded.price_eur, price_eur),
+                    price_usd  = COALESCE(excluded.price_usd, price_usd),
+                    updated_at = datetime('now')
+                """,
+                (scryfall_id, price_eur, price_usd),
+            )
+            await self._db.commit()
 
     async def get_price_history(self, scryfall_id: str) -> list[dict]:
         async with self._db.execute(
@@ -1012,13 +1043,14 @@ class Database:
     # ------------------------------------------------------------------ #
 
     async def create_container(self, name: str, description: str = "", type: str = "binder") -> int:
-        async with self._db.execute(
-            "INSERT INTO containers (name, description, type) VALUES (?, ?, ?)",
-            (name, description or None, type),
-        ) as cur:
-            row_id = cur.lastrowid
-        await self._db.commit()
-        return row_id
+        async with self._write_lock:
+            async with self._db.execute(
+                "INSERT INTO containers (name, description, type) VALUES (?, ?, ?)",
+                (name, description or None, type),
+            ) as cur:
+                row_id = cur.lastrowid
+            await self._db.commit()
+            return row_id
 
     async def container_stats(self) -> list[dict]:
         """Per-container card count, total value, and max single-card value (for bulk detection)."""
@@ -1069,28 +1101,31 @@ class Database:
         if not card_ids:
             return 0
         placeholders = ",".join("?" * len(card_ids))
-        result = await self._db.execute(
-            f"UPDATE collection SET container_id = ?, updated_at = datetime('now') WHERE id IN ({placeholders})",
-            [container_id, *card_ids],
-        )
-        await self._db.commit()
-        return result.rowcount
+        async with self._write_lock:
+            result = await self._db.execute(
+                f"UPDATE collection SET container_id = ?, updated_at = datetime('now') WHERE id IN ({placeholders})",
+                [container_id, *card_ids],
+            )
+            await self._db.commit()
+            return result.rowcount
 
     async def delete_container(self, container_id: int) -> bool:
-        async with self._db.execute(
-            "DELETE FROM containers WHERE id = ?", (container_id,)
-        ) as cur:
-            deleted = cur.rowcount > 0
-        await self._db.commit()
-        return deleted
+        async with self._write_lock:
+            async with self._db.execute(
+                "DELETE FROM containers WHERE id = ?", (container_id,)
+            ) as cur:
+                deleted = cur.rowcount > 0
+            await self._db.commit()
+            return deleted
 
     async def rename_container(self, container_id: int, new_name: str) -> bool:
-        async with self._db.execute(
-            "UPDATE containers SET name = ? WHERE id = ?", (new_name, container_id)
-        ) as cur:
-            updated = cur.rowcount > 0
-        await self._db.commit()
-        return updated
+        async with self._write_lock:
+            async with self._db.execute(
+                "UPDATE containers SET name = ? WHERE id = ?", (new_name, container_id)
+            ) as cur:
+                updated = cur.rowcount > 0
+            await self._db.commit()
+            return updated
 
     async def set_commander(
         self, card_id: int, is_commander: bool, container_id: int
@@ -1099,35 +1134,38 @@ class Database:
 
         Returns (success, error_message). Enforces a maximum of 2 commanders per container.
         """
-        if is_commander:
-            async with self._db.execute(
-                "SELECT COUNT(*) FROM collection WHERE container_id=? AND is_commander=1 AND id!=?",
-                (container_id, card_id),
-            ) as cur:
-                count = (await cur.fetchone())[0]
-            if count >= 2:
-                return False, "A deck can have at most 2 commanders (e.g. Partner)."
-        await self._db.execute(
-            "UPDATE collection SET is_commander=? WHERE id=?",
-            (1 if is_commander else 0, card_id),
-        )
-        await self._db.commit()
-        return True, ""
+        async with self._write_lock:
+            if is_commander:
+                async with self._db.execute(
+                    "SELECT COUNT(*) FROM collection WHERE container_id=? AND is_commander=1 AND id!=?",
+                    (container_id, card_id),
+                ) as cur:
+                    count = (await cur.fetchone())[0]
+                if count >= 2:
+                    return False, "A deck can have at most 2 commanders (e.g. Partner)."
+            await self._db.execute(
+                "UPDATE collection SET is_commander=? WHERE id=?",
+                (1 if is_commander else 0, card_id),
+            )
+            await self._db.commit()
+            return True, ""
 
     async def update_container_type(self, container_id: int, new_type: str) -> bool:
-        async with self._db.execute(
-            "UPDATE containers SET type = ? WHERE id = ?", (new_type, container_id)
-        ) as cur:
-            updated = cur.rowcount > 0
-        await self._db.commit()
-        return updated
+        async with self._write_lock:
+            async with self._db.execute(
+                "UPDATE containers SET type = ? WHERE id = ?", (new_type, container_id)
+            ) as cur:
+                updated = cur.rowcount > 0
+            await self._db.commit()
+            return updated
 
     async def set_container_deck_format(self, container_id: int, deck_format: Optional[str]) -> None:
-        await self._db.execute(
-            "UPDATE containers SET deck_format = ? WHERE id = ?",
-            (deck_format, container_id),
-        )
-        await self._db.commit()
+        async with self._write_lock:
+            await self._db.execute(
+                "UPDATE containers SET deck_format = ? WHERE id = ?",
+                (deck_format, container_id),
+            )
+            await self._db.commit()
 
     async def get_overcount_cards(
         self, threshold: int = 4, excluded_types: list[str] | None = None
@@ -1262,23 +1300,24 @@ class Database:
     async def restore_from_bytes(self, data: bytes) -> None:
         """Replace the current database with *data* and reinitialize.
 
-        Acquires an exclusive lock so no concurrent restore can run.
-        The incoming data is written to a temp file first; the live connection
-        is closed only after the temp file is confirmed writable, so a failed
-        write leaves the running DB untouched.
+        Acquires both locks: _write_lock blocks ongoing writes; _restore_lock
+        prevents concurrent restores. The incoming data is written to a temp
+        file first; the live connection is closed only after the temp file is
+        confirmed writable, so a failed write leaves the running DB untouched.
         """
-        async with self._restore_lock:
-            tmp_fd, tmp_path = tempfile.mkstemp(suffix=".db")
-            os.close(tmp_fd)
-            try:
-                with open(tmp_path, "wb") as f:
-                    f.write(data)
-                await self.close()
-                shutil.move(tmp_path, self.path)
-            except Exception:
+        async with self._write_lock:
+            async with self._restore_lock:
+                tmp_fd, tmp_path = tempfile.mkstemp(suffix=".db")
+                os.close(tmp_fd)
                 try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
-                raise
-            await self.initialize()
+                    with open(tmp_path, "wb") as f:
+                        f.write(data)
+                    await self.close()
+                    shutil.move(tmp_path, self.path)
+                except Exception:
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
+                    raise
+                await self.initialize()

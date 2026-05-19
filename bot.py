@@ -13,6 +13,7 @@ warnings.filterwarnings("ignore", message=".*pin_memory.*")
 
 import asyncio
 import logging
+import logging.handlers
 import sys
 
 import discord
@@ -37,11 +38,24 @@ def _configure_logging(debug: bool = False) -> None:
         if under_systemd
         else "%(asctime)s %(levelname)-8s %(name)s: %(message)s"
     )
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(logging.Formatter(fmt))
+    formatter = logging.Formatter(fmt)
     level = logging.DEBUG if debug else logging.INFO
-    logging.getLogger().setLevel(level)
-    logging.getLogger().addHandler(handler)
+    root = logging.getLogger()
+    root.setLevel(level)
+
+    console = logging.StreamHandler(sys.stdout)
+    console.setFormatter(formatter)
+    root.addHandler(console)
+
+    os.makedirs("logs", exist_ok=True)
+    file_handler = logging.handlers.RotatingFileHandler(
+        "logs/mtg_collection.log",
+        maxBytes=5 * 1024 * 1024,
+        backupCount=3,
+        encoding="utf-8",
+    )
+    file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)-8s %(name)s: %(message)s"))
+    root.addHandler(file_handler)
 
 
 TOKEN    = os.environ["DISCORD_TOKEN"]

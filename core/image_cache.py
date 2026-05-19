@@ -14,7 +14,8 @@ logger = logging.getLogger(__name__)
 CACHE_DIR = pathlib.Path(os.getenv("IMAGE_CACHE_DIR", "images"))
 _EXTS = ("webp", "jpg", "png")
 _HEADERS = {"Accept": "image/webp,image/*,*/*;q=0.8"}
-_TIMEOUT = aiohttp.ClientTimeout(total=30)
+_TIMEOUT = aiohttp.ClientTimeout(total=15, connect=5)
+_MAX_BYTES = 20 * 1024 * 1024  # 20 MB hard cap
 
 
 def get_cached_path(scryfall_id: str) -> Optional[pathlib.Path]:
@@ -48,10 +49,24 @@ async def ensure_cached(
             ct = resp.headers.get("Content-Type", "")
             ext = "webp" if "webp" in ct else ("png" if "png" in ct else "jpg")
             path = CACHE_DIR / f"{scryfall_id}.{ext}"
-            data = await resp.read()
+            chunks: list[bytes] = []
+            total = 0
+            async for chunk in resp.content.iter_chunked(65536):
+                total += len(chunk)
+                if total > _MAX_BYTES:
+                    logger.warning(
+                        "Image too large, aborting download: %s (>%d bytes)",
+                        scryfall_id, _MAX_BYTES,
+                    )
+                    return None
+                chunks.append(chunk)
+            data = b"".join(chunks)
             await asyncio.to_thread(path.write_bytes, data)
             logger.debug("Cached %s → %s (%d bytes)", scryfall_id, path.name, len(data))
             return path
+    except asyncio.TimeoutError:
+        logger.warning("Image download timed out: %s", scryfall_id)
+        return None
     except Exception as exc:
         logger.error("Image cache error %s: %s", scryfall_id, exc)
         return None

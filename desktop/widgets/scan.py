@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import difflib
 import io
 import logging
 from typing import Optional
@@ -371,6 +370,13 @@ class ScanWidget(QWidget):
     # ── Scan pipeline ──────────────────────────────────────────────────────────
 
     def _on_image(self, image_bytes: bytes):
+        from core.scanner import MAX_INPUT_BYTES
+        if len(image_bytes) > MAX_INPUT_BYTES:
+            QMessageBox.warning(
+                self, "Image too large",
+                f"Maximum scan image size is {MAX_INPUT_BYTES // (1024 * 1024)} MB.",
+            )
+            return
         self._pending_card = None
         self._clear_result()
         self._drop_zone.set_busy("Scanning…")
@@ -379,9 +385,9 @@ class ScanWidget(QWidget):
     @asyncSlot()
     async def _run_scan(self, image_bytes: bytes):
         from core import scanner as sc
+        from core.scan_service import resolve_scan, no_match_message
         from desktop.db import scryfall
 
-        # Show isolated preview while OCR runs
         try:
             preview = await asyncio.to_thread(sc.get_isolated_preview, image_bytes)
             if preview:
@@ -389,29 +395,24 @@ class ScanWidget(QWidget):
         except Exception:
             pass
 
-        # Run OCR (name + footer) in threads — EasyOCR is not thread-safe for
-        # concurrent calls so we run them sequentially inside a single thread.
-        self._status_match.setText("🔍 Running OCR…")
+        self._status_match.setText("🔍 Scanning…")
         self._status_match.setStyleSheet(_OCR_STATUS_STYLE)
 
         try:
-            extracted_name, collector_info = await asyncio.to_thread(
-                _run_ocr_sync, image_bytes
+            card, detected_lang, method_parts, extracted_name, collector_info = (
+                await resolve_scan(scryfall, image_bytes)
             )
         except Exception as exc:
-            self._status_match.setText(f"OCR error: {exc}")
+            self._status_match.setText(f"Scan error: {exc}")
             self._status_match.setStyleSheet(_MATCH_FAIL_STYLE)
             self._show_manual_input()
             return
 
-        # Display OCR raw results
         if collector_info.get("set_code") or collector_info.get("collector_number"):
             sc_info = collector_info.get("set_code", "—")
             cn_info = collector_info.get("collector_number", "—")
             lang_info = collector_info.get("language", "—")
-            self._status_collector.setText(
-                f"📋 Collector: {sc_info} #{cn_info}  lang: {lang_info}"
-            )
+            self._status_collector.setText(f"📋 Collector: {sc_info} #{cn_info}  lang: {lang_info}")
         else:
             self._status_collector.setText("📋 Collector: —")
 
@@ -420,20 +421,8 @@ class ScanWidget(QWidget):
         else:
             self._status_name.setText("🔠 Name OCR: —")
 
-        # Resolve against Scryfall
-        self._status_match.setText("🌐 Querying Scryfall…")
-        try:
-            card, detected_lang, method_parts = await _resolve_scryfall(
-                scryfall, extracted_name, collector_info
-            )
-        except Exception as exc:
-            self._status_match.setText(f"Scryfall error: {exc}")
-            self._status_match.setStyleSheet(_MATCH_FAIL_STYLE)
-            self._show_manual_input()
-            return
-
         if card is None:
-            msg = _no_match_msg(extracted_name, collector_info)
+            msg = no_match_message(extracted_name, collector_info)
             self._status_match.setText(f"❌ {msg}")
             self._status_match.setStyleSheet(_MATCH_FAIL_STYLE)
             self._show_manual_input()
@@ -566,86 +555,3 @@ class ScanWidget(QWidget):
         self._clear_result()
 
 
-# ── Helpers (module-level, called in threads) ─────────────────────────────────
-
-def _run_ocr_sync(image_bytes: bytes) -> tuple[Optional[str], dict]:
-    """Run name OCR and footer OCR sequentially in a worker thread."""
-    import core.scanner as sc
-
-    extracted_name = sc.extract_name(image_bytes)
-    collector_info = sc.extract_collector_info(image_bytes) or {}
-    return extracted_name, collector_info
-
-
-async def _resolve_scryfall(
-    scryfall,
-    extracted_name: Optional[str],
-    collector_info: dict,
-) -> tuple[Optional[dict], str, list[str]]:
-    """Mirror of cogs/scan._resolve_scan adapted for the desktop singleton."""
-    method_parts: list[str] = []
-
-    # Try collector match first (exact set+number lookup)
-    collector_card: Optional[dict] = None
-    if collector_info.get("set_code") and collector_info.get("collector_number"):
-        clang = collector_info.get("language") or "en"
-        collector_card = await scryfall.get_by_collector(
-            collector_info["set_code"], collector_info["collector_number"], clang
-        )
-        if not collector_card and clang != "en":
-            collector_card = await scryfall.get_by_collector(
-                collector_info["set_code"], collector_info["collector_number"], "en"
-            )
-
-    # OCR name match if collector lookup failed
-    ocr_card: Optional[dict] = None
-    ocr_lang = "unknown"
-    if extracted_name and not collector_card:
-        set_hint = collector_info.get("set_code")
-        ocr_card, ocr_lang = await scryfall.resolve_card(extracted_name, set_code=set_hint)
-        if not ocr_card and set_hint:
-            ocr_card, ocr_lang = await scryfall.resolve_card(extracted_name)
-
-    footer_lang = collector_info.get("language")
-
-    if collector_card:
-        detected_lang = footer_lang or "en"
-        sc_code = collector_info["set_code"]
-        cn_code = collector_info["collector_number"]
-        method_parts.append(f"collector [{sc_code} #{cn_code}]")
-        if extracted_name:
-            en = collector_card.get("name_en", "")
-            de = collector_card.get("name_de") or collector_card.get("printed_name", "")
-            ratio = max(
-                difflib.SequenceMatcher(None, extracted_name.lower(), en.lower()).ratio(),
-                difflib.SequenceMatcher(None, extracted_name.lower(), de.lower()).ratio() if de else 0,
-            )
-            if ratio >= 0.55:
-                method_parts.append(f'name confirmed "{extracted_name}" ({ratio:.0%})')
-            else:
-                method_parts.append(f'OCR name "{extracted_name}" ({ratio:.0%} match)')
-        return collector_card, detected_lang, method_parts
-
-    if ocr_card:
-        detected_lang = footer_lang or (ocr_lang if ocr_lang != "unknown" else "en")
-        method_parts.append(f'OCR [{ocr_lang}] "{extracted_name}"')
-        if footer_lang:
-            method_parts.append(f"lang {footer_lang} (footer)")
-        return ocr_card, detected_lang, method_parts
-
-    return None, "en", []
-
-
-def _no_match_msg(extracted_name: Optional[str], collector_info: dict) -> str:
-    import core.scanner as sc
-
-    if not sc.ocr_available():
-        return "No OCR engine installed. Enter the name manually."
-    if collector_info.get("set_code") and collector_info.get("collector_number"):
-        return (
-            f'Collector info found ({collector_info["set_code"]} '
-            f'#{collector_info["collector_number"]}) but no Scryfall match.'
-        )
-    if extracted_name:
-        return f'Could not match "{extracted_name}" on Scryfall. Enter the name manually.'
-    return "Could not read the card name. Enter it manually below."

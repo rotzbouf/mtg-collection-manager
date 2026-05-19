@@ -6,6 +6,7 @@ Rate limit: max 10 req/s — we enforce a 100 ms gap between requests.
 import asyncio
 import logging
 import re
+import time
 from typing import Optional
 
 import aiohttp
@@ -19,6 +20,7 @@ _SET_CODE_RE = re.compile(r"^[a-zA-Z0-9]{1,10}$")
 
 # German MTG set codes that are purely German editions (very old)
 _DE_SETS = {"por", "ptk", "s99"}
+_ID_CACHE_TTL = 86_400.0  # 24 hours — card data doesn't change often
 
 
 def _extract_card(data: dict, preferred_lang: Optional[str] = None) -> dict:
@@ -100,6 +102,7 @@ class ScryfallClient:
         self._session: Optional[aiohttp.ClientSession] = None
         self._last_request = 0.0
         self._semaphore = asyncio.Semaphore(1)
+        self._id_cache: dict[str, tuple[dict, float]] = {}
 
     async def _session_get(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -174,10 +177,17 @@ class ScryfallClient:
             return _extract_card(data["data"][0])
         return None
 
-    async def get_by_id(self, scryfall_id: str) -> Optional[dict]:
+    async def get_by_id(self, scryfall_id: str, force_refresh: bool = False) -> Optional[dict]:
+        now = time.monotonic()
+        if not force_refresh:
+            cached, ts = self._id_cache.get(scryfall_id, (None, 0.0))
+            if cached is not None and now - ts < _ID_CACHE_TTL:
+                return cached
         data = await self._get(f"{BASE}/cards/{scryfall_id}")
         if data and data.get("object") == "card":
-            return _extract_card(data)
+            card = _extract_card(data)
+            self._id_cache[scryfall_id] = (card, now)
+            return card
         return None
 
     async def get_by_collector(self, set_code: str, collector_number: str, lang: str = "en") -> Optional[dict]:

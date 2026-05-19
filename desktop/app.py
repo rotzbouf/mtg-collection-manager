@@ -6,8 +6,10 @@ Run with:
 from __future__ import annotations
 
 import asyncio
-import sys
+import logging
+import logging.handlers
 import os
+import sys
 
 # Ensure the project root is on the path so ``core`` is importable.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -42,7 +44,20 @@ async def _shutdown(loop: QEventLoop) -> None:
     loop.stop()
 
 
+def _configure_logging() -> None:
+    root = logging.getLogger()
+    root.setLevel(logging.DEBUG)
+    fmt = logging.Formatter("%(asctime)s %(levelname)-8s %(name)s: %(message)s")
+    os.makedirs("logs", exist_ok=True)
+    fh = logging.handlers.RotatingFileHandler(
+        "logs/mtg_desktop.log", maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
+    )
+    fh.setFormatter(fmt)
+    root.addHandler(fh)
+
+
 def main():
+    _configure_logging()
     app = QApplication(sys.argv)
     app.setApplicationName("MTG Collection Manager")
     app.setOrganizationName("MTGBot")

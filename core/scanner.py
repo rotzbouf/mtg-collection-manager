@@ -19,8 +19,9 @@ from typing import Optional
 import numpy as np
 from PIL import Image, ImageEnhance, ImageFilter
 
-_MAX_IMAGE_PIXELS = 4096 * 4096  # ~67 MP — well above any real card photo
-_CARD_ASPECT      = 7 / 5        # MTG card height ÷ width (3.5" ÷ 2.5")
+_MAX_IMAGE_PIXELS = 4096 * 4096   # ~67 MP — well above any real card photo
+_CARD_ASPECT      = 7 / 5         # MTG card height ÷ width (3.5" ÷ 2.5")
+MAX_INPUT_BYTES   = 20 * 1024 * 1024  # 20 MB — reject before even touching Pillow
 
 logger = logging.getLogger(__name__)
 
@@ -434,6 +435,12 @@ def extract_collector_info(image_bytes: bytes) -> dict:
 
     Primary engine: EasyOCR.  Fallback: Tesseract (--psm 6).
     """
+    if len(image_bytes) > MAX_INPUT_BYTES:
+        logger.warning(
+            "extract_collector_info: image too large (%d bytes), skipping",
+            len(image_bytes),
+        )
+        return {}
     try:
         img = _open_image_safe(image_bytes)
         if img is None:
@@ -512,11 +519,12 @@ def _easyocr_extract(image_bytes: bytes) -> Optional[str]:
             [r for r in results if r[2] >= MIN_CONF],
             key=lambda r: r[0][0][0],  # sort by left-x of bounding box
         )
-        text = (
+        raw = (
             " ".join(r[1].strip() for r in confident).strip()
             if confident
             else max(results, key=lambda r: r[2])[1].strip()
         )
+        text = _normalize_ocr(raw)
         return text if len(text) > 1 else None
     except Exception as e:
         logger.error("EasyOCR error: %s", e)
@@ -534,15 +542,25 @@ def _tesseract_extract(image_bytes: bytes) -> Optional[str]:
         img = _ensure_min_width(img)
         zone = _crop_name_zone(img).convert("L")
         raw = _pytesseract.image_to_string(zone, config="--psm 7 --oem 3").strip()
-        text = " ".join(raw.split()).replace("|", "l").replace("0", "O")
+        text = _normalize_ocr(raw)
         return text if len(text) > 1 else None
     except Exception as e:
         logger.error("Tesseract error: %s", e)
         return None
 
 
+def _normalize_ocr(text: str) -> str:
+    """Shared post-processing for raw OCR text from any engine."""
+    text = " ".join(text.split())
+    text = text.replace("|", "l").replace("0", "O")
+    return text
+
+
 def extract_name(image_bytes: bytes) -> Optional[str]:
     """Try EasyOCR first, fall back to tesseract."""
+    if len(image_bytes) > MAX_INPUT_BYTES:
+        logger.warning("extract_name: image too large (%d bytes), skipping", len(image_bytes))
+        return None
     return _easyocr_extract(image_bytes) or _tesseract_extract(image_bytes)
 
 

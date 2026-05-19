@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import difflib
 import io
 import logging
 import os
@@ -12,6 +11,8 @@ import discord
 from discord.ext import commands
 
 import core.scanner as scanner
+from core.rate_limiter import RateLimiter
+from core.scan_service import resolve_scan as _core_resolve_scan
 from cogs.auth import require_collector
 from cogs.utils import LANG_EMOJI, CONTAINER_TYPES, card_embed
 
@@ -22,6 +23,8 @@ SHOWCASE_CHANNEL_ID = int(os.getenv("DISCORD_SHOWCASE_CHANNEL_ID",    0)) or Non
 DEBUG_SCAN_PREVIEW  = os.getenv("DEBUG_SCAN_PREVIEW", "0") == "1"
 
 _SCAN_IMAGE_EXTS = {"jpg", "jpeg", "png", "gif", "webp", "bmp", "tiff", "heic"}
+_MAX_SCAN_BYTES = scanner.MAX_INPUT_BYTES
+_scan_limiter = RateLimiter(5, 60.0)  # 5 scans per 60 s per user
 
 # Per-user last-used container: user_id -> (container_id, container_name)
 _last_container: dict[int, tuple[int, str]] = {}
@@ -36,63 +39,10 @@ class _ScanMatch(NamedTuple):
 
 
 async def _resolve_scan(interaction_client, image_bytes: bytes) -> _ScanMatch:
-    """Run name OCR then footer OCR sequentially to avoid concurrent EasyOCR access."""
-    extracted_name = await asyncio.to_thread(scanner.extract_name, image_bytes)
-    collector_info = await asyncio.to_thread(scanner.extract_collector_info, image_bytes) or {}
-
-    # Collector match: set code + number → exact Scryfall lookup
-    collector_card: Optional[dict] = None
-    if collector_info.get("set_code") and collector_info.get("collector_number"):
-        _clang = collector_info.get("language", "en")
-        collector_card = await interaction_client.scryfall.get_by_collector(
-            collector_info["set_code"], collector_info["collector_number"], _clang
-        )
-        if not collector_card and _clang != "en":
-            collector_card = await interaction_client.scryfall.get_by_collector(
-                collector_info["set_code"], collector_info["collector_number"], "en"
-            )
-
-    # OCR name match — set code hint narrows Scryfall search
-    ocr_card: Optional[dict] = None
-    ocr_lang = "unknown"
-    if extracted_name and not collector_card:
-        set_hint = collector_info.get("set_code")
-        ocr_card, ocr_lang = await interaction_client.scryfall.resolve_card(extracted_name, set_code=set_hint)
-        if not ocr_card and set_hint:
-            ocr_card, ocr_lang = await interaction_client.scryfall.resolve_card(extracted_name)
-
-    footer_lang = collector_info.get("language")
-
-    card: Optional[dict] = None
-    detected_lang = "en"
-    method_parts: list[str] = []
-
-    if collector_card:
-        card = collector_card
-        detected_lang = footer_lang or "en"
-        set_info = f'{collector_info["set_code"]} #{collector_info["collector_number"]}'
-        method_parts.append(f"collector [{set_info}]")
-        if extracted_name:
-            en_name = collector_card.get("name_en", "")
-            de_name = collector_card.get("name_de") or collector_card.get("printed_name", "")
-            ratio = max(
-                difflib.SequenceMatcher(None, extracted_name.lower(), en_name.lower()).ratio(),
-                difflib.SequenceMatcher(None, extracted_name.lower(), de_name.lower()).ratio() if de_name else 0,
-            )
-            if ratio >= 0.55:
-                method_parts.append(f'name confirmed: "{extracted_name}" ({ratio:.0%})')
-            else:
-                logger.debug("Collector/name mismatch: OCR='%s' vs '%s' (ratio=%.2f)",
-                             extracted_name, en_name, ratio)
-                method_parts.append(f'OCR: "{extracted_name}" (differs {ratio:.0%})')
-
-    elif ocr_card:
-        card = ocr_card
-        detected_lang = footer_lang or (ocr_lang if ocr_lang != "unknown" else "en")
-        method_parts.append(f'OCR [{ocr_lang}]: "{extracted_name}"')
-        if footer_lang:
-            method_parts.append(f"lang: {footer_lang} (footer)")
-
+    """Delegate to the shared scan_service pipeline."""
+    card, detected_lang, method_parts, extracted_name, collector_info = (
+        await _core_resolve_scan(interaction_client.scryfall, image_bytes)
+    )
     return _ScanMatch(
         card=card,
         detected_lang=detected_lang,
@@ -128,7 +78,7 @@ async def _do_scan_and_confirm(
     await interaction.response.defer(thinking=True)
 
     if DEBUG_SCAN_PREVIEW:
-        preview = scanner.get_isolated_preview(image_bytes)
+        preview = await asyncio.to_thread(scanner.get_isolated_preview, image_bytes)
         if preview:
             await interaction.followup.send(
                 "🔍 **Debug preview** — isolated card + OCR name zone (red box):",
@@ -516,6 +466,19 @@ class _ManualNameView(discord.ui.View):
 
 
 async def _handle_scan_attachment(bot, message: discord.Message, attachment: discord.Attachment):
+    allowed, retry_after = _scan_limiter.check(message.author.id)
+    if not allowed:
+        await message.channel.send(
+            f"{message.author.mention} ⏳ Too many scans — try again in {retry_after:.0f}s.",
+            delete_after=10,
+        )
+        return
+    if attachment.size > _MAX_SCAN_BYTES:
+        await message.channel.send(
+            f"{message.author.mention} ⚠️ Image too large (max {_MAX_SCAN_BYTES // (1024*1024)} MB).",
+            delete_after=15,
+        )
+        return
     image_bytes = await attachment.read()
     default = _last_container.get(message.author.id)
 
