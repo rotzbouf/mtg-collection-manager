@@ -3,6 +3,7 @@
     "binder",
     "box",
     "deck",
+    "commander",
     "trade",
     "other",
     "overcount"
@@ -11,5 +12,7 @@
     "deck",
     "commander",
     "overcount"
-  ]
+  ],
+  "backup_dir": "/home/laurent/Dokumente",
+  "price_source": "cardmarket"
 }
