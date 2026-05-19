@@ -9,7 +9,7 @@
     "admin_role": ""
   },
   "app": {
-    "backup_dir": "/home/laurent/Dokumente",
+    "backup_dir": "",
     "price_source": "cardmarket",
     "ui_port": 8080,
     "ui_host": "0.0.0.0",

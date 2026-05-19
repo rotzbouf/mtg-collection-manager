@@ -63,6 +63,23 @@ def _read_env_file() -> dict[str, str]:
     return values
 
 
+def _coerce(value: str, target) -> object:
+    """Cast a string from .env to the same type as the default value."""
+    if isinstance(target, bool):
+        return value.lower() in ("1", "true", "yes")
+    if isinstance(target, int):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return target
+    if isinstance(target, float):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return target
+    return value
+
+
 def _migrate_from_env(config: dict) -> bool:
     """Copy .env values into config.json sections on first run. Returns True if anything changed."""
     env = _read_env_file()
@@ -71,7 +88,8 @@ def _migrate_from_env(config: dict) -> bool:
     changed = False
     for env_key, section, cfg_key in _ENV_MIGRATE:
         if env_key in env and not config[section].get(cfg_key):
-            config[section][cfg_key] = env[env_key]
+            default = _DEFAULTS[section][cfg_key]
+            config[section][cfg_key] = _coerce(env[env_key], default)
             changed = True
     return changed
 
