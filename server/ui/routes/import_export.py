@@ -15,7 +15,7 @@ from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
-import ui.deps as deps
+import server.ui.deps as deps
 from core.database import Database
 from core.exporter import to_csv, to_json, to_moxfield
 from core.importer import detect_format, parse_full_csv, parse_json, parse_moxfield_csv, normalize_row

@@ -2,7 +2,8 @@
 set -euo pipefail
 
 SERVICE_NAME="mtg-bot"
-PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve project root (one level above this script)
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV_PYTHON="$PROJECT_DIR/venv/bin/python"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 RUN_USER="${SUDO_USER:-$USER}"
@@ -11,12 +12,12 @@ echo "=== MTG Bot – Service Installation ==="
 
 # --- Checks ---
 if [ "$EUID" -ne 0 ]; then
-    echo "ERROR: Run with sudo: sudo bash service_install.sh" >&2
+    echo "ERROR: Run with sudo: sudo bash server/service_install.sh" >&2
     exit 1
 fi
 
 if [ ! -f "$VENV_PYTHON" ]; then
-    echo "ERROR: venv not found. Run install.sh first." >&2
+    echo "ERROR: venv not found. Run server/install.sh first." >&2
     exit 1
 fi
 

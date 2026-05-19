@@ -7,7 +7,7 @@ import mimetypes
 from fastapi import APIRouter, BackgroundTasks
 from fastapi.responses import FileResponse, RedirectResponse, Response
 
-import ui.deps as deps
+import server.ui.deps as deps
 from core.image_cache import get_cached_path, ensure_cached
 
 router = APIRouter()

@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve project root (one level above this script)
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV_DIR="$PROJECT_DIR/venv"
 
-echo "=== MTG Collection Manager – Setup ==="
+echo "=== MTG Collection Manager – Server Setup ==="
 
 # --- Check Python ---
 if ! command -v python3 &>/dev/null; then
@@ -23,7 +24,7 @@ fi
 
 echo "Python $PYTHON_VERSION found."
 
-# --- System dependencies (tesseract) ---
+# --- System dependencies ---
 echo ""
 echo "Checking system dependencies..."
 
@@ -80,8 +81,8 @@ fi
 
 echo ""
 echo "=== Setup complete ==="
-echo "Activate:  source venv/bin/activate"
-echo "Run:       python bot.py"
+echo "Next: edit $PROJECT_DIR/.env, then run:"
+echo "  sudo bash $(dirname "${BASH_SOURCE[0]}")/service_install.sh"
 echo ""
 echo "NOTE: On the very first run EasyOCR will download its language models (~150 MB)."
 echo "      This happens once and is cached automatically."

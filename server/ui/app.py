@@ -1,6 +1,6 @@
 """
 FastAPI web UI for the MTG Collection Manager.
-Run:  python3 ui/app.py   or   python3 -m ui.app
+Run:  python3 -m server.ui.app
 """
 from __future__ import annotations
 
@@ -9,16 +9,16 @@ import sys
 import logging
 from contextlib import asynccontextmanager
 
-# Allow `python3 ui/app.py` from project root
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Allow `python3 server/ui/app.py` from project root (3 levels up: ui → server → project)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-import ui.deps as deps
-from ui.routes import collection, containers, stats, import_export, images
+import server.ui.deps as deps
+from server.ui.routes import collection, containers, stats, import_export, images
 
 logging.basicConfig(
     level=logging.INFO,
@@ -64,7 +64,7 @@ if __name__ == "__main__":
     host = os.getenv("UI_HOST", "0.0.0.0")
     port = int(os.getenv("UI_PORT", "8080"))
     uvicorn.run(
-        "ui.app:app",
+        "server.ui.app:app",
         host=host,
         port=port,
         reload=False,
