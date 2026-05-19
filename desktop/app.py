@@ -24,7 +24,7 @@ from desktop.main_window import MainWindow
 
 
 async def _shutdown(loop: QEventLoop) -> None:
-    """Cancel pending tasks, flush the thread-pool with a timeout, then stop."""
+    """Cancel pending tasks, close resources, then stop the loop."""
     current = asyncio.current_task()
 
     # 1. Cancel every outstanding coroutine task.
@@ -33,9 +33,16 @@ async def _shutdown(loop: QEventLoop) -> None:
         t.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
 
-    # 2. Wait for thread-pool threads (asyncio.to_thread) to drain, but give
-    #    them at most 2 s — image loads or DB calls that are mid-flight are
-    #    abandoned rather than keeping the process alive indefinitely.
+    # 2. Close DB connection and HTTP session so their background threads exit
+    #    cleanly before we drain the executor pool.
+    try:
+        from desktop.db import db, scryfall
+        await db.close()
+        await scryfall.close()
+    except Exception:
+        pass
+
+    # 3. Drain asyncio.to_thread pool with a short timeout.
     try:
         await asyncio.wait_for(loop.shutdown_default_executor(), timeout=2.0)
     except asyncio.TimeoutError:
@@ -76,6 +83,11 @@ def main():
 
     with loop:
         loop.run_forever()
+
+    # PyTorch / EasyOCR create non-daemon threads that Python's normal shutdown
+    # would try to join — causing the visible hang on close.  os._exit skips
+    # that join sequence and terminates immediately (exit code 0 = clean exit).
+    os._exit(0)
 
 
 def _apply_dark_style(app: QApplication):
