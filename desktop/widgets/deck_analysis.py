@@ -259,6 +259,7 @@ class DeckAnalysisWidget(QWidget):
             return
 
         from core.deckbuilder import curve_analysis, color_identity as _ci
+        from core.analysis import detect_archetypes, deck_synergy_score, curve_fit_score
         import json
 
         commander = next((c for c in self._cards if c.get("is_commander")), None)
@@ -278,28 +279,53 @@ class DeckAnalysisWidget(QWidget):
 
         cmd_name = (commander.get("name_en") or "") if commander else ""
         fmt = (self._current_container or {}).get("deck_format") or (self._current_container or {}).get("type") or ""
+        fmt_key = "commander" if fmt == "commander" else "60"
+
+        # Archetype detection
+        archetypes = detect_archetypes([c for c, _ in nonland])
+        top_arch = archetypes[0][0] if archetypes else ""
+        arch_conf = archetypes[0][1] if archetypes else 0.0
+
+        # Synergy score (sample)
+        synergy = deck_synergy_score([c for c, _ in nonland[:40]])
+
+        # Curve fit vs detected archetype
+        fit = curve_fit_score(curve, top_arch, fmt=fmt_key) if top_arch else 0.0
+
         parts = []
         if cmd_name:
             parts.append(f"⚔ {cmd_name}")
         if color_str:
             parts.append(f"[{color_str}]")
-        parts.append(f"{fmt}")
+        if fmt:
+            parts.append(fmt)
         parts.append(f"{len(self._cards)} cards")
         parts.append(f"€{total_value:.2f}")
+        if top_arch:
+            parts.append(f"{top_arch} {int(arch_conf * 100)}%")
+        parts.append(f"Synergy {synergy:.1f}")
+        parts.append(f"Curve fit {int(fit * 100)}%")
         self._stats_lbl.setText("  ·  ".join(parts))
 
-        # Compact curve
+        # Compact curve with archetype ideal overlay
         if curve:
+            from core.analysis import ideal_curve
+            ideal = ideal_curve(top_arch or "default", fmt=fmt_key)
+            total_nonland = sum(curve.values())
             max_n = max(curve.values(), default=1)
             BAR = 8
-            labels = {0:"0",1:"1",2:"2",3:"3",4:"4",5:"5",6:"6+"}
+            labels = {0: "0", 1: "1", 2: "2", 3: "3", 4: "4", 5: "5", 6: "6+"}
             curve_parts = []
             for b in range(7):
                 n = curve.get(b, 0)
                 if n == 0:
                     continue
                 bar = "█" * max(1, round(n / max_n * BAR))
-                curve_parts.append(f"{labels[b]}:{bar}{n}")
+                target = round(ideal.get(b, 0) * total_nonland)
+                delta = n - target
+                sign = f"+{delta}" if delta > 0 else str(delta)
+                tag = f"({sign})" if delta != 0 else ""
+                curve_parts.append(f"{labels[b]}:{bar}{n}{tag}")
             self._curve_lbl.setText("  ".join(curve_parts))
         else:
             self._curve_lbl.setText("")

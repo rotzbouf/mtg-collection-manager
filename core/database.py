@@ -205,12 +205,15 @@ class Database:
             cont_cols = {row[1] for row in await cur.fetchall()}
         if "deck_format" not in cont_cols:
             await self._db.execute("ALTER TABLE containers ADD COLUMN deck_format TEXT")
-            # Carry over existing containers typed as "commander"
             await self._db.execute(
                 "UPDATE containers SET deck_format = 'commander' WHERE type = 'commander'"
             )
             await self._db.commit()
             logger.info("Migrated: added deck_format to containers")
+        if "color_identity" not in cont_cols:
+            await self._db.execute("ALTER TABLE containers ADD COLUMN color_identity TEXT")
+            await self._db.commit()
+            logger.info("Migrated: added color_identity to containers")
 
         # Normalised price table — one row per scryfall_id, shared by all physical copies.
         async with self._db.execute(
@@ -1167,6 +1170,16 @@ class Database:
             await self._db.execute(
                 "UPDATE containers SET deck_format = ? WHERE id = ?",
                 (deck_format, container_id),
+            )
+            await self._db.commit()
+
+    async def set_container_color_identity(
+        self, container_id: int, color_identity: Optional[str]
+    ) -> None:
+        async with self._write_lock:
+            await self._db.execute(
+                "UPDATE containers SET color_identity = ? WHERE id = ?",
+                (color_identity, container_id),
             )
             await self._db.commit()
 

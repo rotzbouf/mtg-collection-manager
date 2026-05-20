@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView,
     QLineEdit, QPushButton, QLabel, QComboBox,
     QMessageBox, QAbstractItemView, QMenu, QDialog,
-    QApplication,
+    QApplication, QFrame,
 )
 from PyQt6.QtCore import Qt, QTimer
 from qasync import asyncSlot
@@ -312,10 +312,25 @@ class CollectionWidget(QWidget):
 
         menu.exec(self._table.viewport().mapToGlobal(pos))
 
-    def _on_move_to_container(self, card_ids: list[int]):
+    @asyncSlot()
+    async def _on_move_to_container(self, card_ids: list[int]):
+        from desktop.db import db
+
         dlg = _MoveToContainerDialog(self._containers, len(card_ids), parent=self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            self._do_move_cards(card_ids, dlg.selected_container_id())
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        is_new, container_id, new_name, new_type = dlg.selected_result()
+        if is_new:
+            try:
+                container_id = await db.create_container(new_name, type=new_type)
+            except Exception as exc:
+                QMessageBox.critical(self, "Error", f"Could not create container:\n{exc}")
+                return
+
+        await db.move_cards_to_container(card_ids, container_id)
+        await self._reload_containers()
+        await self._load_page()
 
     @asyncSlot()
     async def _do_resync_card(self, card: dict):
@@ -384,13 +399,6 @@ class CollectionWidget(QWidget):
         await self._load_page()
 
     @asyncSlot()
-    async def _do_move_cards(self, card_ids: list[int], container_id):
-        from desktop.db import db
-        await db.move_cards_to_container(card_ids, container_id)
-        await self._reload_containers()
-        await self._load_page()
-
-    @asyncSlot()
     async def refresh(self):
         await self._reload_containers()
         await self._load_page()
@@ -401,10 +409,14 @@ class CollectionWidget(QWidget):
 class _MoveToContainerDialog(QDialog):
     def __init__(self, containers: list[dict], card_count: int, parent=None):
         super().__init__(parent)
+        import core.config as cfg
+
+        self._new_containers: list[tuple[str, str]] = []
+
         self.setWindowTitle("Move to container")
-        self.setMinimumWidth(300)
+        self.setMinimumWidth(400)
         layout = QVBoxLayout(self)
-        layout.setSpacing(12)
+        layout.setSpacing(10)
 
         layout.addWidget(QLabel(f"Move <b>{card_count}</b> card(s) to:"))
 
@@ -417,6 +429,35 @@ class _MoveToContainerDialog(QDialog):
             )
         layout.addWidget(self._combo)
 
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        layout.addWidget(sep)
+
+        layout.addWidget(QLabel("<b>Create new container:</b>"))
+
+        new_row = QHBoxLayout()
+        new_row.setSpacing(6)
+
+        self._new_name_edit = QLineEdit()
+        self._new_name_edit.setPlaceholderText("Container name…")
+        new_row.addWidget(self._new_name_edit, stretch=2)
+
+        self._new_type_cb = QComboBox()
+        self._new_type_cb.addItems(cfg.load().get("container_types", cfg.BUILTIN_TYPES))
+        new_row.addWidget(self._new_type_cb, stretch=1)
+
+        add_btn = QPushButton("Add & Select")
+        add_btn.setStyleSheet(
+            "padding: 4px 10px; background: #0f3460; color: white; border-radius: 3px;"
+        )
+        add_btn.clicked.connect(self._on_add_new)
+        new_row.addWidget(add_btn)
+        layout.addLayout(new_row)
+
+        sep2 = QFrame()
+        sep2.setFrameShape(QFrame.Shape.HLine)
+        layout.addWidget(sep2)
+
         btn_row = QHBoxLayout()
         ok_btn = QPushButton("Move")
         ok_btn.setDefault(True)
@@ -428,6 +469,24 @@ class _MoveToContainerDialog(QDialog):
 
         ok_btn.clicked.connect(self.accept)
         cancel_btn.clicked.connect(self.reject)
+        self._new_name_edit.returnPressed.connect(self._on_add_new)
 
-    def selected_container_id(self):
-        return self._combo.currentData()
+    def _on_add_new(self):
+        name = self._new_name_edit.text().strip()
+        if not name:
+            self._new_name_edit.setFocus()
+            return
+        ctype = self._new_type_cb.currentText()
+        idx = len(self._new_containers)
+        self._new_containers.append((name, ctype))
+        self._combo.addItem(f"✦ {name}  [{ctype}]  (new)", ("NEW", idx))
+        self._combo.setCurrentIndex(self._combo.count() - 1)
+        self._new_name_edit.clear()
+
+    def selected_result(self) -> tuple[bool, object, str, str]:
+        """Return (is_new, container_id, new_name, new_type)."""
+        data = self._combo.currentData()
+        if isinstance(data, tuple) and data[0] == "NEW":
+            name, ctype = self._new_containers[data[1]]
+            return True, None, name, ctype
+        return False, data, "", ""

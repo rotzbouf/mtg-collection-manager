@@ -49,11 +49,21 @@ class _TabbedPage(QWidget):
         self._tab.setDocumentMode(True)
         layout.addWidget(self._tab)
         self._children: list[QWidget] = []
+        self._db_ready_flag = False
         for label, widget in tabs:
             self._tab.addTab(widget, label)
             self._children.append(widget)
+        self._tab.currentChanged.connect(self._on_tab_changed)
+
+    def _on_tab_changed(self, _index: int):
+        if not self._db_ready_flag:
+            return
+        current = self._tab.currentWidget()
+        if current and hasattr(current, "refresh"):
+            current.refresh()
 
     def db_ready(self):
+        self._db_ready_flag = True
         for child in self._children:
             if hasattr(child, "db_ready"):
                 child.db_ready()

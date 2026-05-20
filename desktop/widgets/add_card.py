@@ -18,7 +18,6 @@ from desktop.utils import CONDITIONS, display_name, lang_flag, format_price, sca
 from desktop.widgets.card_detail import ManaWidget
 
 _LANGUAGES = [
-    (None,  "Any language"),
     ("en",  "English"),
     ("de",  "German"),
     ("fr",  "French"),
@@ -32,8 +31,6 @@ _LANGUAGES = [
     ("zht", "Traditional Chinese"),
     ("ph",  "Phyrexian"),
 ]
-
-_COLLECTION_LANGUAGES = [(c, l) for c, l in _LANGUAGES if c is not None]
 
 _PLACEHOLDER_STYLE = "background: #1e1e2e; border-radius: 8px; color: #555; font-size: 12px;"
 
@@ -66,6 +63,9 @@ class AddCardWidget(QWidget):
         splitter.setSizes([380, 800])
 
         root.addWidget(splitter)
+
+        self._search_lang_cb.currentIndexChanged.connect(self._update_lang_label)
+        self._update_lang_label()
 
     # ---- Search pane (left) ------------------------------------------ #
 
@@ -255,14 +255,28 @@ class AddCardWidget(QWidget):
 
         lang_col = QVBoxLayout()
         lang_col.addWidget(QLabel("Language:"))
-        self._lang_cb = QComboBox()
-        for code, label in _COLLECTION_LANGUAGES:
-            self._lang_cb.addItem(label, code)
-        lang_col.addWidget(self._lang_cb)
+        self._lang_lbl = QLabel()
+        self._lang_lbl.setStyleSheet(
+            "font-size: 13px; color: #aaa; padding: 3px 0; font-style: italic;"
+        )
+        self._lang_lbl.setToolTip("Matches the search language selected on the left")
+        lang_col.addWidget(self._lang_lbl)
         cl_row.addLayout(lang_col)
         right.addLayout(cl_row)
 
-        self._foil_cb = QCheckBox("Foil")
+        self._foil_cb = QCheckBox("✦ Foil")
+        self._foil_cb.setStyleSheet("""
+            QCheckBox {
+                font-size: 13px;
+                font-weight: bold;
+                color: #d4af37;
+                padding: 4px 0;
+            }
+            QCheckBox::indicator {
+                width: 18px;
+                height: 18px;
+            }
+        """)
         right.addWidget(self._foil_cb)
 
         right.addWidget(QLabel("Container:"))
@@ -270,9 +284,12 @@ class AddCardWidget(QWidget):
         self._container_cb = QComboBox()
         self._container_cb.addItem("(no container)", None)
         container_row.addWidget(self._container_cb, stretch=1)
-        self._new_container_btn = QPushButton("+")
-        self._new_container_btn.setFixedWidth(28)
+        self._new_container_btn = QPushButton("+ New")
         self._new_container_btn.setToolTip("Create new container")
+        self._new_container_btn.setStyleSheet(
+            "font-size: 11px; padding: 4px 8px;"
+            " background: #0f3460; color: white; border-radius: 3px;"
+        )
         container_row.addWidget(self._new_container_btn)
         right.addLayout(container_row)
 
@@ -299,6 +316,9 @@ class AddCardWidget(QWidget):
     # ------------------------------------------------------------------ #
     # Helpers                                                               #
     # ------------------------------------------------------------------ #
+
+    def _update_lang_label(self):
+        self._lang_lbl.setText(self._search_lang_cb.currentText())
 
     def _log(self, msg: str):
         self._log_view.appendPlainText(msg)
@@ -370,7 +390,7 @@ class AddCardWidget(QWidget):
         name     = self._name_edit.text().strip()
         set_code = self._set_edit.text().strip() or None
         cn       = self._cn_edit.text().strip() or None
-        lang     = self._search_lang_cb.currentData()  # None = "Any language"
+        lang     = self._search_lang_cb.currentData()
 
         if not name and not set_code:
             self._log("⚠ Enter at least a name or a set code.")
@@ -449,13 +469,6 @@ class AddCardWidget(QWidget):
             price_parts.append(f"${usd:.2f}")
         self._lbl_price.setText("  /  ".join(price_parts) or "—")
 
-        # Pre-select language in collection details
-        lang = card.get("language") or "en"
-        for i in range(self._lang_cb.count()):
-            if self._lang_cb.itemData(i) == lang:
-                self._lang_cb.setCurrentIndex(i)
-                break
-
         self._empty_lbl.setVisible(False)
         self._preview_widget.setVisible(True)
         self._img_label.setText("Loading…")
@@ -481,7 +494,7 @@ class AddCardWidget(QWidget):
 
         card = dict(self._selected_card)
         card["condition"]   = self._condition_cb.currentText()
-        card["language"]    = self._lang_cb.currentData()
+        card["language"]    = self._search_lang_cb.currentData()
         card["foil"]        = 1 if self._foil_cb.isChecked() else 0
         card["container_id"]= self._container_cb.currentData()
         card["quantity"]    = 1

@@ -75,6 +75,11 @@ class DeckWidget(QWidget):
         self._cmd_combo.setMinimumWidth(400)
         cmd_layout.addWidget(self._cmd_combo)
 
+        self._cmd_ci_lbl = QLabel("")
+        self._cmd_ci_lbl.setStyleSheet("color: #aaa; font-size: 11px; padding: 2px 0;")
+        self._cmd_ci_lbl.setVisible(False)
+        cmd_layout.addWidget(self._cmd_ci_lbl)
+
         root.addWidget(self._cmd_section)
 
         # ── Strategy section (60-card) ────────────────────────────────────
@@ -142,6 +147,7 @@ class DeckWidget(QWidget):
         # ── Signals ───────────────────────────────────────────────────────
         self._fmt_cb.currentIndexChanged.connect(self._on_format_changed)
         self._cmd_edit.textChanged.connect(self._on_cmd_filter_changed)
+        self._cmd_combo.currentIndexChanged.connect(self._on_cmd_selected)
         self._build_btn.clicked.connect(self._on_build)
         self._copy_btn.clicked.connect(self._on_copy)
         self._export_full_btn.clicked.connect(lambda: self._on_export(mtga=False))
@@ -212,6 +218,28 @@ class DeckWidget(QWidget):
 
     def _on_cmd_filter_changed(self, text: str):
         self._populate_cmd_combo(text)
+
+    def _on_cmd_selected(self, _index: int):
+        import json
+        cmd = self._cmd_combo.currentData()
+        if cmd is None:
+            self._cmd_ci_lbl.setVisible(False)
+            return
+        ci = cmd.get("color_identity") or []
+        if isinstance(ci, str):
+            try:
+                ci = json.loads(ci)
+            except Exception:
+                ci = []
+        _names = {"W": "White", "U": "Blue", "B": "Black", "R": "Red", "G": "Green"}
+        _order = "WUBRG"
+        sorted_ci = sorted(ci, key=lambda x: _order.index(x) if x in _order else 9)
+        if sorted_ci:
+            text = "  ·  ".join(_names.get(c, c) for c in sorted_ci)
+            self._cmd_ci_lbl.setText(f"Color identity: {text}")
+        else:
+            self._cmd_ci_lbl.setText("Color identity: Colorless")
+        self._cmd_ci_lbl.setVisible(True)
 
     # ------------------------------------------------------------------ #
     # Build                                                                 #
@@ -295,11 +323,13 @@ class DeckWidget(QWidget):
                 "  |  ⚠ Basics missing: " + ", ".join(f"{n}× {land}" for land, n in sorted(missing.items()))
                 if missing else ""
             )
+            arch = result.get("archetype", "")
+            synergy = result.get("synergy_score", 0)
             themes_str = ("  |  " + ", ".join(result.get("themes") or [])) if result.get("themes") else ""
             self._stats_label.setText(
                 f"Commander: {commander.get('name_en', '')}  |  "
                 f"{result['collection_count']} from collection{missing_str}  |  "
-                f"€{val:.2f}{themes_str}"
+                f"€{val:.2f}  |  {arch}  |  Synergy: {synergy:.1f}{themes_str}"
             )
         else:
             forced = self._strategy_cb.currentData()
@@ -307,15 +337,17 @@ class DeckWidget(QWidget):
             text = format_60_decklist(result)
             val = result.get("value_eur", 0)
             strategy = result.get("strategy", "")
+            arch = result.get("archetype", "")
+            synergy = result.get("synergy_score", 0)
             missing = result.get("basics_missing") or {}
             missing_str = (
                 "  |  ⚠ Basics missing: " + ", ".join(f"{n}× {land}" for land, n in sorted(missing.items()))
                 if missing else ""
             )
             self._stats_label.setText(
-                f"Strategy: {strategy}  |  "
+                f"Strategy: {strategy}  |  Archetype: {arch}  |  "
                 f"{result['collection_count']} from collection{missing_str}  |  "
-                f"€{val:.2f}"
+                f"€{val:.2f}  |  Synergy: {synergy:.1f}"
             )
 
         self._result = result
@@ -407,11 +439,17 @@ class DeckWidget(QWidget):
             await db.set_container_deck_format(container_id, deck_format)
             await db.move_cards_to_container(card_ids, container_id)
 
-            # Auto-mark commander in the new container
+            # Auto-mark commander and persist color identity
             if deck_format == "commander" and self._last_fmt == "commander":
                 cmd = self._result.get("commander", {})
                 if cmd.get("id") and cmd["id"] in card_ids:
                     await db.set_commander(cmd["id"], True, container_id)
+                # Store color identity on the container
+                import json as _json
+                from core.deckbuilder import color_identity as _ci
+                ci = list(_ci(cmd))
+                if ci:
+                    await db.set_container_color_identity(container_id, _json.dumps(ci))
 
             QMessageBox.information(
                 self, "Saved",

@@ -147,6 +147,8 @@ def _take_basics_from_pool(pool: list[dict], needed: dict[str, int]) -> tuple[li
 
 def rank_commanders(pool: list[dict]) -> list[tuple[dict, int]]:
     """Return up to 10 (card, synergy_score) pairs, best first."""
+    from core.analysis import score_card
+
     candidates = [
         c for c in pool
         if is_commander_eligible(c) and is_legal(c, "commander")
@@ -161,17 +163,23 @@ def rank_commanders(pool: list[dict]) -> list[tuple[dict, int]]:
             and is_legal(c, "commander")
             and get_card_themes(c) & cmd_themes
         )
-        results.append((cmd, synergy))
-    results.sort(key=lambda x: x[1], reverse=True)
-    return results[:10]
+        # Use card score as tiebreaker (scaled down to not dominate synergy count)
+        total = synergy * 10 + score_card(cmd, "commander")
+        results.append((cmd, synergy, total))
+    results.sort(key=lambda x: x[2], reverse=True)
+    return [(cmd, syn) for cmd, syn, _ in results[:10]]
 
 
 def build_commander_deck(commander: dict, pool: list[dict]) -> dict:
+    from core.analysis import (
+        detect_archetypes, select_for_curve, deck_synergy_score, score_card,
+    )
+
     ci         = color_identity(commander)
     cmd_themes = get_card_themes(commander)
     cmd_name   = (commander.get("name_en") or "").lower()
 
-    # 99 slots: aim for ~63 non-lands + 36 basics
+    # 99 slots: ~63 non-lands + 36 basics
     target_nonland = 63
 
     eligible = [
@@ -182,23 +190,28 @@ def build_commander_deck(commander: dict, pool: list[dict]) -> dict:
         and is_legal(c, "commander")
     ]
 
-    def _score(c: dict) -> int:
-        shared   = len(get_card_themes(c) & cmd_themes)
-        cmc_pref = max(0, 6 - int(c.get("cmc") or 0))
-        return shared * 4 + cmc_pref
-
-    eligible.sort(key=_score, reverse=True)
-
-    seen: set[str] = {cmd_name}
-    deck: list[dict] = []
+    # Deduplicate by name (keep highest-scored copy per name)
+    by_name: dict[str, dict] = {}
     for c in eligible:
         name = (c.get("name_en") or "").lower()
-        if name in seen:
-            continue
-        seen.add(name)
-        deck.append(c)
-        if len(deck) >= target_nonland:
-            break
+        if name not in by_name or score_card(c, "commander") > score_card(by_name[name], "commander"):
+            by_name[name] = c
+    unique_eligible = list(by_name.values())
+
+    # Detect archetype of commander + pool; use it for curve selection
+    archetypes = detect_archetypes([commander] + unique_eligible)
+    primary_archetype = archetypes[0][0] if archetypes else "default"
+
+    # Score each card: synergy themes + base power
+    def _score(c: dict) -> float:
+        shared = len(get_card_themes(c) & cmd_themes)
+        return shared * 8.0 + score_card(c, "commander")
+
+    unique_eligible.sort(key=_score, reverse=True)
+
+    # Top-90 by score → pass to curve optimizer to get target_nonland cards
+    top_pool = unique_eligible[:min(90, len(unique_eligible))]
+    deck = select_for_curve(top_pool, primary_archetype, target_nonland, fmt="commander")
 
     # Compute desired basics split
     basics_needed = 99 - len(deck)
@@ -215,10 +228,9 @@ def build_commander_deck(commander: dict, pool: list[dict]) -> dict:
         else:
             desired_basics["Wastes"] = basics_needed
 
-    # Fill basics from collection only; track what's still missing
     basics_from_collection, basics_missing = _take_basics_from_pool(pool, desired_basics)
 
-    # Identify top themes present in the selected cards
+    # Top themes
     theme_counts: Counter = Counter()
     for c in deck:
         for t in get_card_themes(c) & cmd_themes:
@@ -229,6 +241,13 @@ def build_commander_deck(commander: dict, pool: list[dict]) -> dict:
     for c in deck:
         groups.setdefault(_type_group(c), []).append(c)
 
+    # Curve
+    nonland_pairs = [(c, 1) for c in deck]
+    deck_curve = curve_analysis(nonland_pairs)
+
+    # Synergy score (capped sample for performance)
+    synergy = deck_synergy_score(deck[:40])
+
     return {
         "commander":              commander,
         "deck":                   deck,
@@ -238,6 +257,10 @@ def build_commander_deck(commander: dict, pool: list[dict]) -> dict:
         "themes":                 top_themes,
         "collection_count":       len(deck) + len(basics_from_collection),
         "value_eur":              round(sum(c.get("price_eur") or 0 for c in deck), 2),
+        "curve":                  deck_curve,
+        "archetype":              primary_archetype,
+        "archetypes":             archetypes[:3],
+        "synergy_score":          synergy,
     }
 
 
@@ -258,45 +281,75 @@ def get_available_strategies(pool: list[dict]) -> list[tuple[str, str, int]]:
 
 def build_60_deck(pool: list[dict], fmt: str, forced_strategy: str | None = None) -> dict:
     """Build a 60-card deck (36 non-lands + 24 basics) for timeless or standard."""
+    from core.analysis import (
+        detect_archetypes, select_for_curve, deck_synergy_score,
+    )
+
     legal_nonland = [
         c for c in pool
         if is_legal(c, fmt) and "Land" not in (c.get("type_line") or "")
     ]
 
-    # Detect dominant strategy (or use forced one)
+    # Detect archetype (or use forced strategy mapped to theme key)
     if forced_strategy:
-        strategy = forced_strategy
+        # forced_strategy is a theme key (from get_available_strategies); map to archetype name
+        _theme_to_arch = {
+            "tokens": "Tokens", "graveyard": "Graveyard", "control": "Control",
+            "ramp": "Ramp", "spellslinger": "Spellslinger", "voltron": "Voltron",
+            "burn": "Aggro", "discard": "Graveyard", "sacrifice": "Midrange",
+            "counters": "Midrange", "lifegain": "Midrange", "draw": "Control",
+        }
+        archetype = _theme_to_arch.get(forced_strategy, forced_strategy.replace("tribal_", "").title())
     else:
-        theme_hits: Counter = Counter()
-        for c in legal_nonland:
-            for t in get_card_themes(c):
-                theme_hits[t] += 1
-        strategy = theme_hits.most_common(1)[0][0] if theme_hits else "goodstuff"
+        archetypes = detect_archetypes(legal_nonland)
+        archetype = archetypes[0][0] if archetypes else "Midrange"
 
-    themed = [c for c in legal_nonland if strategy in get_card_themes(c)]
-    others = [c for c in legal_nonland if c not in themed]
-    themed.sort(key=lambda c: int(c.get("cmc") or 0))
-    others.sort(key=lambda c: int(c.get("cmc") or 0))
-
-    # Pre-count physical copies per card name — this is the true availability.
-    # Themed cards are iterated first so they fill name_first before others.
+    # Pre-count physical copies per card name
     available: Counter = Counter()
     name_first: dict[str, dict] = {}
-    for card in (themed + others):
+    for card in legal_nonland:
         name = (card.get("name_en") or "").lower()
         available[name] += 1
         if name not in name_first:
             name_first[name] = card
 
-    # Build deck: themed-first order; copies capped by owned count and format limit (4).
+    # Filter themed cards first, then fill with others via curve selection
+    theme_keys = {forced_strategy} if forced_strategy else set()
+    if not theme_keys:
+        # Use top themes matching the detected archetype as pre-filter hints
+        theme_hits: Counter = Counter()
+        for c in legal_nonland:
+            for t in get_card_themes(c):
+                theme_hits[t] += 1
+        if theme_hits:
+            top_theme = theme_hits.most_common(1)[0][0]
+            theme_keys = {top_theme}
+
+    # Build unique-name candidate list (themed first, then others)
+    themed_unique = [
+        card for name, card in name_first.items()
+        if theme_keys and any(t in get_card_themes(card) for t in theme_keys)
+    ]
+    other_unique = [
+        card for name, card in name_first.items()
+        if card not in themed_unique
+    ]
+    candidates = themed_unique + other_unique
+
+    # Select 36 nonland cards via curve optimization
+    selected_unique = select_for_curve(candidates, archetype, 36, fmt="60")
+
+    # Convert back to (card, count) respecting physical copy count and 4-copy rule
     deck_cards: list[tuple[dict, int]] = []
     total = 0
-    for name, card in name_first.items():
+    for card in selected_unique:
         if total >= 36:
             break
+        name = (card.get("name_en") or "").lower()
         take = min(available[name], 4, 36 - total)
-        deck_cards.append((card, take))
-        total += take
+        if take > 0:
+            deck_cards.append((card, take))
+            total += take
 
     colors_used: set[str] = set()
     for card, _ in deck_cards:
@@ -315,14 +368,24 @@ def build_60_deck(pool: list[dict], fmt: str, forced_strategy: str | None = None
 
     basics_from_collection, basics_missing = _take_basics_from_pool(pool, desired_basics)
 
+    nonland_pairs = deck_cards  # already (card, count)
+    deck_curve = curve_analysis(nonland_pairs)
+    synergy = deck_synergy_score([c for c, _ in deck_cards[:30]])
+
+    all_archetypes = detect_archetypes([c for c, _ in deck_cards]) if deck_cards else []
+
     return {
         "deck":                   deck_cards,
         "basics_missing":         basics_missing,
         "basics_from_collection": basics_from_collection,
-        "strategy":               strategy.replace("tribal_", "").title(),
+        "strategy":               (forced_strategy or "").replace("tribal_", "").title() or archetype,
         "format":                 fmt,
         "collection_count":       sum(n for _, n in deck_cards) + len(basics_from_collection),
         "value_eur":              round(sum((c.get("price_eur") or 0) * n for c, n in deck_cards), 2),
+        "curve":                  deck_curve,
+        "archetype":              archetype,
+        "archetypes":             all_archetypes[:3],
+        "synergy_score":          synergy,
     }
 
 
