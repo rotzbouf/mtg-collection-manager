@@ -318,21 +318,28 @@ def _crop_name_zone(img: Image.Image) -> Image.Image:
     ))
     zone = zone.resize((zone.width * 3, zone.height * 3), Image.LANCZOS)
 
-    # CLAHE on the L-channel of LAB color space: boosts local contrast while
-    # preserving hue, handling variable metallic/colored name bars on MTG cards.
-    # Global contrast enhancement (the previous approach) can clip highlights on
-    # light name bars and crush shadows on dark ones — CLAHE avoids both.
     try:
         import cv2
-        lab = cv2.cvtColor(np.array(zone), cv2.COLOR_RGB2LAB)
+        arr = np.array(zone)
+        # Gentle denoise before CLAHE: a 3×3 Gaussian removes sensor/JPEG noise
+        # without blurring character edges, preventing CLAHE from amplifying it.
+        arr = cv2.GaussianBlur(arr, (3, 3), 0)
+        # CLAHE on L-channel: boosts local contrast while preserving hue.
+        # clipLimit 2.0 (was 3.0) and finer 8×8 tile grid reduce over-amplification
+        # on the highly varied metallic/coloured name bars MTG cards use.
+        lab = cv2.cvtColor(arr, cv2.COLOR_RGB2LAB)
         l_ch, a_ch, b_ch = cv2.split(lab)
-        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(4, 4))
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         lab = cv2.merge([clahe.apply(l_ch), a_ch, b_ch])
-        zone = Image.fromarray(cv2.cvtColor(lab, cv2.COLOR_LAB2RGB))
+        enhanced = cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
+        # Unsharp mask: blend enhanced with a blurred copy to sharpen edges without
+        # the ringing artefacts PIL's static SHARPEN kernel introduces.
+        blurred = cv2.GaussianBlur(enhanced, (0, 0), 2.0)
+        zone = Image.fromarray(cv2.addWeighted(enhanced, 1.4, blurred, -0.4, 0))
     except Exception:
         zone = ImageEnhance.Contrast(zone).enhance(2.5)
 
-    return zone.filter(ImageFilter.SHARPEN)
+    return zone
 
 
 def _crop_footer_zone(img: Image.Image) -> Image.Image:
@@ -341,13 +348,26 @@ def _crop_footer_zone(img: Image.Image) -> Image.Image:
     zone = img.crop((int(w * _FOOTER_LEFT), int(h * _FOOTER_TOP), int(w * _FOOTER_RIGHT), int(h * _FOOTER_BOTTOM)))
     # 5× upscale — footer text is much smaller than the card name
     zone = zone.resize((zone.width * 5, zone.height * 5), Image.LANCZOS)
-    # Grayscale + CLAHE: footer text is black-on-white/cream, so grayscale is fine;
-    # CLAHE handles any shadow or uneven illumination from the photo.
     try:
         import cv2
         gray = cv2.cvtColor(np.array(zone), cv2.COLOR_RGB2GRAY)
+        # NLM denoising before binarization: removes photo/JPEG noise that would
+        # otherwise survive thresholding as isolated black specks.
+        gray = cv2.fastNlMeansDenoising(gray, h=10, templateWindowSize=7, searchWindowSize=21)
+        # CLAHE equalises illumination across the strip (shadows from hand-held photos).
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        zone = Image.fromarray(clahe.apply(gray))
+        gray = clahe.apply(gray)
+        # Adaptive binarization: local thresholds handle the cream-coloured card stock
+        # and any residual illumination gradient across the narrow footer strip.
+        binary = cv2.adaptiveThreshold(
+            gray, 255,
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY,
+            blockSize=15, C=4,
+        )
+        # Morphological opening: removes isolated noise pixels smaller than a text
+        # stroke without touching the strokes themselves.
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+        zone = Image.fromarray(cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel))
     except Exception:
         zone = zone.convert("L")
         zone = ImageEnhance.Contrast(zone).enhance(2.0)
@@ -552,7 +572,14 @@ def _tesseract_extract(image_bytes: bytes) -> Optional[str]:
 def _normalize_ocr(text: str) -> str:
     """Shared post-processing for raw OCR text from any engine."""
     text = " ".join(text.split())
-    text = text.replace("|", "l").replace("0", "O")
+    text = (
+        text.replace("|",  "l")   # pipe       → l  (vertical bar misread as l)
+            .replace("¦",  "l")   # broken bar → l
+            .replace("0",  "O")   # zero       → O  (card names never use digit 0)
+            .replace("vv", "w")   # double-v   → w  (camera lens OCR artefact)
+    )
+    # Strip leading/trailing symbols that cannot open or close a real card name
+    text = text.strip("■•·–—~`^°*@#")
     return text
 
 

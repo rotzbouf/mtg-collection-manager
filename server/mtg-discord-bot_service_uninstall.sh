@@ -7,7 +7,7 @@ SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 echo "=== MTG Bot – Service Deinstallation ==="
 
 if [ "$EUID" -ne 0 ]; then
-    echo "ERROR: Run with sudo: sudo bash server/service_uninstall.sh" >&2
+    echo "ERROR: Run with sudo: sudo bash server/mtg-discord-bot_service_uninstall.sh" >&2
     exit 1
 fi
 

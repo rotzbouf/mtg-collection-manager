@@ -256,7 +256,7 @@ async def collection_edit(
     }
     for field, value in updatable.items():
         await deps.db.update_card(card_id, field, value)
-    return RedirectResponse(url=f"/collection/{card_id}", status_code=303)
+    return RedirectResponse(url=request.url_for("collection_detail", card_id=card_id), status_code=303)
 
 
 @router.post("/collection/{card_id}/delete")

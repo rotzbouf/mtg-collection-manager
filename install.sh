@@ -1,13 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Resolve project root (one level above this script)
-PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_DIR="$PROJECT_DIR/venv"
 
-echo "=== MTG Collection Manager – Headless Server Setup ==="
-echo "(For a desktop/GUI installation run install.sh from the project root instead.)"
-echo ""
+echo "=== MTG Collection Manager – Desktop Setup ==="
 
 # --- Check Python ---
 if ! command -v python3 &>/dev/null; then
@@ -36,10 +33,18 @@ if ! command -v tesseract &>/dev/null; then
     MISSING_PKGS+=(tesseract-ocr tesseract-ocr-deu)
 fi
 
-# opencv-python-headless needs libGL and libglib2.0 on minimal Linux installs
 if command -v dpkg &>/dev/null; then
-    dpkg -s libgl1 &>/dev/null       || MISSING_PKGS+=(libgl1)
-    dpkg -s libglib2.0-0 &>/dev/null || MISSING_PKGS+=(libglib2.0-0)
+    # OpenCV / EasyOCR runtime
+    dpkg -s libgl1          &>/dev/null || MISSING_PKGS+=(libgl1)
+    dpkg -s libglib2.0-0    &>/dev/null || MISSING_PKGS+=(libglib2.0-0)
+    # Qt6 xcb platform plugin (needed by PyQt6 on X11 desktops)
+    dpkg -s libxcb-cursor0  &>/dev/null || MISSING_PKGS+=(libxcb-cursor0)
+    dpkg -s libxcb-icccm4   &>/dev/null || MISSING_PKGS+=(libxcb-icccm4)
+    dpkg -s libxcb-image0   &>/dev/null || MISSING_PKGS+=(libxcb-image0)
+    dpkg -s libxcb-keysyms1 &>/dev/null || MISSING_PKGS+=(libxcb-keysyms1)
+    dpkg -s libxcb-randr0   &>/dev/null || MISSING_PKGS+=(libxcb-randr0)
+    dpkg -s libxcb-render-util0 &>/dev/null || MISSING_PKGS+=(libxcb-render-util0)
+    dpkg -s libxkbcommon-x11-0  &>/dev/null || MISSING_PKGS+=(libxkbcommon-x11-0)
 fi
 
 if [ ${#MISSING_PKGS[@]} -gt 0 ]; then
@@ -47,14 +52,16 @@ if [ ${#MISSING_PKGS[@]} -gt 0 ]; then
     if command -v apt-get &>/dev/null; then
         sudo apt-get update -qq && sudo apt-get install -y "${MISSING_PKGS[@]}"
     elif command -v dnf &>/dev/null; then
-        sudo dnf install -y tesseract tesseract-langpack-deu mesa-libGL glib2
+        sudo dnf install -y tesseract tesseract-langpack-deu mesa-libGL glib2 \
+            xcb-util-cursor xcb-util-icccm xcb-util-image xcb-util-keysyms libxkbcommon-x11
     elif command -v pacman &>/dev/null; then
-        sudo pacman -S --noconfirm tesseract tesseract-data-deu mesa
+        sudo pacman -S --noconfirm tesseract tesseract-data-deu mesa \
+            xcb-util-cursor xcb-util-icccm xcb-util-image xcb-util-keysyms libxkbcommon-x11
     else
-        echo "WARNING: No supported package manager found. Please install tesseract-ocr and libGL manually." >&2
+        echo "WARNING: No supported package manager found. Install tesseract and Qt6 xcb libs manually." >&2
     fi
 else
-    echo "System dependencies already installed (tesseract: $(tesseract --version 2>&1 | head -1))."
+    echo "System dependencies OK."
 fi
 
 # --- Virtual environment ---
@@ -76,7 +83,8 @@ echo "Installing Python dependencies..."
 echo ""
 if [ ! -f "$PROJECT_DIR/.env" ]; then
     cp "$PROJECT_DIR/.env.example" "$PROJECT_DIR/.env"
-    echo ".env created from .env.example — please fill in DISCORD_TOKEN and channel IDs."
+    echo ".env created from .env.example"
+    echo "  → Open Settings → Configuration in the app to fill in your Discord token and channel IDs."
 else
     echo ".env already exists."
 fi
@@ -84,14 +92,12 @@ fi
 echo ""
 echo "=== Setup complete ==="
 echo ""
-echo "Next steps (headless server):"
-echo "  1. Edit $PROJECT_DIR/.env — set DISCORD_TOKEN and channel IDs."
-echo "  2. Install systemd services (run whichever you need):"
-echo "       sudo bash server/mtg-discord-bot_service_install.sh"
-echo "       sudo bash server/mtg-webui_service_install.sh"
-echo "  3. Or start manually without a service:"
-echo "       bash server/start_mtg-discord-bot.sh"
-echo "       bash server/start_ui.sh"
+echo "Start the app:"
+echo "  bash start_desktop.sh"
 echo ""
-echo "NOTE: On the very first scan EasyOCR will download its language models (~150 MB)."
+echo "To also run the Discord bot or Web UI, use Settings → Services inside the app."
+echo ""
+echo "Headless / server setup (no display): see server/install.sh instead."
+echo ""
+echo "NOTE: On the first scan, EasyOCR will download its language models (~150 MB)."
 echo "      This happens once and is cached automatically."

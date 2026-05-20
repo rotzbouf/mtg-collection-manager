@@ -105,6 +105,8 @@ class ScryfallClient:
         self._semaphore = asyncio.Semaphore(1)
         # (card_dict, data_fetched_at, price_fetched_at)
         self._id_cache: dict[str, tuple[dict, float, float]] = {}
+        # name/autocomplete result cache: arg-tuple → (result, fetched_at)
+        self._name_cache: dict[tuple, tuple] = {}
 
     async def _session_get(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -116,8 +118,8 @@ class ScryfallClient:
             loop = asyncio.get_running_loop()
             await asyncio.sleep(max(0, 0.1 - (loop.time() - self._last_request)))
             session = await self._session_get()
-            try:
-                for attempt in range(3):
+            for attempt in range(3):
+                try:
                     async with session.get(url, params=params, timeout=_REQUEST_TIMEOUT) as resp:
                         self._last_request = loop.time()
                         if resp.status == 200:
@@ -126,16 +128,21 @@ class ScryfallClient:
                             return None
                         if resp.status == 429:
                             wait = float(resp.headers.get("Retry-After", 1.0))
-                            logger.warning("Scryfall rate-limited — retrying in %.1fs (attempt %d/3)", wait, attempt + 1)
+                            logger.warning("Scryfall 429 — retrying in %.1fs (attempt %d/3)", wait, attempt + 1)
                             await asyncio.sleep(wait)
+                            continue
+                        if resp.status >= 500:
+                            logger.warning("Scryfall %s → %s (attempt %d/3)", url, resp.status, attempt + 1)
+                            await asyncio.sleep(1.0 * (attempt + 1))
                             continue
                         logger.warning("Scryfall %s → %s", url, resp.status)
                         return None
-                logger.warning("Scryfall %s — gave up after 3 retries (429)", url)
-                return None
-            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-                logger.error("Scryfall request failed: %s", e)
-                return None
+                except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                    logger.warning("Scryfall request error: %s (attempt %d/3)", e, attempt + 1)
+                    if attempt < 2:
+                        await asyncio.sleep(1.0 * (attempt + 1))
+            logger.error("Scryfall %s — gave up after 3 attempts", url)
+            return None
 
     async def close(self):
         if self._session and not self._session.closed:
@@ -143,18 +150,38 @@ class ScryfallClient:
 
     # ------------------------------------------------------------------ #
 
+    def _ncache_get(self, key: tuple, ttl: float):
+        """Return (True, value) if key is cached and unexpired, else (False, None)."""
+        entry = self._name_cache.get(key)
+        if entry is not None:
+            value, ts = entry
+            if time.monotonic() - ts < ttl:
+                return True, value
+        return False, None
+
+    def _ncache_set(self, key: tuple, value) -> None:
+        self._name_cache[key] = (value, time.monotonic())
+
     async def get_by_name(self, name: str, fuzzy: bool = True, set_code: Optional[str] = None) -> Optional[dict]:
         """Fetch English card by name. Returns normalized dict or None."""
+        key = ("byname", name.lower().strip(), fuzzy, set_code or "")
+        hit, cached = self._ncache_get(key, _CARD_DATA_TTL)
+        if hit:
+            return cached
         params = {"fuzzy" if fuzzy else "exact": name}
         if set_code:
             params["set"] = set_code
         data = await self._get(f"{BASE}/cards/named", **params)
-        if data and data.get("object") == "card":
-            return _extract_card(data)
-        return None
+        result = _extract_card(data) if data and data.get("object") == "card" else None
+        self._ncache_set(key, result)
+        return result
 
     async def get_german(self, name: str, set_code: Optional[str] = None) -> Optional[dict]:
         """Search for a German-language printing by printed name."""
+        key = ("german", name.lower().strip(), set_code or "")
+        hit, cached = self._ncache_get(key, _CARD_DATA_TTL)
+        if hit:
+            return cached
         # Validate set_code to prevent query injection via Scryfall search syntax
         safe_set = set_code if (set_code and _SET_CODE_RE.match(set_code)) else None
         set_filter = f" set:{safe_set}" if safe_set else ""
@@ -167,7 +194,9 @@ class ScryfallClient:
             order="released",
         )
         if data and data.get("data"):
-            return _extract_card(data["data"][0])
+            result = _extract_card(data["data"][0])
+            self._ncache_set(key, result)
+            return result
         # Fuzzy fallback — strip any remaining Scryfall operator characters
         safe_name_fuzzy = re.sub(r"[^\w\s\-']", "", safe_name)
         data = await self._get(
@@ -176,7 +205,10 @@ class ScryfallClient:
             order="released",
         )
         if data and data.get("data"):
-            return _extract_card(data["data"][0])
+            result = _extract_card(data["data"][0])
+            self._ncache_set(key, result)
+            return result
+        self._ncache_set(key, None)
         return None
 
     async def get_by_id(self, scryfall_id: str, force_refresh: bool = False) -> Optional[dict]:
@@ -263,6 +295,20 @@ class ScryfallClient:
                 return results
 
         return []
+
+    async def autocomplete(self, query: str) -> list[str]:
+        """Return up to 20 Scryfall card name suggestions for a prefix query."""
+        q = query.strip()
+        if not q or len(q) < 2:
+            return []
+        key = ("autocomplete", q.lower())
+        hit, cached = self._ncache_get(key, _CARD_DATA_TTL)
+        if hit:
+            return cached
+        data = await self._get(f"{BASE}/cards/autocomplete", q=q)
+        result = data["data"] if data and isinstance(data.get("data"), list) else []
+        self._ncache_set(key, result)
+        return result
 
     async def resolve_card(self, name: str, set_code: Optional[str] = None) -> tuple[Optional[dict], str]:
         """

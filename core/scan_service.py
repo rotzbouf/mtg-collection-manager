@@ -19,6 +19,8 @@ logger = logging.getLogger(__name__)
 
 # Minimum fuzzy-match ratio to call a name "confirmed" on top of a collector hit
 _NAME_CONFIRM_RATIO = 0.55
+# Minimum ratio to accept an autocomplete candidate as an OCR correction
+_AUTOCORRECT_MIN_RATIO = 0.65
 
 
 def _run_ocr_sync(image_bytes: bytes) -> tuple[Optional[str], dict]:
@@ -39,6 +41,44 @@ def _fuzzy_ratio(a: str, b: str) -> float:
     a_n = sanitize_text(a, max_len=200).lower()
     b_n = sanitize_text(b, max_len=200).lower()
     return difflib.SequenceMatcher(None, a_n, b_n).ratio()
+
+
+async def _autocomplete_correct(
+    scryfall: "ScryfallClient", ocr_name: str
+) -> Optional[str]:
+    """Find the closest real card name for a noisy OCR string via Scryfall autocomplete.
+
+    Tries the full OCR text, then drops the last word (often garbled), then the
+    first word alone.  Scores every returned candidate with _fuzzy_ratio and
+    returns the best one if it clears _AUTOCORRECT_MIN_RATIO, else None.
+    """
+    words = ocr_name.split()
+    prefixes: list[str] = [ocr_name]
+    if len(words) > 1:
+        prefixes.append(" ".join(words[:-1]))  # last word is most error-prone
+    if words:
+        prefixes.append(words[0])              # first word is usually cleanest
+
+    best_name: Optional[str] = None
+    best_ratio = 0.0
+    seen: set[str] = set()
+
+    for prefix in prefixes:
+        prefix = prefix.strip()
+        if len(prefix) < 3:
+            continue
+        for candidate in await scryfall.autocomplete(prefix):
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            ratio = _fuzzy_ratio(ocr_name, candidate)
+            if ratio > best_ratio:
+                best_ratio = ratio
+                best_name = candidate
+
+    if best_name and best_ratio >= _AUTOCORRECT_MIN_RATIO:
+        return best_name
+    return None
 
 
 async def resolve_scan(
@@ -74,6 +114,7 @@ async def resolve_scan(
     # ── OCR name match (only when collector lookup failed) ────────────────
     ocr_card: Optional[dict] = None
     ocr_lang = "unknown"
+    corrected_name: Optional[str] = None
     if extracted_name and not collector_card:
         set_hint = collector_info.get("set_code")
         ocr_card, ocr_lang = await scryfall.resolve_card(
@@ -82,6 +123,15 @@ async def resolve_scan(
         if not ocr_card and set_hint:
             # Retry without the set hint — OCR may have misread the set code
             ocr_card, ocr_lang = await scryfall.resolve_card(extracted_name)
+        if not ocr_card:
+            # Last resort: use Scryfall autocomplete to find the closest real card
+            # name, then retry lookup with the corrected spelling.
+            corrected_name = await _autocomplete_correct(scryfall, extracted_name)
+            if corrected_name:
+                logger.debug("OCR autocorrect: %r → %r", extracted_name, corrected_name)
+                ocr_card, ocr_lang = await scryfall.resolve_card(
+                    corrected_name, set_code=set_hint
+                )
 
     footer_lang = collector_info.get("language")
     method_parts: list[str] = []
@@ -115,7 +165,12 @@ async def resolve_scan(
 
     if ocr_card:
         detected_lang = footer_lang or (ocr_lang if ocr_lang != "unknown" else "en")
-        method_parts.append(f'OCR [{ocr_lang}]: "{extracted_name}"')
+        if corrected_name:
+            method_parts.append(
+                f'OCR [{ocr_lang}]: "{extracted_name}" → autocorrected to "{corrected_name}"'
+            )
+        else:
+            method_parts.append(f'OCR [{ocr_lang}]: "{extracted_name}"')
         if footer_lang:
             method_parts.append(f"lang: {footer_lang} (footer)")
         return ocr_card, detected_lang, method_parts, extracted_name, collector_info

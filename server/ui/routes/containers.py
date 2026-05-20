@@ -97,12 +97,13 @@ async def containers_create(
 
 @router.post("/containers/{container_id}/rename")
 async def containers_rename(
+    request: Request,
     container_id: int,
     name: str = Form(...),
 ):
     if name.strip():
         await deps.db.rename_container(container_id, name.strip())
-    return RedirectResponse(url=f"/containers/{container_id}", status_code=303)
+    return RedirectResponse(url=request.url_for("container_detail", container_id=container_id), status_code=303)
 
 
 @router.post("/containers/{container_id}/delete")

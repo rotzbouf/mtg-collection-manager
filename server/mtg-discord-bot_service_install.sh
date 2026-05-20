@@ -12,7 +12,7 @@ echo "=== MTG Bot – Service Installation ==="
 
 # --- Checks ---
 if [ "$EUID" -ne 0 ]; then
-    echo "ERROR: Run with sudo: sudo bash server/service_install.sh" >&2
+    echo "ERROR: Run with sudo: sudo bash server/mtg-discord-bot_service_install.sh" >&2
     exit 1
 fi
 
