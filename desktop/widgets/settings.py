@@ -23,6 +23,29 @@ _VENV_PYTHON   = _PROJECT_ROOT / "venv" / "bin" / "python"
 _BOT_SCRIPT    = _PROJECT_ROOT / "server" / "bot.py"
 _MAX_LOG_LINES = 500
 
+
+def _is_bundled() -> bool:
+    import sys as _sys
+    return getattr(_sys, 'frozen', False)
+
+
+def _bot_launch() -> tuple[str, list[str], str]:
+    """Return (program, args, cwd) for launching the Discord bot subprocess."""
+    if _is_bundled():
+        cwd = str(Path(sys.executable).parent)
+        return sys.executable, ['--run-bot'], cwd
+    python = str(_VENV_PYTHON) if _VENV_PYTHON.exists() else sys.executable
+    return python, [str(_BOT_SCRIPT)], str(_PROJECT_ROOT)
+
+
+def _webui_launch() -> tuple[str, list[str], str]:
+    """Return (program, args, cwd) for launching the Web UI subprocess."""
+    if _is_bundled():
+        cwd = str(Path(sys.executable).parent)
+        return sys.executable, ['--run-webui'], cwd
+    python = str(_VENV_PYTHON) if _VENV_PYTHON.exists() else sys.executable
+    return python, ['-m', 'server.ui.app'], str(_PROJECT_ROOT)
+
 _DEFAULT_UI_PORT = "8080"
 _DEFAULT_UI_HOST = "0.0.0.0"
 
@@ -139,8 +162,8 @@ class SettingsWidget(QWidget):
         bot_status_row.addStretch()
         bot_layout.addLayout(bot_status_row)
 
-        python_path = str(_VENV_PYTHON) if _VENV_PYTHON.exists() else sys.executable
-        info = QLabel(f"<small>{python_path}  ·  {_BOT_SCRIPT.name}</small>")
+        _py, _args, _ = _bot_launch()
+        info = QLabel(f"<small>{_py}  ·  {' '.join(_args)}</small>")
         info.setStyleSheet("color: #555;")
         bot_layout.addWidget(info)
 
@@ -249,12 +272,12 @@ class SettingsWidget(QWidget):
         if self._bot_process and self._bot_process.state() != QProcess.ProcessState.NotRunning:
             return
 
-        python = str(_VENV_PYTHON) if _VENV_PYTHON.exists() else sys.executable
+        python, args, cwd = _bot_launch()
 
         self._bot_process = QProcess(self)
         self._bot_process.setProgram(python)
-        self._bot_process.setArguments([str(_BOT_SCRIPT)])
-        self._bot_process.setWorkingDirectory(str(_PROJECT_ROOT))
+        self._bot_process.setArguments(args)
+        self._bot_process.setWorkingDirectory(cwd)
 
         # Inherit current environment so .env variables are picked up
         env = QProcessEnvironment.systemEnvironment()
@@ -340,12 +363,12 @@ class SettingsWidget(QWidget):
         if self._webui_process and self._webui_process.state() != QProcess.ProcessState.NotRunning:
             return
 
-        python = str(_VENV_PYTHON) if _VENV_PYTHON.exists() else sys.executable
+        python, args, cwd = _webui_launch()
 
         self._webui_process = QProcess(self)
         self._webui_process.setProgram(python)
-        self._webui_process.setArguments(["-m", "server.ui.app"])
-        self._webui_process.setWorkingDirectory(str(_PROJECT_ROOT))
+        self._webui_process.setArguments(args)
+        self._webui_process.setWorkingDirectory(cwd)
 
         env = QProcessEnvironment.systemEnvironment()
         port_field = self._env_fields.get("app.ui_port")

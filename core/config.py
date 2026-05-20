@@ -8,10 +8,38 @@ config.json.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
-_CONFIG_PATH = Path(__file__).parent.parent / "config.json"
-_ENV_PATH    = Path(__file__).parent.parent / ".env"
+
+def _config_dir() -> Path:
+    """Return the writable directory that contains config.json and .env.
+
+    When running as a PyInstaller bundle the exe directory is used so the
+    user can edit config.json in place.  On a fresh install the bundled
+    default is seeded there automatically.
+    """
+    if getattr(sys, 'frozen', False):
+        return Path(sys.executable).parent
+    return Path(__file__).parent.parent
+
+
+def _seed_bundled_config(path: Path) -> None:
+    """Copy the bundled default config.json next to the exe on first run."""
+    if path.exists():
+        return
+    bundled = Path(getattr(sys, '_MEIPASS', '')) / "config.json"
+    if bundled.exists():
+        import shutil
+        shutil.copy(bundled, path)
+
+
+_base        = _config_dir()
+_CONFIG_PATH = _base / "config.json"
+_ENV_PATH    = _base / ".env"
+
+if getattr(sys, 'frozen', False):
+    _seed_bundled_config(_CONFIG_PATH)
 
 BUILTIN_TYPES: list[str] = ["binder", "box", "deck", "commander", "overcount"]
 

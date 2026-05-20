@@ -18,5 +18,8 @@ env/
 .DS_Store
 Thumbs.db
 
+# Build output
+build/
+
 # Logs
 *.log

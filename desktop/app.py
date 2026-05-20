@@ -64,7 +64,29 @@ def _configure_logging() -> None:
     root.addHandler(fh)
 
 
+def _run_bot_mode() -> None:
+    """Run the Discord bot — used as a subprocess when launched from the bundled exe."""
+    import runpy
+    runpy.run_module('server.bot', run_name='__main__', alter_sys=True)
+
+
+def _run_webui_mode() -> None:
+    """Run the web UI server — used as a subprocess when launched from the bundled exe."""
+    import uvicorn
+    from server.ui.app import app as _fastapi_app
+    port = int(os.environ.get('UI_PORT', 8080))
+    host = os.environ.get('UI_HOST', '0.0.0.0')
+    uvicorn.run(_fastapi_app, host=host, port=port)
+
+
 def main():
+    if '--run-bot' in sys.argv:
+        _run_bot_mode()
+        return
+    if '--run-webui' in sys.argv:
+        _run_webui_mode()
+        return
+
     _configure_logging()
     app = QApplication(sys.argv)
     app.setApplicationName("MTG Collection Manager")
