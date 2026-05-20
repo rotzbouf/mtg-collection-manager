@@ -1167,6 +1167,67 @@ class Database:
             )
             await self._db.commit()
 
+    async def get_cards_in_overcount_containers(
+        self,
+        min_price: float = 0.0,
+        max_price: float | None = None,
+        rarities: list[str] | None = None,
+        set_codes: list[str] | None = None,
+        order_by: str = "price_desc",
+        limit: int = 2000,
+    ) -> list[dict]:
+        """Return cards from containers with type='overcount', with optional filters."""
+        conds: list[str] = ["ct.type = 'overcount'"]
+        params: list = []
+
+        if min_price > 0:
+            conds.append("COALESCE(c.price_eur, 0) >= ?")
+            params.append(min_price)
+        if max_price is not None:
+            conds.append("COALESCE(c.price_eur, 0) <= ?")
+            params.append(max_price)
+        if rarities:
+            ph = ",".join("?" * len(rarities))
+            conds.append(f"LOWER(COALESCE(c.rarity,'')) IN ({ph})")
+            params.extend(r.lower() for r in rarities)
+        if set_codes:
+            ph = ",".join("?" * len(set_codes))
+            conds.append(f"c.set_code IN ({ph})")
+            params.extend(set_codes)
+
+        order = {
+            "price_desc": "COALESCE(c.price_eur, 0) DESC, c.name_en",
+            "price_asc":  "COALESCE(c.price_eur, 0) ASC,  c.name_en",
+            "name":       "c.name_en ASC",
+            "set":        "c.set_code ASC, CAST(c.collector_number AS INTEGER) ASC",
+        }.get(order_by, "COALESCE(c.price_eur, 0) DESC, c.name_en")
+
+        params.append(limit)
+        sql = f"""
+            SELECT c.*, ct.name AS container_name
+            FROM collection_with_prices c
+            JOIN containers ct ON c.container_id = ct.id
+            WHERE {" AND ".join(conds)}
+            ORDER BY {order}
+            LIMIT ?
+        """
+        async with self._db.execute(sql, params) as cur:
+            rows = await cur.fetchall()
+        return [_row_to_dict(r) for r in rows]
+
+    async def get_overcount_container_sets(self) -> list[dict]:
+        """Return distinct sets present in overcount-type containers."""
+        async with self._db.execute("""
+            SELECT c.set_code, c.set_name, COUNT(*) AS card_count
+            FROM collection c
+            JOIN containers ct ON c.container_id = ct.id
+            WHERE ct.type = 'overcount' AND c.set_code IS NOT NULL
+            GROUP BY c.set_code
+            ORDER BY c.set_name
+        """) as cur:
+            rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+
     async def get_overcount_cards(
         self, threshold: int = 4, excluded_types: list[str] | None = None
     ) -> list[dict]:
