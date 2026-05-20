@@ -20,7 +20,7 @@ import core.config as cfg
 
 _PROJECT_ROOT  = Path(__file__).parent.parent.parent
 _VENV_PYTHON   = _PROJECT_ROOT / "venv" / "bin" / "python"
-_BOT_SCRIPT    = _PROJECT_ROOT / "bot.py"
+_BOT_SCRIPT    = _PROJECT_ROOT / "server" / "bot.py"
 _MAX_LOG_LINES = 500
 
 _DEFAULT_UI_PORT = "8080"

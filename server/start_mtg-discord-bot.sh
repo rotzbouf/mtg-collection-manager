@@ -8,4 +8,4 @@ fi
 
 source .env 2>/dev/null || true
 
-exec venv/bin/python bot.py
+exec venv/bin/python server/bot.py

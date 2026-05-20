@@ -1,5 +1,12 @@
 """MTG Collection Manager — Discord bot (thin loader)."""
 
+import sys
+from pathlib import Path
+
+# Keep project root on sys.path so core/ and cogs/ resolve regardless of
+# which directory Python was started from.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import os
 import warnings
 from dotenv import load_dotenv
@@ -32,7 +39,6 @@ warnings.filterwarnings("ignore", message=".*pin_memory.*")
 import asyncio
 import logging
 import logging.handlers
-import sys
 
 import discord
 from discord import app_commands
