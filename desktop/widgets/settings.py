@@ -1301,7 +1301,10 @@ class SettingsWidget(QWidget):
         from datetime import date
         from desktop.db import db
 
+        from core.config import DATA_DIR
         default_dir = cfg.get_app().get("backup_dir", "").strip()
+        if default_dir and not Path(default_dir).is_absolute():
+            default_dir = str(DATA_DIR / default_dir)
         default_name = f"mtg_backup_{date.today()}.db"
         default_path = str(Path(default_dir) / default_name) if default_dir else default_name
 

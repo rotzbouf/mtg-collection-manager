@@ -52,9 +52,11 @@ def _configure_logging(debug: bool = False) -> None:
     console.setFormatter(formatter)
     root.addHandler(console)
 
-    os.makedirs("logs", exist_ok=True)
+    from core.config import DATA_DIR
+    log_dir = DATA_DIR / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
     file_handler = logging.handlers.RotatingFileHandler(
-        "logs/mtg_collection.log",
+        str(log_dir / "mtg_collection.log"),
         maxBytes=5 * 1024 * 1024,
         backupCount=3,
         encoding="utf-8",

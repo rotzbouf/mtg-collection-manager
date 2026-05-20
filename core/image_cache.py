@@ -11,7 +11,8 @@ import aiohttp
 
 logger = logging.getLogger(__name__)
 
-CACHE_DIR = pathlib.Path(os.getenv("IMAGE_CACHE_DIR", "images"))
+from core.config import DATA_DIR as _DATA_DIR
+CACHE_DIR = pathlib.Path(os.getenv("IMAGE_CACHE_DIR", str(_DATA_DIR / "images")))
 _EXTS = ("webp", "jpg", "png")
 _HEADERS = {"Accept": "image/webp,image/*,*/*;q=0.8"}
 _TIMEOUT = aiohttp.ClientTimeout(total=15, connect=5)

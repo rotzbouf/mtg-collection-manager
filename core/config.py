@@ -36,6 +36,9 @@ def _seed_bundled_config(path: Path) -> None:
 _base        = _config_dir()
 _CONFIG_PATH = _base / "config.json"
 
+# Exported: all user-data paths (db, images, logs, backups) are resolved here.
+DATA_DIR: Path = _base
+
 if getattr(sys, 'frozen', False):
     _seed_bundled_config(_CONFIG_PATH)
 

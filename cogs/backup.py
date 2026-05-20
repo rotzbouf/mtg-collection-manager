@@ -19,7 +19,8 @@ from cogs.auth import require_admin
 
 logger = logging.getLogger(__name__)
 
-BACKUP_DIR = pathlib.Path(os.getenv("BACKUP_DIR", "backups"))
+from core.config import DATA_DIR as _DATA_DIR
+BACKUP_DIR = pathlib.Path(os.getenv("BACKUP_DIR", str(_DATA_DIR / "backups")))
 
 
 class RestoreConfirmView(discord.ui.View):

@@ -22,7 +22,8 @@ _SORT_MAP = {
     "added": "c.added_at DESC",
 }
 
-DB_PATH = "db/mtg_collection.db"
+from core.config import DATA_DIR as _DATA_DIR
+DB_PATH = str(_DATA_DIR / "db" / "mtg_collection.db")
 
 _SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -176,6 +177,8 @@ class Database:
         self._write_lock = asyncio.Lock()
 
     async def initialize(self):
+        from pathlib import Path
+        Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self._db = await aiosqlite.connect(self.path)
         self._db.row_factory = aiosqlite.Row
         await self._db.executescript(_SCHEMA)
