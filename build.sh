@@ -48,7 +48,7 @@ cd "$SCRIPT_DIR"
     --distpath "$BUILD_DIR" \
     --workpath "$BUILD_DIR/.work" \
     --noconfirm \
-    mtg_collection.spec
+    build/mtg_collection.spec
 
 # ── Clean work directory ──────────────────────────────────────────────────────
 
