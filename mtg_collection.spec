@@ -39,14 +39,16 @@ _CUDA_STEMS = {
 def _is_gpu_binary(src: str) -> bool:
     name = os.path.basename(src).lower()
     stem = name.split('.')[0]
-    # Drop any lib whose stem matches a known CUDA lib
     if stem in _CUDA_STEMS:
         return True
     norm = src.replace('\\', '/').lower()
     # Drop the entire triton package
     if '/triton/' in norm or '/triton.' in norm:
         return True
-    # Drop the cuda Python package (torch.cuda bindings)
+    # Drop any nvidia pip package libs (nvidia_cublas, nvidia_cudnn, etc.)
+    if '/nvidia/' in norm or '/nvidia-' in norm:
+        return True
+    # Drop cuda-toolkit / cuda-bindings pip package data
     if norm.startswith('cuda/') or '/cuda/' in norm:
         return True
     return False
@@ -100,14 +102,24 @@ a = Analysis(
     runtime_hooks=[],
     excludes=[
         'tkinter', '_tkinter', 'tornado', 'wx', 'gi',
-        # EasyOCR runs with gpu=False — drop CUDA/Triton to keep bundle lean
-        'torch.cuda',
-        'torch.backends.cuda',
-        'torch.backends.cudnn',
-        'torch.utils.tensorboard',
+        # torch — GPU / training / unused subsystems
+        'torch.cuda', 'torch.backends.cuda', 'torch.backends.cudnn',
+        'torch.utils.tensorboard', 'torch.distributed', 'torch.optim',
+        'torch.ao', 'torch.jit', 'torch.onnx', 'torch.export',
+        'torchaudio', 'torchvision.models',
         'triton',
-        'torchvision.models',
-        'torchaudio',
+        # scipy — EasyOCR only needs scipy.special / scipy.signal
+        'scipy.optimize', 'scipy.integrate', 'scipy.interpolate',
+        'scipy.ndimage', 'scipy.spatial', 'scipy.linalg',
+        'scipy.stats', 'scipy.io',
+        # matplotlib — keep only the two backends we use
+        'matplotlib.backends.backend_tkagg',
+        'matplotlib.backends.backend_wxagg',
+        'matplotlib.backends.backend_gtk3agg',
+        # misc unused
+        'IPython', 'jupyter', 'notebook', 'pytest',
+        'setuptools', 'pkg_resources',
+        'xmlrpc', 'ftplib', 'imaplib', 'poplib', 'smtplib',
     ],
     noarchive=False,
     optimize=0,
