@@ -53,7 +53,7 @@ _DEFAULTS: dict = {
     },
     "app": {
         "backup_dir":         "",
-        "price_source":       "cardmarket",
+        "price_source":       "scryfall",
         "ui_port":            8080,
         "ui_host":            "0.0.0.0",
         "debug_scan_preview": False,

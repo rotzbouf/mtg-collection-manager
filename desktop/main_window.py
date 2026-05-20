@@ -6,7 +6,7 @@ import logging
 
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
-    QPushButton, QStackedWidget, QLabel, QSizePolicy,
+    QPushButton, QStackedWidget, QLabel, QSizePolicy, QTabWidget,
 )
 from PyQt6.QtCore import Qt, QTimer
 from qasync import asyncSlot
@@ -28,17 +28,40 @@ logger = logging.getLogger(__name__)
 _SIDEBAR_WIDTH = 160
 
 _NAV_ITEMS = [
+    ("Add / Scan",  "add_scan"),
     ("Collection",  "collection"),
+    ("Decks",       "decks"),
     ("Search",      "search"),
-    ("Add Card",    "add_card"),
-    ("Scanner",     "scan"),
-    ("Containers",  "containers"),
     ("Statistics",  "stats"),
-    ("Deck Builder","deck"),
-    ("Deck Analysis","deck_analysis"),
-    ("Overcount",   "overcount"),
     ("Logs",        "logs"),
 ]
+
+
+class _TabbedPage(QWidget):
+    """Thin wrapper that hosts multiple widgets as sub-tabs and forwards
+    db_ready / refresh to all children."""
+
+    def __init__(self, tabs: list[tuple[str, QWidget]]):
+        super().__init__()
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self._tab = QTabWidget()
+        self._tab.setDocumentMode(True)
+        layout.addWidget(self._tab)
+        self._children: list[QWidget] = []
+        for label, widget in tabs:
+            self._tab.addTab(widget, label)
+            self._children.append(widget)
+
+    def db_ready(self):
+        for child in self._children:
+            if hasattr(child, "db_ready"):
+                child.db_ready()
+
+    def refresh(self):
+        current = self._tab.currentWidget()
+        if current and hasattr(current, "refresh"):
+            current.refresh()
 
 
 class MainWindow(QMainWindow):
@@ -143,29 +166,25 @@ class MainWindow(QMainWindow):
         self._pages["settings"] = settings_widget
         self._stack.addWidget(settings_widget)
 
-        self._navigate("collection")
+        self._navigate("add_scan")
 
     def _create_page(self, key: str) -> QWidget:
         if key == "collection":
-            return CollectionWidget()
+            return _TabbedPage([
+                ("Collection", CollectionWidget()),
+                ("Containers", ContainersWidget()),
+                ("Overcount",  OvercountWidget()),
+            ])
         if key == "search":
             return SearchWidget()
-        if key == "add_card":
-            return AddCardWidget()
-        if key == "containers":
-            return ContainersWidget()
+        if key == "add_scan":
+            return _TabbedPage([("Add Card", AddCardWidget()), ("Scanner", ScanWidget())])
         if key == "stats":
             return StatsWidget()
-        if key == "scan":
-            return ScanWidget()
+        if key == "decks":
+            return _TabbedPage([("Deck Builder", DeckWidget()), ("Deck Analysis", DeckAnalysisWidget())])
         if key == "settings":
             return SettingsWidget()
-        if key == "deck":
-            return DeckWidget()
-        if key == "deck_analysis":
-            return DeckAnalysisWidget()
-        if key == "overcount":
-            return OvercountWidget()
         if key == "logs":
             return LogsWidget(handler=self._log_handler)
         return QWidget()
