@@ -79,14 +79,14 @@ echo "Installing Python dependencies..."
 "$VENV_DIR/bin/pip" install --upgrade pip --quiet
 "$VENV_DIR/bin/pip" install -r "$PROJECT_DIR/requirements.txt"
 
-# --- Create .env if missing ---
+# --- Create config.json if missing ---
 echo ""
-if [ ! -f "$PROJECT_DIR/.env" ]; then
-    cp "$PROJECT_DIR/.env.example" "$PROJECT_DIR/.env"
-    echo ".env created from .env.example"
+if [ ! -f "$PROJECT_DIR/config.json" ]; then
+    cp "$PROJECT_DIR/config.json.example" "$PROJECT_DIR/config.json"
+    echo "config.json created from config.json.example."
     echo "  → Open Settings → Configuration in the app to fill in your Discord token and channel IDs."
 else
-    echo ".env already exists."
+    echo "config.json already exists."
 fi
 
 echo ""

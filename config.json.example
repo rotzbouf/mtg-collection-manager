@@ -1,6 +1,6 @@
 {
   "discord": {
-    "token": "",
+    "token": "YOUR_DISCORD_BOT_TOKEN",
     "guild_id": "",
     "scan_channel_id": "",
     "showcase_channel_id": "",
@@ -9,7 +9,7 @@
     "admin_role": ""
   },
   "app": {
-    "backup_dir": "",
+    "backup_dir": "backups",
     "price_source": "cardmarket",
     "ui_port": 8080,
     "ui_host": "0.0.0.0",

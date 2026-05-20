@@ -235,9 +235,9 @@ class StatsWidget(QWidget):
             ("Total cards",       str(stats.get("total_cards", 0))),
             ("Unique cards",      str(stats.get("unique_cards", 0))),
             ("Foil cards",        str(stats.get("foil_total", 0))),
-            ("Total value (EUR)", f"€{stats.get('total_value_eur', 0):.2f}"),
-            ("Total value (USD)", f"${stats.get('total_value_usd', 0):.2f}"),
-            ("Foil value (EUR)",  f"€{stats.get('foil_eur', 0):.2f}"),
+            ("Total value (EUR)", f"€{stats.get('total_value_eur') or 0:.2f}"),
+            ("Total value (USD)", f"${stats.get('total_value_usd') or 0:.2f}"),
+            ("Foil value (EUR)",  f"€{stats.get('foil_eur') or 0:.2f}"),
         ]
         row1.addWidget(_kv_table(overview_rows))
 
@@ -251,7 +251,7 @@ class StatsWidget(QWidget):
             rarity_rows.append([
                 label,
                 str(stats.get(key, 0)),
-                f"€{stats.get(key + '_eur', 0):.2f}",
+                f"€{stats.get(key + '_eur') or 0:.2f}",
             ])
         rarity_tbl = _header_table(["Rarity", "Count", "Value (EUR)"], rarity_rows)
         row1_right = QVBoxLayout()
@@ -271,9 +271,9 @@ class StatsWidget(QWidget):
                 label,
                 str(stats.get(f"{code}_total", 0)),
                 str(stats.get(f"{code}_nonfoil", 0)),
-                f"€{stats.get(f'{code}_nonfoil_eur', 0):.2f}",
+                f"€{stats.get(f'{code}_nonfoil_eur') or 0:.2f}",
                 str(stats.get(f"{code}_foil", 0)),
-                f"€{stats.get(f'{code}_foil_eur', 0):.2f}",
+                f"€{stats.get(f'{code}_foil_eur') or 0:.2f}",
             ])
         lang_row = QHBoxLayout()
         lang_row.setAlignment(Qt.AlignmentFlag.AlignLeft)

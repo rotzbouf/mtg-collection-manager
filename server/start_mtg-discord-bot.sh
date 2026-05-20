@@ -6,6 +6,4 @@ if [ ! -f venv/bin/python ]; then
     exit 1
 fi
 
-source .env 2>/dev/null || true
-
 exec venv/bin/python server/bot.py

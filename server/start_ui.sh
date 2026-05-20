@@ -7,9 +7,13 @@ if [ ! -f venv/bin/python ]; then
     exit 1
 fi
 
-source .env 2>/dev/null || true
-
-PORT="${UI_PORT:-8080}"
+PORT=$(venv/bin/python -c "
+import json, pathlib
+try:
+    print(json.loads(pathlib.Path('config.json').read_text()).get('app', {}).get('ui_port', 8080))
+except Exception:
+    print(8080)
+" 2>/dev/null || echo "8080")
 
 # Try to get the public IP; fall back to first local IP
 EXTERNAL_IP=$(curl -s --max-time 3 ifconfig.me 2>/dev/null)

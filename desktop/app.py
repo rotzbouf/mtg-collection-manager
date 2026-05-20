@@ -72,6 +72,9 @@ def _run_bot_mode() -> None:
 
 def _run_webui_mode() -> None:
     """Run the web UI server — used as a subprocess when launched from the bundled exe."""
+    import core.config as _cfg
+    _cfg.inject_env()
+    del _cfg
     import uvicorn
     from server.ui.app import app as _fastapi_app
     port = int(os.environ.get('UI_PORT', 8080))

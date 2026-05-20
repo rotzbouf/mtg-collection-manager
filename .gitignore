@@ -1,4 +1,5 @@
-# Secrets
+# Secrets — use config.json.example as template, never commit the real one
+config.json
 .env
 
 # Database (too large, user-specific)

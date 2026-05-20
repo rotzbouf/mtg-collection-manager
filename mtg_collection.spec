@@ -4,6 +4,7 @@
 # Produces a self-contained directory in build/mtg-collection-manager/.
 # Run via build.sh — do not invoke this file directly.
 
+import os
 from PyInstaller.utils.hooks import collect_all
 
 # ── Packages that need full collection (lazy imports, native extensions) ─────
@@ -21,6 +22,36 @@ for _pkg in _collect_all:
         hiddenimports += _h
     except Exception:
         pass
+
+# ── Drop CUDA / Triton binaries — EasyOCR runs with gpu=False ────────────────
+# These are pulled in transitively by easyocr→torch but waste 2–3 GB of space.
+_CUDA_STEMS = {
+    # Heavy CUDA compute libs — not needed for gpu=False inference
+    'libtorch_cuda', 'libtorch_cuda_linalg', 'libtorch_nvshmem',
+    'libc10_cuda', 'libcaffe2_nvrtc', 'libnvrtc',
+    # CUDA profiler / performance tooling
+    'libcupti', 'libnvperf_host', 'libnvperf_target', 'libpcsamplingutil',
+    'libcheckpoint',
+    # NOTE: libcudart is intentionally kept — libtorch_global_deps.so
+    # links against it at load time even for CPU-only execution.
+}
+
+def _is_gpu_binary(src: str) -> bool:
+    name = os.path.basename(src).lower()
+    stem = name.split('.')[0]
+    # Drop any lib whose stem matches a known CUDA lib
+    if stem in _CUDA_STEMS:
+        return True
+    norm = src.replace('\\', '/').lower()
+    # Drop the entire triton package
+    if '/triton/' in norm or '/triton.' in norm:
+        return True
+    # Drop the cuda Python package (torch.cuda bindings)
+    if norm.startswith('cuda/') or '/cuda/' in norm:
+        return True
+    return False
+
+binaries = [(src, dst) for src, dst in binaries if not _is_gpu_binary(src)]
 
 # ── Project data files ────────────────────────────────────────────────────────
 datas += [
@@ -67,10 +98,29 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['tkinter', '_tkinter', 'tornado', 'wx', 'gi'],
+    excludes=[
+        'tkinter', '_tkinter', 'tornado', 'wx', 'gi',
+        # EasyOCR runs with gpu=False — drop CUDA/Triton to keep bundle lean
+        'torch.cuda',
+        'torch.backends.cuda',
+        'torch.backends.cudnn',
+        'torch.utils.tensorboard',
+        'triton',
+        'torchvision.models',
+        'torchaudio',
+    ],
     noarchive=False,
     optimize=0,
 )
+
+# ── Post-analysis: strip CUDA / Triton from dependency-resolved binaries ─────
+# Analysis discovers these transitively from torch .so dependencies even though
+# we excluded them from the input binaries list above.
+a.binaries = TOC([
+    (name, src, typ)
+    for name, src, typ in a.binaries
+    if not _is_gpu_binary(name)
+])
 
 pyz = PYZ(a.pure)
 

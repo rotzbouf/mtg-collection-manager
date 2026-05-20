@@ -12,6 +12,10 @@ from contextlib import asynccontextmanager
 # Allow `python3 server/ui/app.py` from project root (3 levels up: ui → server → project)
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
+import core.config as _cfg
+_cfg.inject_env()
+del _cfg
+
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
