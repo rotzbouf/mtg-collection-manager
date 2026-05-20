@@ -1,6 +1,5 @@
 """MTG Collection Manager — Discord bot (thin loader)."""
 
-# ── Environment setup — must run before ANY library that may touch CUDA ──────
 import os
 import warnings
 from dotenv import load_dotenv
@@ -27,10 +26,8 @@ try:
 except Exception:
     pass
 
-os.environ.setdefault("CUDA_VISIBLE_DEVICES", "0")
 os.environ.setdefault("MPLBACKEND", "Agg")
 warnings.filterwarnings("ignore", message=".*pin_memory.*")
-# ─────────────────────────────────────────────────────────────────────────────
 
 import asyncio
 import logging
