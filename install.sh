@@ -77,7 +77,7 @@ fi
 echo ""
 echo "Installing Python dependencies..."
 "$VENV_DIR/bin/pip" install --upgrade pip --quiet
-"$VENV_DIR/bin/pip" install -r "$PROJECT_DIR/requirements.txt"
+"$VENV_DIR/bin/pip" install -r "$PROJECT_DIR/deps/requirements.txt"
 
 # --- Create config.json if missing ---
 echo ""

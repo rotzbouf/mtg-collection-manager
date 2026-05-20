@@ -44,7 +44,7 @@ bash install.sh          # sets up venv, system deps, and config.json
 bash start_desktop.sh
 ```
 
-The database (`mtg_collection.db`) is created automatically on first launch.
+The database (`db/mtg_collection.db`) is created automatically on first launch.
 
 > **First scan:** EasyOCR downloads its language models (~150 MB) on the very first card scan. This happens once and is cached automatically.
 
@@ -58,7 +58,7 @@ The database (`mtg_collection.db`) is created automatically on first launch.
 | EasyOCR, OpenCV | Card scanning (CPU-only) |
 | Scryfall API | Card data and prices — no key required |
 
-Full dependency list in `requirements.txt`. Run `bash install.sh` to handle everything automatically.
+Full dependency list in `deps/requirements.txt`. Run `bash install.sh` to handle everything automatically.
 
 ---
 

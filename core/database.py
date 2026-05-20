@@ -22,7 +22,7 @@ _SORT_MAP = {
     "added": "c.added_at DESC",
 }
 
-DB_PATH = "mtg_collection.db"
+DB_PATH = "db/mtg_collection.db"
 
 _SCHEMA = """
 PRAGMA journal_mode=WAL;

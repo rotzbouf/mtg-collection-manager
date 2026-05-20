@@ -3,6 +3,9 @@ config.json
 .env
 
 # Database (too large, user-specific)
+db/*.db
+db/*.db-shm
+db/*.db-wal
 *.db
 *.db-shm
 *.db-wal
