@@ -2,9 +2,13 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import io
+import json
 import logging
 import os
+import struct
+from pathlib import Path
 from typing import NamedTuple, Optional
 
 import discord
@@ -465,6 +469,78 @@ class _ManualNameView(discord.ui.View):
         )
 
 
+_BRIDGE_SOCK = str(Path(os.getenv("TMPDIR", "/tmp")) / "mtg_collection_bridge.sock")
+
+
+async def _try_desktop_bridge(image_bytes: bytes, discord_user: str) -> dict | None:
+    """Send scan to the desktop app over the Unix socket bridge.
+    Returns result dict, or None if the desktop bridge is not running."""
+    if not os.path.exists(_BRIDGE_SOCK):
+        return None
+    try:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_unix_connection(_BRIDGE_SOCK), timeout=3.0
+        )
+    except Exception:
+        return None
+    try:
+        req = json.dumps({
+            "image_b64": base64.b64encode(image_bytes).decode(),
+            "discord_user": discord_user,
+        }).encode()
+        writer.write(struct.pack(">I", len(req)) + req)
+        await writer.drain()
+
+        # Wait up to 310 s for the user to confirm/skip in the desktop app
+        raw_len = await asyncio.wait_for(reader.readexactly(4), timeout=310.0)
+        length = struct.unpack(">I", raw_len)[0]
+        raw = await asyncio.wait_for(reader.readexactly(length), timeout=5.0)
+        return json.loads(raw.decode())
+    except Exception as exc:
+        logger.warning("Desktop bridge error: %s", exc)
+        return None
+    finally:
+        try:
+            writer.close()
+            await writer.wait_closed()
+        except Exception:
+            pass
+
+
+async def _post_bridge_result(
+    bot,
+    message: discord.Message,
+    result: dict,
+    scanning_msg: discord.Message,
+) -> None:
+    """Post the desktop scan result back to Discord."""
+    status = result.get("status")
+    if status == "skipped":
+        await scanning_msg.edit(content="↩️ Scan declined in desktop app.")
+        return
+    if status == "error":
+        await scanning_msg.edit(
+            content=f"⚠️ Desktop scan error: {result.get('message', 'unknown')}"
+        )
+        return
+    if status == "added":
+        card = result.get("card", {})
+        row_id = result.get("row_id", "?")
+        container_name = result.get("container_name") or "—"
+        foil = result.get("foil", False)
+        from cogs.utils import card_embed, LANG_EMOJI
+        embed = card_embed(card, title_prefix="Added via desktop ✅  ")
+        lang = card.get("language", "en")
+        foil_tag = " ✨" if foil else ""
+        embed.description = (
+            f"ID **{row_id}** | {LANG_EMOJI.get(lang, lang.upper())}{foil_tag} "
+            f"| 📦 **{container_name}** | confirmed by {message.author.mention}"
+        )
+        await scanning_msg.edit(content="", embed=embed)
+        return
+    await scanning_msg.edit(content="⚠️ Unexpected response from desktop app.")
+
+
 async def _handle_scan_attachment(bot, message: discord.Message, attachment: discord.Attachment):
     allowed, retry_after = _scan_limiter.check(message.author.id)
     if not allowed:
@@ -480,6 +556,18 @@ async def _handle_scan_attachment(bot, message: discord.Message, attachment: dis
         )
         return
     image_bytes = await attachment.read()
+
+    # If the desktop app is running and has the bridge active, hand off to it
+    bridge_result = await _try_desktop_bridge(
+        image_bytes, f"@{message.author.display_name}"
+    )
+    if bridge_result is not None:
+        scanning_msg = await message.channel.send(
+            f"{message.author.mention} 🖥️ Processing in desktop app…"
+        )
+        await _post_bridge_result(bot, message, bridge_result, scanning_msg)
+        return
+
     default = _last_container.get(message.author.id)
 
     if default:

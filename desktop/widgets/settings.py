@@ -290,6 +290,9 @@ class SettingsWidget(QWidget):
 
         self._bot_process.start()
 
+        from core.desktop_bridge import bridge
+        bridge.start()
+
     def _on_bot_stop(self):
         if self._bot_process is None:
             return
@@ -298,6 +301,8 @@ class SettingsWidget(QWidget):
             self._bot_process.terminate()
         elif state == QProcess.ProcessState.Starting:
             self._bot_process.kill()
+        from core.desktop_bridge import bridge
+        bridge.stop()
 
     def _on_bot_stdout(self):
         if self._bot_process is None:

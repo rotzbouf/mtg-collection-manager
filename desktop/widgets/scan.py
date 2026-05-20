@@ -140,9 +140,10 @@ class ScanWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._containers: list[dict] = []
-        self._pending_card: Optional[dict] = None  # matched Scryfall card
+        self._pending_card: Optional[dict] = None
         self._last_container_id: Optional[int] = None
         self._ocr_initialised = False
+        self._discord_future: Optional[asyncio.Future] = None
         self._build_ui()
 
     def db_ready(self):
@@ -173,6 +174,16 @@ class ScanWidget(QWidget):
         self._browse_btn.setToolTip("Open an image file")
         header_row.addWidget(self._browse_btn)
         left_layout.addLayout(header_row)
+
+        # Discord remote scan banner (hidden until a Discord scan arrives)
+        self._discord_banner = QLabel("")
+        self._discord_banner.setWordWrap(True)
+        self._discord_banner.setStyleSheet(
+            "background: #0f3460; color: #ffffff; padding: 6px 10px;"
+            "font-size: 12px; border-radius: 4px;"
+        )
+        self._discord_banner.setVisible(False)
+        left_layout.addWidget(self._discord_banner)
 
         # OCR availability notice (shown if neither engine is installed)
         self._ocr_warn = QLabel(
@@ -534,6 +545,20 @@ class ScanWidget(QWidget):
         )
         self._status_match.setStyleSheet(_MATCH_OK_STYLE)
 
+        # Resolve pending Discord future so the bot can post confirmation
+        container_name = next(
+            (c["name"] for c in self._containers if c["id"] == container_id),
+            None,
+        )
+        self._resolve_discord_future({
+            "status": "added",
+            "card": card,
+            "row_id": row_id,
+            "foil": foil,
+            "container_id": container_id,
+            "container_name": container_name,
+        })
+
         # Reset for the next card, keep container and drop zone preview
         self._pending_card = None
         self._add_btn.setEnabled(False)
@@ -551,7 +576,40 @@ class ScanWidget(QWidget):
         self._manual_edit.clear()
 
     def _on_skip(self):
+        self._resolve_discord_future({"status": "skipped"})
         self._drop_zone._reset()
         self._clear_result()
+
+    # ── Discord bridge ─────────────────────────────────────────────────────────
+
+    def inject_discord_scan(self, image_bytes: bytes, discord_user: str) -> asyncio.Future:
+        """Called by the desktop bridge to route a Discord scan through the desktop UI."""
+        if self._discord_future and not self._discord_future.done():
+            # Already handling one — reject
+            fut: asyncio.Future = asyncio.get_event_loop().create_future()
+            fut.set_result({"status": "error", "message": "Scanner is busy"})
+            return fut
+
+        self._discord_future = asyncio.get_event_loop().create_future()
+        self._discord_banner.setText(
+            f"📱 Discord scan from {discord_user} — confirm to add, Skip to decline"
+        )
+        self._discord_banner.setVisible(True)
+        self.window().raise_()
+        self.window().activateWindow()
+        self._on_image(image_bytes)
+        return self._discord_future
+
+    def cancel_discord_scan(self) -> None:
+        self._resolve_discord_future({"status": "skipped", "reason": "timeout"})
+        self._discord_banner.setVisible(False)
+        self._on_skip()
+
+    def _resolve_discord_future(self, result: dict) -> None:
+        fut = self._discord_future
+        if fut and not fut.done():
+            fut.set_result(result)
+        self._discord_future = None
+        self._discord_banner.setVisible(False)
 
 

@@ -178,7 +178,12 @@ class MainWindow(QMainWindow):
         if key == "search":
             return SearchWidget()
         if key == "add_scan":
-            return _TabbedPage([("Add Card", AddCardWidget()), ("Scanner", ScanWidget())])
+            scan = ScanWidget()
+            page = _TabbedPage([("Add Card", AddCardWidget()), ("Scanner", scan)])
+            from core.desktop_bridge import bridge
+            bridge.register_scan_widget(scan)
+            bridge.set_navigate_callback(lambda: self._navigate_to_scanner())
+            return page
         if key == "stats":
             return StatsWidget()
         if key == "decks":
@@ -192,6 +197,13 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ #
     # Navigation                                                            #
     # ------------------------------------------------------------------ #
+
+    def _navigate_to_scanner(self):
+        """Switch to Add/Scan → Scanner sub-tab (called by the desktop bridge)."""
+        self._navigate("add_scan")
+        page = self._pages.get("add_scan")
+        if page and hasattr(page, "_tab"):
+            page._tab.setCurrentIndex(1)  # Scanner is tab index 1
 
     def _navigate(self, key: str):
         for k, btn in self._nav_buttons.items():
