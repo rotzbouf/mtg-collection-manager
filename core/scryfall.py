@@ -39,7 +39,7 @@ def _extract_card(data: dict, preferred_lang: Optional[str] = None) -> dict:
     image_url = images.get("normal") or images.get("small")
 
     # English vs German name
-    printed = data.get("printed_name") or data.get("name")
+    printed = data.get("printed_name")
     if lang == "en":
         name_en = data.get("name", "")
         name_de = None

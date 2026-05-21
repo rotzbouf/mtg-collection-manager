@@ -87,10 +87,11 @@ def display_name(card: dict) -> str:
     lang = (card.get("language") or "en").lower()
     name_en = card.get("name_en") or ""
     if lang != "en":
-        loc = card.get("printed_name") or card.get("name_de") or name_en
+        loc = card.get("printed_name") or card.get("name_de")
         if loc and loc != name_en:
             return f"{loc} ({name_en})"
-        return loc or name_en
+        flag = lang.upper()
+        return f"{name_en}  [{flag}]" if name_en else name_en
     return name_en
 
 

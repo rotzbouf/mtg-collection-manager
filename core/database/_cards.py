@@ -173,7 +173,7 @@ class _CardsMixin:
             UPDATE collection SET
                 name_en        = :name_en,
                 name_de        = COALESCE(:name_de, name_de),
-                printed_name   = :printed_name,
+                printed_name   = COALESCE(:printed_name, printed_name),
                 set_name       = :set_name,
                 rarity         = :rarity,
                 colors         = :colors,
