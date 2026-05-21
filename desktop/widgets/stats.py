@@ -297,8 +297,8 @@ class StatsWidget(QWidget):
         lang_row.addStretch()
         lay.addLayout(lang_row)
 
-        # ── Row 3: Top 5 most valuable ────────────────────────────────── #
-        lay.addWidget(_section_header("Top 5 Most Valuable Cards"))
+        # ── Row 3: Top 10 most valuable ───────────────────────────────── #
+        lay.addWidget(_section_header("Top 10 Most Valuable Cards"))
         top_cards = stats.get("top_cards", [])
         embeds_row = QHBoxLayout()
         embeds_row.setSpacing(10)

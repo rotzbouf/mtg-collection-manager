@@ -898,7 +898,7 @@ class Database:
             return {}
         result = dict(row)
 
-        # Top 5 cards by EUR value
+        # Top 10 cards by EUR value
         async with self._db.execute(
             """
             SELECT c.name_en, c.name_de, c.printed_name, c.price_eur, c.foil, c.language,
@@ -908,7 +908,7 @@ class Database:
             LEFT JOIN containers ct ON c.container_id = ct.id
             WHERE c.price_eur IS NOT NULL
             ORDER BY c.price_eur DESC
-            LIMIT 5
+            LIMIT 10
             """
         ) as cur:
             result["top_cards"] = [dict(r) for r in await cur.fetchall()]
