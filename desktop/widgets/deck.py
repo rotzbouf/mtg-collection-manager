@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (
     QLabel, QLineEdit, QComboBox, QPushButton,
     QTextEdit, QMessageBox, QFileDialog,
     QDialog, QDialogButtonBox, QFormLayout,
+    QDoubleSpinBox,
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QGuiApplication
@@ -30,6 +31,7 @@ class DeckWidget(QWidget):
         self._last_fmt: str = ""
         self._pool: list[dict] = []
         self._commanders: list[dict] = []
+        self._variants: list[dict] = []
         self._build_ui()
 
     def db_ready(self):
@@ -94,6 +96,27 @@ class DeckWidget(QWidget):
         strat_layout.addStretch()
         root.addWidget(self._strategy_section)
 
+        # ── Build options ─────────────────────────────────────────────────
+        opts_row = QHBoxLayout()
+        opts_row.addWidget(QLabel("Power level:"))
+        self._power_level_cb = QComboBox()
+        self._power_level_cb.addItem("Casual",    "casual")
+        self._power_level_cb.addItem("Focused",   "focused")
+        self._power_level_cb.addItem("Optimized", "optimized")
+        self._power_level_cb.setCurrentIndex(1)
+        opts_row.addWidget(self._power_level_cb)
+        opts_row.addSpacing(16)
+        opts_row.addWidget(QLabel("Max card price (€):"))
+        self._max_price_sb = QDoubleSpinBox()
+        self._max_price_sb.setRange(0.0, 9999.0)
+        self._max_price_sb.setSingleStep(0.5)
+        self._max_price_sb.setDecimals(2)
+        self._max_price_sb.setSpecialValueText("No limit")
+        self._max_price_sb.setFixedWidth(90)
+        opts_row.addWidget(self._max_price_sb)
+        opts_row.addStretch()
+        root.addLayout(opts_row)
+
         # ── Build button ──────────────────────────────────────────────────
         build_row = QHBoxLayout()
         self._build_btn = QPushButton("Build deck")
@@ -106,6 +129,24 @@ class DeckWidget(QWidget):
         self._stats_label = QLabel("")
         self._stats_label.setWordWrap(True)
         root.addWidget(self._stats_label)
+
+        # Variant selector (hidden until build returns multiple variants)
+        self._variant_widget = QWidget()
+        variant_layout = QHBoxLayout(self._variant_widget)
+        variant_layout.setContentsMargins(0, 0, 0, 0)
+        variant_layout.setSpacing(6)
+        variant_layout.addWidget(QLabel("Variant:"))
+        self._variant_btns: list[QPushButton] = []
+        for i in range(3):
+            btn = QPushButton("")
+            btn.setCheckable(True)
+            btn.setVisible(False)
+            btn.clicked.connect(lambda _checked, idx=i: self._on_variant_selected(idx))
+            variant_layout.addWidget(btn)
+            self._variant_btns.append(btn)
+        variant_layout.addStretch()
+        self._variant_widget.setVisible(False)
+        root.addWidget(self._variant_widget)
 
         self._curve_label = QLabel("")
         self._curve_label.setFont(_monofont())
@@ -255,6 +296,10 @@ class DeckWidget(QWidget):
         )
 
         fmt = self._fmt_cb.currentData()
+        power_level = self._power_level_cb.currentData()
+        raw_price = self._max_price_sb.value()
+        max_price = raw_price if raw_price > 0.0 else None
+
         self._build_btn.setEnabled(False)
         self._stats_label.setText("Loading collection…")
         self._output.setPlainText("")
@@ -263,6 +308,7 @@ class DeckWidget(QWidget):
         self._export_mtga_btn.setEnabled(False)
         self._save_btn.setEnabled(False)
         self._curve_label.setText("")
+        self._variant_widget.setVisible(False)
 
         try:
             pool = await db.get_all(exclude_container_types=["deck", "commander"])
@@ -277,14 +323,9 @@ class DeckWidget(QWidget):
         if fmt == "commander":
             combo_card = self._cmd_combo.currentData()
             if combo_card is not None:
-                # Verify the selected commander is still in the fresh pool
                 cmd_id = combo_card.get("id")
-                commander = next(
-                    (c for c in pool if c.get("id") == cmd_id),
-                    None,
-                )
+                commander = next((c for c in pool if c.get("id") == cmd_id), None)
                 if commander is None:
-                    # Fallback: match by name
                     cmd_name = combo_card.get("name_en", "")
                     commander = next(
                         (c for c in pool if (c.get("name_en") or "").lower() == cmd_name.lower()),
@@ -300,7 +341,6 @@ class DeckWidget(QWidget):
                     self._stats_label.setText("")
                     return
             else:
-                # Auto-pick best commander
                 ranked = rank_commanders(pool)
                 if not ranked:
                     QMessageBox.warning(
@@ -315,50 +355,118 @@ class DeckWidget(QWidget):
                     f"Auto-selected: {commander.get('name_en', '')} (synergy score: {score})"
                 )
 
-            result = build_commander_deck(commander, pool)
+            result = build_commander_deck(
+                commander, pool, power_level=power_level, max_price=max_price
+            )
             text = format_commander_decklist(result)
-            val = result.get("value_eur", 0)
-            missing = result.get("basics_missing") or {}
-            missing_str = (
-                "  |  ⚠ Basics missing: " + ", ".join(f"{n}× {land}" for land, n in sorted(missing.items()))
-                if missing else ""
-            )
-            arch = result.get("archetype", "")
-            synergy = result.get("synergy_score", 0)
-            themes_str = ("  |  " + ", ".join(result.get("themes") or [])) if result.get("themes") else ""
-            self._stats_label.setText(
-                f"Commander: {commander.get('name_en', '')}  |  "
-                f"{result['collection_count']} from collection{missing_str}  |  "
-                f"€{val:.2f}  |  {arch}  |  Synergy: {synergy:.1f}{themes_str}"
-            )
         else:
             forced = self._strategy_cb.currentData()
-            result = build_60_deck(pool, fmt, forced_strategy=forced)
+            result = build_60_deck(
+                pool, fmt, forced_strategy=forced,
+                power_level=power_level, max_price=max_price,
+            )
             text = format_60_decklist(result)
-            val = result.get("value_eur", 0)
-            strategy = result.get("strategy", "")
-            arch = result.get("archetype", "")
-            synergy = result.get("synergy_score", 0)
-            missing = result.get("basics_missing") or {}
-            missing_str = (
-                "  |  ⚠ Basics missing: " + ", ".join(f"{n}× {land}" for land, n in sorted(missing.items()))
-                if missing else ""
-            )
-            self._stats_label.setText(
-                f"Strategy: {strategy}  |  Archetype: {arch}  |  "
-                f"{result['collection_count']} from collection{missing_str}  |  "
-                f"€{val:.2f}  |  Synergy: {synergy:.1f}"
-            )
 
         self._result = result
         self._last_fmt = fmt
         self._output.setPlainText(text)
         self._curve_label.setText(self._compact_curve(result.get("curve") or {}))
+        self._stats_label.setText(self._render_stats(result, fmt))
+        self._update_variant_selector(result)
         self._copy_btn.setEnabled(True)
         self._export_full_btn.setEnabled(True)
         self._export_mtga_btn.setEnabled(True)
         self._save_btn.setEnabled(True)
         self._build_btn.setEnabled(True)
+
+    def _render_stats(self, result: dict, fmt: str) -> str:
+        parts: list[str] = []
+        if fmt == "commander":
+            cmd = result.get("commander") or {}
+            parts.append(f"Commander: {cmd.get('name_en', '?')}")
+        else:
+            strategy = result.get("strategy", "")
+            if strategy:
+                parts.append(f"Strategy: {strategy}")
+
+        arch = result.get("archetype", "")
+        conf = result.get("archetype_confidence", 0)
+        if arch:
+            arch_str = f"{arch} ({conf:.0%})" if conf else arch
+            parts.append(f"Archetype: {arch_str}")
+
+        pl = result.get("power_level", "")
+        if pl:
+            parts.append(pl.title())
+
+        role = result.get("role_summary") or {}
+        if role:
+            role_str = "  ·  ".join(
+                f"{k.title()}: {v}"
+                for k, v in role.items()
+                if v
+            )
+            if role_str:
+                parts.append(role_str)
+
+        col_count = result.get("collection_count", 0)
+        missing = result.get("basics_missing") or {}
+        if missing:
+            missing_str = ", ".join(f"{n}× {land}" for land, n in sorted(missing.items()))
+            parts.append(f"{col_count} from collection  ⚠ Basics missing: {missing_str}")
+        else:
+            parts.append(f"{col_count} from collection")
+
+        val = result.get("value_eur", 0)
+        parts.append(f"€{val:.2f}")
+
+        synergy = result.get("synergy_score", 0)
+        if synergy:
+            parts.append(f"Synergy: {synergy:.1f}")
+
+        return "  |  ".join(parts)
+
+    def _update_variant_selector(self, result: dict):
+        variants = result.get("variants") or []
+        if len(variants) > 1:
+            self._variants = variants
+            for i, btn in enumerate(self._variant_btns):
+                if i < len(variants):
+                    v = variants[i]
+                    arch = v.get("archetype", f"Variant {i + 1}")
+                    conf = v.get("archetype_confidence", 0)
+                    label = f"{arch} ({conf:.0%})" if conf else arch
+                    btn.setText(label)
+                    btn.setChecked(i == 0)
+                    btn.setVisible(True)
+                else:
+                    btn.setVisible(False)
+            self._variant_widget.setVisible(True)
+        else:
+            self._variants = []
+            for btn in self._variant_btns:
+                btn.setVisible(False)
+            self._variant_widget.setVisible(False)
+
+    def _on_variant_selected(self, idx: int):
+        if idx >= len(self._variants):
+            return
+        from core.deckbuilder import format_commander_decklist, format_60_decklist
+
+        for i, btn in enumerate(self._variant_btns):
+            if btn.isVisible():
+                btn.setChecked(i == idx)
+
+        variant = self._variants[idx]
+        self._result = variant
+        fmt = self._last_fmt
+        if fmt == "commander":
+            text = format_commander_decklist(variant)
+        else:
+            text = format_60_decklist(variant)
+        self._output.setPlainText(text)
+        self._curve_label.setText(self._compact_curve(variant.get("curve") or {}))
+        self._stats_label.setText(self._render_stats(variant, fmt))
 
     @staticmethod
     def _compact_curve(curve: dict) -> str:
@@ -475,9 +583,9 @@ class DeckWidget(QWidget):
             if cmd.get("id"):
                 ids.append(cmd["id"])
             ids += [c["id"] for c in result.get("deck", []) if c.get("id")]
+            ids += [c["id"] for c in result.get("nonbasic_lands", []) if c.get("id")]
             ids += [c["id"] for c in result.get("basics_from_collection", []) if c.get("id")]
         else:
-            # Build name → list of pool IDs so we can grab the right number of copies
             name_to_ids: dict[str, list[int]] = {}
             for c in self._pool:
                 name = (c.get("name_en") or "").lower()
@@ -489,6 +597,7 @@ class DeckWidget(QWidget):
                 name = (card.get("name_en") or "").lower()
                 available = name_to_ids.get(name, [])
                 ids += available[:count]
+            ids += [c["id"] for c in result.get("nonbasic_lands", []) if c.get("id")]
             ids += [c["id"] for c in result.get("basics_from_collection", []) if c.get("id")]
 
         # Deduplicate while preserving order
