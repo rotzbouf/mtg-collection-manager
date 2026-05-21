@@ -8,6 +8,8 @@ from typing import Optional
 import numpy as np
 from PIL import Image
 
+from .debug import _step
+
 _MAX_IMAGE_PIXELS = 4096 * 4096
 _CARD_ASPECT      = 7 / 5
 MAX_INPUT_BYTES   = 20 * 1024 * 1024
@@ -109,6 +111,10 @@ def _best_quad_in_contours(
                         "CV card detection: approxPolyDP (%s) eps=%.2f area=%.0f",
                         retr_label, eps, cv2.contourArea(cnt),
                     )
+                    _step(
+                        f"cv-quad: approxPolyDP [{retr_label}] "
+                        f"eps={eps:.2f} area={int(cv2.contourArea(cnt))}"
+                    )
                     return pts, best_rect
         if best_rect is None:
             rect = cv2.minAreaRect(cnt)
@@ -142,6 +148,7 @@ def _isolate_card_cv(img: Image.Image) -> Optional[Image.Image]:
     img_bgr = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
     h, w    = img_bgr.shape[:2]
     min_area = 0.05 * h * w   # card must cover ≥ 5 % of the image
+    _step(f"cv-input: {w}×{h}px  min_area={int(min_area)}")
 
     gray    = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
@@ -222,6 +229,7 @@ def _isolate_card_cv(img: Image.Image) -> Optional[Image.Image]:
     chosen = quad if quad is not None else best_rect
     if chosen is None:
         logger.debug("CV card detection: no card-shaped quad found (all passes exhausted)")
+        _step("isolation: all CV passes exhausted — no quad found")
         return None
 
     method = "approxPolyDP" if quad is not None else "minAreaRect-fallback"
@@ -229,9 +237,11 @@ def _isolate_card_cv(img: Image.Image) -> Optional[Image.Image]:
         warped = _warp_quad(img_bgr, chosen)
     except Exception as e:
         logger.debug("CV card detection: warp failed (%s)", e)
+        _step(f"isolation: warp failed ({e})")
         return None
 
     logger.debug("Card isolated via CV %s → %dx%d", method, warped.shape[1], warped.shape[0])
+    _step(f"isolation: {method} → {warped.shape[1]}×{warped.shape[0]}px")
     return Image.fromarray(cv2.cvtColor(warped, cv2.COLOR_BGR2RGB))
 
 
@@ -254,11 +264,16 @@ def isolate_card(img: Image.Image) -> Image.Image:
     1. OpenCV edge detection + perspective warp  (works on any background)
     2. Centre crop at 5:7 aspect ratio           (fallback if CV fails)
     """
+    _step(f"isolate_card: input {img.width}×{img.height}px")
     try:
         result = _isolate_card_cv(img)
         if result is not None:
             return result
         logger.debug("CV card detection found no quad — using centre crop")
+        _step("isolate_card: CV found no quad → centre-crop fallback")
     except Exception as e:
         logger.warning("CV card isolation failed (%s) — using centre crop", e)
-    return _isolate_card_centre(img)
+        _step(f"isolate_card: CV exception ({e}) → centre-crop fallback")
+    result = _isolate_card_centre(img)
+    _step(f"isolate_card: centre-crop → {result.width}×{result.height}px")
+    return result

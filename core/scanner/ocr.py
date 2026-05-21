@@ -10,6 +10,7 @@ import numpy as np
 from PIL import Image, ImageEnhance
 
 from .isolation import isolate_card, _open_image_safe, _ensure_min_width, MAX_INPUT_BYTES
+from .debug import _step, _trace
 
 logger = logging.getLogger(__name__)
 
@@ -86,10 +87,12 @@ def _crop_name_zone(img: Image.Image) -> Image.Image:
         int(w * _NAME_LEFT), int(h * _NAME_TOP),
         int(w * _NAME_RIGHT), int(h * _NAME_BOTTOM),
     ))
+    _step(f"name-zone: crop {zone.width}×{zone.height}px from {w}×{h}px card")
     zone = zone.resize((zone.width * 3, zone.height * 3), Image.LANCZOS)
 
     try:
         import cv2
+        _step(f"name-zone: 3× upscale → {zone.width}×{zone.height}px; CLAHE+unsharp (cv2)")
         arr = np.array(zone)
         # Gentle denoise before CLAHE: a 3×3 Gaussian removes sensor/JPEG noise
         # without blurring character edges, preventing CLAHE from amplifying it.
@@ -107,6 +110,7 @@ def _crop_name_zone(img: Image.Image) -> Image.Image:
         blurred = cv2.GaussianBlur(enhanced, (0, 0), 2.0)
         zone = Image.fromarray(cv2.addWeighted(enhanced, 1.4, blurred, -0.4, 0))
     except Exception:
+        _step("name-zone: cv2 unavailable → PIL contrast fallback")
         zone = ImageEnhance.Contrast(zone).enhance(2.5)
 
     return zone
@@ -119,6 +123,7 @@ def _crop_footer_zone(img: Image.Image) -> Image.Image:
         int(w * _FOOTER_LEFT), int(h * _FOOTER_TOP),
         int(w * _FOOTER_RIGHT), int(h * _FOOTER_BOTTOM),
     ))
+    _step(f"footer-zone: crop {zone.width}×{zone.height}px from {w}×{h}px card")
     # 5× upscale — footer text is much smaller than the card name
     zone = zone.resize((zone.width * 5, zone.height * 5), Image.LANCZOS)
     try:
@@ -240,23 +245,39 @@ def _easyocr_extract(image_bytes: bytes) -> Optional[str]:
         zone = _crop_name_zone(img)
         results = _easyocr_reader.readtext(np.array(zone), detail=1, paragraph=False)
         logger.debug("EasyOCR raw: %s", [(r[1], round(r[2], 2)) for r in results])
+
+        t = _trace()
+        if t is not None:
+            t.engine = "easyocr"
+            t.name_segments = [(r[1], round(r[2], 3)) for r in results]
+            t.name_confidence = round(max((r[2] for r in results), default=0.0), 3)
+        _step(
+            f"easyocr: {len(results)} segment(s), "
+            f"best_conf={max((r[2] for r in results), default=0.0):.2f}"
+        )
+
         if not results:
+            _step("easyocr: no segments detected")
             return None
-        # Collect all segments above the confidence floor, ordered left-to-right.
+
         MIN_CONF = 0.45
         confident = sorted(
             [r for r in results if r[2] >= MIN_CONF],
-            key=lambda r: r[0][0][0],  # sort by left-x of bounding box
+            key=lambda r: r[0][0][0],
         )
         raw = (
             " ".join(r[1].strip() for r in confident).strip()
             if confident
             else max(results, key=lambda r: r[2])[1].strip()
         )
+        _step(
+            f"easyocr: {len(confident)} above conf≥{MIN_CONF} → raw={raw!r}"
+        )
         text = _normalize_ocr(raw)
         return text if len(text) > 1 else None
     except Exception as e:
         logger.error("EasyOCR error: %s", e)
+        _step(f"easyocr: exception — {e}")
         return None
 
 
@@ -271,11 +292,18 @@ def _tesseract_extract(image_bytes: bytes) -> Optional[str]:
         img = _ensure_min_width(img)
         zone = _crop_name_zone(img).convert("L")
         raw = _pytesseract.image_to_string(zone, config="--psm 7 --oem 3").strip()
+        t = _trace()
+        if t is not None:
+            t.engine = "tesseract"
+        _step(f"tesseract: raw={raw!r}")
         text = _normalize_ocr(raw)
         return text if len(text) > 1 else None
     except Exception as e:
         logger.error("Tesseract error: %s", e)
+        _step(f"tesseract: exception — {e}")
         return None
+
+
 
 
 # ── Public extraction API ─────────────────────────────────────────────────────

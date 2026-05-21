@@ -36,6 +36,28 @@ def _run_ocr_sync(image_bytes: bytes) -> tuple[Optional[str], dict]:
     return extracted_name, collector_info
 
 
+def _run_ocr_sync_traced(
+    image_bytes: bytes,
+) -> tuple[Optional[str], dict, "sc.ScanTrace"]:
+    """Like _run_ocr_sync but activates a shared ScanTrace for the whole call."""
+    from core import scanner as sc
+    from core.scanner.debug import _current_trace, ScanTrace, SCAN_DEBUG_LOG
+
+    trace = ScanTrace()
+    token = _current_trace.set(trace)
+    try:
+        extracted_name = sc.extract_name(image_bytes)
+        trace.extracted_name = extracted_name
+        collector_info = sc.extract_collector_info(image_bytes) or {}
+    finally:
+        _current_trace.reset(token)
+
+    trace.log()
+    if SCAN_DEBUG_LOG:
+        trace.write_to_file(SCAN_DEBUG_LOG)
+    return extracted_name, collector_info, trace
+
+
 def _fuzzy_ratio(a: str, b: str) -> float:
     """Case-fold and normalise both strings before sequence matching."""
     a_n = sanitize_text(a, max_len=200).lower()
@@ -81,24 +103,15 @@ async def _autocomplete_correct(
     return None
 
 
-async def resolve_scan(
+async def _resolve_from_ocr_results(
     scryfall: "ScryfallClient",
-    image_bytes: bytes,
+    extracted_name: Optional[str],
+    collector_info: dict,
 ) -> tuple[Optional[dict], str, list[str], Optional[str], dict]:
-    """Full scan pipeline: OCR then Scryfall lookup.
+    """Scryfall resolution given already-extracted OCR results.
 
-    Returns a 5-tuple:
-        card           — resolved Scryfall card dict, or None on failure
-        detected_lang  — language code ('en', 'de', …)
-        method_parts   — human-readable list of how the match was made
-        extracted_name — raw OCR name string (may be None)
-        collector_info — dict with set_code, collector_number, language keys
+    Shared by resolve_scan and resolve_scan_traced to avoid running OCR twice.
     """
-    extracted_name, collector_info = await asyncio.to_thread(
-        _run_ocr_sync, image_bytes
-    )
-    logger.debug("OCR name: %r  footer: %s", extracted_name, collector_info)
-
     # ── Collector match (exact set + number → Scryfall) ───────────────────
     collector_card: Optional[dict] = None
     if collector_info.get("set_code") and collector_info.get("collector_number"):
@@ -121,11 +134,8 @@ async def resolve_scan(
             extracted_name, set_code=set_hint
         )
         if not ocr_card and set_hint:
-            # Retry without the set hint — OCR may have misread the set code
             ocr_card, ocr_lang = await scryfall.resolve_card(extracted_name)
         if not ocr_card:
-            # Last resort: use Scryfall autocomplete to find the closest real card
-            # name, then retry lookup with the corrected spelling.
             corrected_name = await _autocomplete_correct(scryfall, extracted_name)
             if corrected_name:
                 logger.debug("OCR autocorrect: %r → %r", extracted_name, corrected_name)
@@ -176,6 +186,51 @@ async def resolve_scan(
         return ocr_card, detected_lang, method_parts, extracted_name, collector_info
 
     return None, "en", [], extracted_name, collector_info
+
+
+async def resolve_scan(
+    scryfall: "ScryfallClient",
+    image_bytes: bytes,
+) -> tuple[Optional[dict], str, list[str], Optional[str], dict]:
+    """Full scan pipeline: OCR then Scryfall lookup.
+
+    Returns a 5-tuple:
+        card           — resolved Scryfall card dict, or None on failure
+        detected_lang  — language code ('en', 'de', …)
+        method_parts   — human-readable list of how the match was made
+        extracted_name — raw OCR name string (may be None)
+        collector_info — dict with set_code, collector_number, language keys
+    """
+    extracted_name, collector_info = await asyncio.to_thread(
+        _run_ocr_sync, image_bytes
+    )
+    logger.debug("OCR name: %r  footer: %s", extracted_name, collector_info)
+    return await _resolve_from_ocr_results(scryfall, extracted_name, collector_info)
+
+
+async def resolve_scan_traced(
+    scryfall: "ScryfallClient",
+    image_bytes: bytes,
+) -> tuple[Optional[dict], str, list[str], Optional[str], dict, "ScanTrace"]:
+    """Full scan pipeline, same as resolve_scan but also returns a ScanTrace.
+
+    The 6th element is the ScanTrace capturing OCR confidence and all
+    processing steps for this scan.  Set SCAN_DEBUG_LOG=<path> to also
+    append a JSON-lines record to a file.
+    """
+    from core.scanner import ScanTrace  # noqa: F401 — type annotation only
+
+    extracted_name, collector_info, trace = await asyncio.to_thread(
+        _run_ocr_sync_traced, image_bytes
+    )
+    logger.info(
+        "Scan OCR: name=%r  footer=%s  engine=%s  conf=%.2f",
+        extracted_name, collector_info, trace.engine, trace.name_confidence,
+    )
+    card, detected_lang, method_parts, _n, _f = await _resolve_from_ocr_results(
+        scryfall, extracted_name, collector_info
+    )
+    return card, detected_lang, method_parts, extracted_name, collector_info, trace
 
 
 def no_match_message(extracted_name: Optional[str], collector_info: dict) -> str:

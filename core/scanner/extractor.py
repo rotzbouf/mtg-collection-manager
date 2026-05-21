@@ -8,6 +8,7 @@ import numpy as np
 
 from .isolation import isolate_card, _open_image_safe, _ensure_min_width, MAX_INPUT_BYTES
 from . import ocr as _ocr
+from .debug import _step, _trace
 
 logger = logging.getLogger(__name__)
 
@@ -43,8 +44,18 @@ def extract_collector_info(image_bytes: bytes) -> dict:
         if reader:
             results = reader.readtext(np.array(zone), detail=1, paragraph=False)
             logger.debug("Footer EasyOCR raw: %s", [(r[1], round(r[2], 2)) for r in results])
+            t = _trace()
+            if t is not None:
+                t.footer_segments = [(r[1], round(r[2], 3)) for r in results]
+            _step(
+                f"footer-easyocr: {len(results)} segment(s), "
+                f"best_conf={max((r[2] for r in results), default=0.0):.2f}"
+            )
             text = "\n".join(r[1] for r in results if r[2] >= 0.15)
             info = _ocr._parse_footer(text)
+            if t is not None:
+                t.parsed_footer = info
+            _step(f"footer-parsed: {info}")
             if info.get("collector_number") or info.get("language"):
                 logger.debug("Footer parsed (EasyOCR): %s", info)
                 return info
@@ -53,7 +64,12 @@ def extract_collector_info(image_bytes: bytes) -> dict:
         if _ocr._tesseract_available:
             import pytesseract as _pytesseract
             raw = _pytesseract.image_to_string(zone, config="--psm 6 --oem 3").strip()
+            _step(f"footer-tesseract: raw={raw!r}")
             info = _ocr._parse_footer(raw)
+            t = _trace()
+            if t is not None:
+                t.parsed_footer = info
+            _step(f"footer-parsed: {info}")
             logger.debug("Footer parsed (Tesseract): %s", info)
             return info
 
