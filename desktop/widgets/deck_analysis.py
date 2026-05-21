@@ -4,6 +4,12 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+import matplotlib
+matplotlib.use("QtAgg")
+import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView,
@@ -15,11 +21,32 @@ from PyQt6.QtGui import QFont, QAction
 from qasync import asyncSlot
 
 
-def _monofont() -> QFont:
-    font = QFont("Monospace")
-    font.setStyleHint(QFont.StyleHint.TypeWriter)
-    font.setPointSize(9)
-    return font
+_ARCHETYPE_DESCRIPTIONS: dict[str, str] = {
+    "Aggro":       "Fast damage through low-cost creatures and combat tricks.",
+    "Control":     "Answer threats with counters and board wipes, win on card advantage.",
+    "Midrange":    "Efficient creatures and value plays that adapt to the game state.",
+    "Ramp":        "Accelerate mana to cast powerful threats ahead of curve.",
+    "Tokens":      "Flood the board with creature tokens and overwhelm through numbers.",
+    "Graveyard":   "Exploit the graveyard as a resource through recursion and reanimation.",
+    "Combo":       "Assemble specific card combinations for game-ending effects.",
+    "Voltron":     "Buff a single powerful creature with equipment and auras.",
+    "Spellslinger":"Generate value and damage by casting many instants and sorceries.",
+}
+
+_ARCH_COLORS: dict[str, str] = {
+    "Aggro":       "#e74c3c",
+    "Control":     "#3498db",
+    "Midrange":    "#27ae60",
+    "Ramp":        "#1abc9c",
+    "Tokens":      "#f39c12",
+    "Graveyard":   "#8e44ad",
+    "Combo":       "#e67e22",
+    "Voltron":     "#c0a020",
+    "Spellslinger":"#00bcd4",
+}
+
+# Gradient bar colors per CMC bucket (0-6+)
+_CMC_COLORS = ["#64b5f6", "#81c784", "#aed581", "#ffb74d", "#ff8a65", "#ef5350", "#b71c1c"]
 
 
 def _type_group(card: dict) -> str:
@@ -34,9 +61,9 @@ def _type_group(card: dict) -> str:
 class DeckAnalysisWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._containers: list[dict] = []  # deck/commander containers
-        self._cards: list[dict] = []       # all cards in current deck
-        self._filtered: list[dict] = []    # after name/type filter
+        self._containers: list[dict] = []
+        self._cards: list[dict] = []
+        self._filtered: list[dict] = []
         self._current_container: dict | None = None
         self._build_ui()
 
@@ -69,16 +96,25 @@ class DeckAnalysisWidget(QWidget):
         hdr.addWidget(self._refresh_btn)
         root.addLayout(hdr)
 
-        # Stats bar
+        # Stats bar (commander, colors, format, counts, value)
         self._stats_lbl = QLabel("")
         self._stats_lbl.setWordWrap(True)
         self._stats_lbl.setStyleSheet("color: #aaa; font-size: 11px; padding: 2px 0;")
         root.addWidget(self._stats_lbl)
 
-        self._curve_lbl = QLabel("")
-        self._curve_lbl.setFont(_monofont())
-        self._curve_lbl.setStyleSheet("color: #666; font-size: 9px;")
-        root.addWidget(self._curve_lbl)
+        # Strategy / archetype section
+        self._strategy_lbl = QLabel("")
+        self._strategy_lbl.setWordWrap(True)
+        self._strategy_lbl.setTextFormat(Qt.TextFormat.RichText)
+        self._strategy_lbl.setStyleSheet("font-size: 11px; padding: 3px 0;")
+        root.addWidget(self._strategy_lbl)
+
+        # Mana curve chart
+        self._curve_fig = Figure(figsize=(7, 2.4), tight_layout=True)
+        self._curve_canvas = FigureCanvas(self._curve_fig)
+        self._curve_canvas.setMinimumHeight(200)
+        self._curve_canvas.setMaximumHeight(270)
+        root.addWidget(self._curve_canvas)
 
         # Filters
         flt = QHBoxLayout()
@@ -167,7 +203,6 @@ class DeckAnalysisWidget(QWidget):
             fmt = c.get("deck_format") or c.get("type") or ""
             label = f"{c['name']}  [{fmt}]  {c.get('card_count', 0)} cards"
             self._deck_cb.addItem(label, c["id"])
-        # Restore selection
         for i in range(self._deck_cb.count()):
             if self._deck_cb.itemData(i) == prev_id:
                 self._deck_cb.setCurrentIndex(i)
@@ -191,12 +226,10 @@ class DeckAnalysisWidget(QWidget):
     async def _load_deck_cards(self, container_id: int):
         from desktop.db import db
         try:
-            # Get container metadata
             all_containers = await db.list_containers()
             self._current_container = next(
                 (c for c in all_containers if c["id"] == container_id), None
             )
-            # Load all cards (no pagination limit needed for a single deck)
             self._cards = await db.list_cards(container_id=container_id, limit=500, sort="chaos")
         except Exception as exc:
             QMessageBox.critical(self, "Error", f"Could not load deck: {exc}")
@@ -255,25 +288,29 @@ class DeckAnalysisWidget(QWidget):
     def _update_stats(self):
         if not self._cards:
             self._stats_lbl.setText("")
-            self._curve_lbl.setText("")
+            self._strategy_lbl.setText("")
+            self._curve_fig.clear()
+            self._curve_canvas.draw()
             return
 
-        from core.deckbuilder import curve_analysis, color_identity as _ci
-        from core.analysis import detect_archetypes, deck_synergy_score, curve_fit_score
+        from core.deckbuilder import curve_analysis
+        from core.analysis import detect_archetypes, deck_synergy_score, curve_fit_score, ideal_curve
         import json
 
         commander = next((c for c in self._cards if c.get("is_commander")), None)
         total_value = sum(c.get("price_eur") or 0 for c in self._cards)
         nonland = [(c, 1) for c in self._cards if "Land" not in (c.get("type_line") or "")]
+        land_count = len(self._cards) - len(nonland)
         curve = curve_analysis(nonland)
 
-        # Color identity
         colors: set[str] = set()
         for c in self._cards:
             ci = c.get("color_identity") or []
             if isinstance(ci, str):
-                try: ci = json.loads(ci)
-                except: ci = []
+                try:
+                    ci = json.loads(ci)
+                except Exception:
+                    ci = []
             colors |= set(ci)
         color_str = "".join(sorted(colors, key=lambda x: "WUBRG".index(x) if x in "WUBRG" else 9))
 
@@ -281,17 +318,12 @@ class DeckAnalysisWidget(QWidget):
         fmt = (self._current_container or {}).get("deck_format") or (self._current_container or {}).get("type") or ""
         fmt_key = "commander" if fmt == "commander" else "60"
 
-        # Archetype detection
         archetypes = detect_archetypes([c for c, _ in nonland])
         top_arch = archetypes[0][0] if archetypes else ""
-        arch_conf = archetypes[0][1] if archetypes else 0.0
-
-        # Synergy score (sample)
         synergy = deck_synergy_score([c for c, _ in nonland[:40]])
-
-        # Curve fit vs detected archetype
         fit = curve_fit_score(curve, top_arch, fmt=fmt_key) if top_arch else 0.0
 
+        # Stats line: commander · colors · format · card counts · value
         parts = []
         if cmd_name:
             parts.append(f"⚔ {cmd_name}")
@@ -299,36 +331,116 @@ class DeckAnalysisWidget(QWidget):
             parts.append(f"[{color_str}]")
         if fmt:
             parts.append(fmt)
-        parts.append(f"{len(self._cards)} cards")
+        parts.append(f"{len(self._cards)} cards  ({len(nonland)} nonland · {land_count} lands)")
         parts.append(f"€{total_value:.2f}")
-        if top_arch:
-            parts.append(f"{top_arch} {int(arch_conf * 100)}%")
-        parts.append(f"Synergy {synergy:.1f}")
-        parts.append(f"Curve fit {int(fit * 100)}%")
         self._stats_lbl.setText("  ·  ".join(parts))
 
-        # Compact curve with archetype ideal overlay
+        # Strategy section
+        self._render_strategy(archetypes, synergy, fit)
+
+        # Mana curve chart
         if curve:
-            from core.analysis import ideal_curve
             ideal = ideal_curve(top_arch or "default", fmt=fmt_key)
-            total_nonland = sum(curve.values())
-            max_n = max(curve.values(), default=1)
-            BAR = 8
-            labels = {0: "0", 1: "1", 2: "2", 3: "3", 4: "4", 5: "5", 6: "6+"}
-            curve_parts = []
-            for b in range(7):
-                n = curve.get(b, 0)
-                if n == 0:
-                    continue
-                bar = "█" * max(1, round(n / max_n * BAR))
-                target = round(ideal.get(b, 0) * total_nonland)
-                delta = n - target
-                sign = f"+{delta}" if delta > 0 else str(delta)
-                tag = f"({sign})" if delta != 0 else ""
-                curve_parts.append(f"{labels[b]}:{bar}{n}{tag}")
-            self._curve_lbl.setText("  ".join(curve_parts))
+            self._render_curve_chart(curve, ideal, top_arch)
         else:
-            self._curve_lbl.setText("")
+            self._curve_fig.clear()
+            self._curve_canvas.draw()
+
+    def _render_strategy(self, archetypes: list, synergy: float, fit: float):
+        if not archetypes:
+            self._strategy_lbl.setText(
+                '<span style="color:#666; font-style:italic;">No archetype detected.</span>'
+            )
+            return
+
+        top_arch, top_conf = archetypes[0]
+        desc = _ARCHETYPE_DESCRIPTIONS.get(top_arch, "")
+
+        badges = []
+        for arch, conf in archetypes[:4]:
+            color = _ARCH_COLORS.get(arch, "#555")
+            pct = int(conf * 100)
+            badges.append(
+                f'<span style="background:{color}; color:white; '
+                f'padding:2px 7px; border-radius:3px; margin-right:5px; '
+                f'font-weight:bold; font-size:11px;">'
+                f'{arch}&nbsp;{pct}%</span>'
+            )
+
+        synergy_color = "#27ae60" if synergy >= 7 else "#f39c12" if synergy >= 4 else "#e74c3c"
+        fit_color     = "#27ae60" if fit >= 0.7    else "#f39c12" if fit >= 0.4    else "#e74c3c"
+
+        html = (
+            f'{"".join(badges)}'
+            f'<br/>'
+            f'<span style="color:#aaa; font-style:italic; font-size:10px;">{desc}</span>'
+            f'&nbsp;&nbsp;'
+            f'<span style="color:#666; font-size:10px;">Synergy </span>'
+            f'<span style="color:{synergy_color}; font-size:10px; font-weight:bold;">'
+            f'{synergy:.1f}/10</span>'
+            f'&nbsp;&nbsp;'
+            f'<span style="color:#666; font-size:10px;">Curve fit </span>'
+            f'<span style="color:{fit_color}; font-size:10px; font-weight:bold;">'
+            f'{int(fit * 100)}%</span>'
+        )
+        self._strategy_lbl.setText(html)
+
+    def _render_curve_chart(self, curve: dict, ideal: dict, archetype: str):
+        self._curve_fig.clear()
+        self._curve_fig.patch.set_facecolor("#1e1e1e")
+
+        ax = self._curve_fig.add_subplot(111)
+        ax.set_facecolor("#252525")
+
+        x = list(range(7))
+        actual = [curve.get(i, 0) for i in range(7)]
+        total_nonland = max(sum(actual), 1)
+        ideal_counts = [ideal.get(i, 0) * total_nonland for i in range(7)]
+        max_y = max(max(actual, default=0), max(ideal_counts, default=0))
+
+        bars = ax.bar(x, actual, color=_CMC_COLORS, width=0.55, zorder=2)
+
+        # Ideal curve overlay
+        ax.plot(
+            x, ideal_counts,
+            color="#ffffff", linewidth=1.8, linestyle="--",
+            marker="o", markersize=5, alpha=0.55, zorder=3,
+            label=f"Ideal · {archetype}" if archetype else "Ideal",
+        )
+
+        # Count labels on top of each bar
+        for bar, count in zip(bars, actual):
+            if count > 0:
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2,
+                    bar.get_height() + max_y * 0.03,
+                    str(count),
+                    ha="center", va="bottom",
+                    color="white", fontsize=9, fontweight="bold",
+                )
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(["0", "1", "2", "3", "4", "5", "6+"], color="#ccc", fontsize=9)
+        ax.set_ylabel("Cards", color="#888", fontsize=8, labelpad=4)
+        ax.set_xlabel("Mana Cost (CMC)", color="#888", fontsize=8, labelpad=4)
+        ax.set_xlim(-0.5, 6.5)
+        ax.set_ylim(0, max_y * 1.3 + 1)
+        ax.tick_params(axis="y", colors="#888", labelsize=8)
+        ax.tick_params(axis="x", colors="#888")
+
+        for spine in ax.spines.values():
+            spine.set_edgecolor("#3a3a3a")
+        ax.yaxis.grid(True, color="#333", linewidth=0.6, linestyle=":", zorder=0)
+        ax.set_axisbelow(True)
+
+        if archetype:
+            legend = ax.legend(
+                fontsize=8, facecolor="#2a2a2a", edgecolor="#444",
+                labelcolor="white", loc="upper right", framealpha=0.8,
+            )
+
+        self._curve_fig.tight_layout(pad=0.6)
+        self._curve_canvas.draw()
 
     def _set_buttons_enabled(self, enabled: bool):
         self._add_btn.setEnabled(enabled)
@@ -411,7 +523,6 @@ class DeckAnalysisWidget(QWidget):
 
     @asyncSlot()
     async def _on_add_cards(self):
-        """Open picker showing cards not in any deck/commander container."""
         from desktop.db import db
         try:
             pool = await db.get_all(exclude_container_types=["deck", "commander"])
