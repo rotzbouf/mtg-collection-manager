@@ -21,7 +21,7 @@ from desktop.widgets.card_detail import CardDetailPanel
 
 _OC_COLS     = ["Name / ID", "Set", "Cond", "Foil", "Lang", "Container", "Price (EUR)"]
 _SELL_COLS   = ["Name", "Set", "Rarity", "Foil", "Cond", "Lang", "Container", "Price (EUR)"]
-_BUNDLE_COLS = ["Name", "Set", "Rarity", "Price (EUR)"]
+_BUNDLE_COLS = ["Name", "Set", "Rarity", "Lang", "Price (EUR)"]
 
 _ENTRY_ROLE = Qt.ItemDataRole.UserRole
 _CARD_ROLE  = Qt.ItemDataRole.UserRole + 1
@@ -554,37 +554,44 @@ class OvercountWidget(QWidget):
 
         total_val = sum(c.get("price_eur") or 0 for c in cards)
 
-        # Group by rarity for display
-        groups: dict[str, list[dict]] = {}
+        # Group by language, then sort within each group by rarity
+        lang_groups: dict[str, list[dict]] = {}
         for card in cards:
-            r = (card.get("rarity") or "unknown").lower()
-            groups.setdefault(r, []).append(card)
+            lang = (card.get("language") or "en").lower()
+            lang_groups.setdefault(lang, []).append(card)
 
-        rarity_order = ["mythic", "rare", "uncommon", "common", "unknown"]
+        rarity_order = {"mythic": 0, "rare": 1, "uncommon": 2, "common": 3}
+        for lang in sorted(lang_groups):
+            lang_groups[lang].sort(
+                key=lambda c: (rarity_order.get((c.get("rarity") or "").lower(), 9),
+                               -(c.get("price_eur") or 0))
+            )
+
         added = 0
-        for rarity in rarity_order:
-            if rarity not in groups:
-                continue
-            grp     = groups[rarity]
+        for lang in sorted(lang_groups):
+            grp     = lang_groups[lang]
             grp_val = sum(c.get("price_eur") or 0 for c in grp)
-            col     = _rarity_color(rarity)
+            flag    = lang_flag({"language": lang})
 
             parent = QTreeWidgetItem([
-                f"  {rarity.capitalize()}  ×{len(grp)}",
+                f"  {flag} {lang.upper()}  ×{len(grp)}",
+                "",
                 "",
                 "",
                 format_price(grp_val),
             ])
             parent.setExpanded(True)
             f = parent.font(0); f.setBold(True); parent.setFont(0, f)
-            parent.setForeground(0, col)
-            parent.setForeground(2, col)
+            parent.setForeground(0, QColor("#7eb8f7"))
 
             for card in grp:
-                child = QTreeWidgetItem([
+                rarity = (card.get("rarity") or "unknown").lower()
+                col    = _rarity_color(rarity)
+                child  = QTreeWidgetItem([
                     f"    {display_name(card)}",
                     f"{(card.get('set_code') or '').upper()} #{card.get('collector_number') or ''}",
                     rarity.capitalize(),
+                    lang_flag(card),
                     format_price(card.get("price_eur")),
                 ])
                 child.setForeground(2, col)
@@ -596,7 +603,7 @@ class OvercountWidget(QWidget):
             self._bundle_tree.addTopLevelItem(parent)
 
         self._bundle_status.setText(
-            f"{added} card(s)  ·  total value: {format_price(total_val)}"
+            f"{added} card(s)  ·  {len(lang_groups)} language(s)  ·  total value: {format_price(total_val)}"
         )
         self._bundle_create_btn.setEnabled(True)
 
@@ -616,21 +623,34 @@ class OvercountWidget(QWidget):
             QMessageBox.warning(self, "Bundle name required", "Please enter a name for the bundle container.")
             return
 
+        # Split cards by language → one container per language
+        lang_groups: dict[str, list[dict]] = {}
+        for card in self._bundle_cards:
+            lang = (card.get("language") or "en").lower()
+            lang_groups.setdefault(lang, []).append(card)
+
         from desktop.db import db
         try:
-            container_id = await db.create_container(name, description="Bundle", type="box")
-            card_ids = [c["id"] for c in self._bundle_cards if c.get("id")]
-            moved = await db.move_cards_to_container(card_ids, container_id)
+            total_moved = 0
+            created: list[str] = []
+            for lang in sorted(lang_groups):
+                container_name = f"{name} ({lang.upper()})"
+                container_id   = await db.create_container(container_name, description="Bundle", type="box")
+                card_ids       = [c["id"] for c in lang_groups[lang] if c.get("id")]
+                moved          = await db.move_cards_to_container(card_ids, container_id)
+                total_moved   += moved
+                created.append(f"  • {container_name}  ({moved} cards)")
+
             QMessageBox.information(
-                self, "Bundle created",
-                f"Container \"{name}\" created with {moved} card(s)."
+                self, "Bundles created",
+                f"{len(created)} container(s) created — {total_moved} card(s) total:\n\n"
+                + "\n".join(created),
             )
             self._bundle_cards = []
             self._bundle_name.clear()
             self._bundle_tree.clear()
-            self._bundle_status.setText("Bundle created. Select a preset to build another.")
+            self._bundle_status.setText("Bundles created. Select a preset to build another.")
             self._bundle_create_btn.setEnabled(False)
-            # Refresh containers list and sell tab
             await self._load_containers_async()
         except Exception as exc:
             QMessageBox.critical(self, "Error", str(exc))
