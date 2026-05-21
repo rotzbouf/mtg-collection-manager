@@ -365,7 +365,7 @@ class AddCardWidget(QWidget):
         dlg.confirmed.connect(self._do_create_container)
         dlg.exec()
 
-    @asyncSlot()
+    @asyncSlot(str, str)
     async def _do_create_container(self, name: str, ctype: str):
         from desktop.db import db
         try:

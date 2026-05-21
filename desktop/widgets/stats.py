@@ -1,6 +1,14 @@
 """Stats tab widget."""
 from __future__ import annotations
 
+from datetime import datetime
+
+import matplotlib
+matplotlib.use("QtAgg")
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QScrollArea,
     QLabel, QPushButton, QFrame, QTableWidget,
@@ -163,6 +171,7 @@ class StatsWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._embeds: list[_CardEmbed] = []
+        self._value_chart_fig = None
         self._build_ui()
 
     def db_ready(self):
@@ -208,20 +217,24 @@ class StatsWidget(QWidget):
         from desktop.db import db
         stats = await db.stats()
         container_stats = await db.container_stats()
-        self._render_stats(stats, container_stats)
+        value_history = await db.get_collection_value_history()
+        self._render_stats(stats, container_stats, value_history)
 
     # ------------------------------------------------------------------ #
     # Rendering                                                             #
     # ------------------------------------------------------------------ #
 
-    def _render_stats(self, stats: dict, container_stats: list[dict]):
+    def _render_stats(self, stats: dict, container_stats: list[dict], value_history: list[dict]):
+        if self._value_chart_fig is not None:
+            plt.close(self._value_chart_fig)
+            self._value_chart_fig = None
+
         lay = self._inner_layout
         while lay.count():
             item = lay.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
             elif item.layout():
-                # recursively clear nested layouts
                 _clear_layout(item.layout())
         self._embeds = []
 
@@ -318,6 +331,49 @@ class StatsWidget(QWidget):
             ))
             ct_row.addStretch()
             lay.addLayout(ct_row)
+
+        # ── Collection value over time chart ──────────────────────────── #
+        lay.addWidget(_section_header("Collection Value Over Time (EUR)"))
+        if len(value_history) < 2:
+            no_data = QLabel(
+                "Not enough price history yet.\n"
+                "Run a price sync daily to build up the chart."
+            )
+            no_data.setStyleSheet("color: #666; font-size: 12px; padding: 8px 0;")
+            lay.addWidget(no_data)
+        else:
+            dates = [datetime.fromisoformat(r["recorded_at"]) for r in value_history]
+            values = [r["total_value_eur"] for r in value_history]
+
+            fig, ax = plt.subplots(figsize=(8, 2.8))
+            self._value_chart_fig = fig
+            fig.patch.set_facecolor("#1e1e2e")
+            ax.set_facecolor("#2a2a3e")
+
+            ax.plot(dates, values, color="#4caf50", linewidth=2, marker="o", markersize=4)
+            ax.fill_between(dates, values, alpha=0.15, color="#4caf50")
+
+            ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
+            ax.xaxis.set_major_locator(mdates.AutoDateLocator())
+            fig.autofmt_xdate(rotation=30, ha="right")
+
+            ax.set_ylabel("EUR", color="#cccccc", fontsize=10)
+            ax.tick_params(colors="#aaaaaa", labelsize=9)
+            for spine in ax.spines.values():
+                spine.set_edgecolor("#444466")
+
+            delta = values[-1] - values[0]
+            sign = "+" if delta >= 0 else ""
+            ax.set_title(
+                f"€{values[-1]:.2f}  ({sign}{delta:.2f} over {len(dates)} days)",
+                color="#cccccc", fontsize=11, pad=6,
+            )
+
+            fig.tight_layout()
+            canvas = FigureCanvas(fig)
+            canvas.setMinimumHeight(220)
+            canvas.setMaximumHeight(300)
+            lay.addWidget(canvas)
 
         lay.addStretch()
 

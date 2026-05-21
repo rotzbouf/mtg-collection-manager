@@ -140,6 +140,7 @@ class CardDetailPanel(QWidget):
         ):
             lbl.setText("")
         self._mana_widget.clear_mana()
+        self._price_history_btn.setEnabled(False)
         if self._show_buttons:
             self._edit_btn.setEnabled(False)
             self._delete_btn.setEnabled(False)
@@ -205,6 +206,12 @@ class CardDetailPanel(QWidget):
         scroll.setWidget(inner)
         root.addWidget(scroll)
 
+        self._price_history_btn = QPushButton("Price History")
+        self._price_history_btn.setStyleSheet("font-size: 11px; padding: 4px 8px;")
+        self._price_history_btn.setEnabled(False)
+        self._price_history_btn.clicked.connect(self._on_price_history)
+        root.addWidget(self._price_history_btn)
+
         if self._show_buttons:
             btn_row = QHBoxLayout()
             self._edit_btn = QPushButton("Edit")
@@ -252,6 +259,7 @@ class CardDetailPanel(QWidget):
         usd = card.get("price_usd")
         self._lbl_price_usd.setText(f"${float(usd):.2f}" if usd else "—")
 
+        self._price_history_btn.setEnabled(bool(card.get("scryfall_id")))
         if self._show_buttons:
             self._edit_btn.setEnabled(True)
             self._delete_btn.setEnabled(True)
@@ -273,6 +281,12 @@ class CardDetailPanel(QWidget):
                 self._img_label.setText("")
             else:
                 self._img_label.setText("No image\navailable")
+
+    def _on_price_history(self):
+        if self._current_card:
+            from desktop.dialogs.price_history import PriceHistoryDialog
+            dlg = PriceHistoryDialog(self._current_card, parent=self)
+            dlg.exec()
 
     def _on_edit(self):
         if self._current_card:

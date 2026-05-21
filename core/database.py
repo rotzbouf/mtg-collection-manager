@@ -1023,6 +1023,25 @@ class Database:
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
 
+    async def get_collection_value_history(self) -> list[dict]:
+        """Total collection EUR value per recorded day, weighted by number of physical copies."""
+        async with self._db.execute(
+            """
+            SELECT ph.recorded_at,
+                   ROUND(SUM(ph.price_eur * cnt.card_count), 2) AS total_value_eur
+            FROM price_history ph
+            INNER JOIN (
+                SELECT scryfall_id, COUNT(*) AS card_count
+                FROM collection
+                GROUP BY scryfall_id
+            ) cnt ON ph.scryfall_id = cnt.scryfall_id
+            WHERE ph.price_eur IS NOT NULL
+            GROUP BY ph.recorded_at
+            ORDER BY ph.recorded_at ASC
+            """,
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
     async def get_top_by_value(self, limit: int = 5) -> list[dict]:
         async with self._db.execute(
             """
