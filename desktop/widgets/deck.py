@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
     QLabel, QLineEdit, QComboBox, QPushButton,
     QTextEdit, QMessageBox, QFileDialog,
     QDialog, QDialogButtonBox, QFormLayout,
-    QDoubleSpinBox,
+    QDoubleSpinBox, QCheckBox, QSpinBox,
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QGuiApplication
@@ -114,6 +114,19 @@ class DeckWidget(QWidget):
         self._max_price_sb.setSpecialValueText("No limit")
         self._max_price_sb.setFixedWidth(90)
         opts_row.addWidget(self._max_price_sb)
+        opts_row.addSpacing(16)
+        self._refine_cb = QCheckBox("Iterative Refinement")
+        self._refine_cb.setToolTip(
+            "After building, repeatedly swap low-fit cards for better ones until stable"
+        )
+        opts_row.addWidget(self._refine_cb)
+        opts_row.addSpacing(8)
+        opts_row.addWidget(QLabel("Max iterations:"))
+        self._refine_iter_sb = QSpinBox()
+        self._refine_iter_sb.setRange(1, 10)
+        self._refine_iter_sb.setValue(5)
+        self._refine_iter_sb.setFixedWidth(50)
+        opts_row.addWidget(self._refine_iter_sb)
         opts_row.addStretch()
         root.addLayout(opts_row)
 
@@ -292,7 +305,7 @@ class DeckWidget(QWidget):
         from core.deckbuilder import (
             build_commander_deck, build_60_deck,
             format_commander_decklist, format_60_decklist,
-            rank_commanders,
+            rank_commanders, iterative_refine,
         )
 
         fmt = self._fmt_cb.currentData()
@@ -358,14 +371,49 @@ class DeckWidget(QWidget):
             result = build_commander_deck(
                 commander, pool, power_level=power_level, max_price=max_price
             )
-            text = format_commander_decklist(result)
         else:
             forced = self._strategy_cb.currentData()
             result = build_60_deck(
                 pool, fmt, forced_strategy=forced,
                 power_level=power_level, max_price=max_price,
             )
-            text = format_60_decklist(result)
+
+        # ── Iterative refinement ────────────────────────────────────────
+        if self._refine_cb.isChecked():
+            self._stats_label.setText(
+                self._render_stats(result, fmt) + "  |  Refining…"
+            )
+            max_iter = self._refine_iter_sb.value()
+            loop = asyncio.get_event_loop()
+            try:
+                result = await loop.run_in_executor(
+                    None, lambda: iterative_refine(result, pool, max_iterations=max_iter)
+                )
+            except Exception as exc:
+                self._stats_label.setText(f"Refinement error: {exc}")
+
+            # Refine all variants too
+            refined_variants: list[dict] = []
+            for v in result.get("variants") or [result]:
+                if v is result:
+                    refined_variants.append(result)
+                else:
+                    try:
+                        rv = await loop.run_in_executor(
+                            None,
+                            lambda _v=v: iterative_refine(_v, pool, max_iterations=max_iter),
+                        )
+                        refined_variants.append(rv)
+                    except Exception:
+                        refined_variants.append(v)
+            if len(refined_variants) > 1:
+                result["variants"] = refined_variants
+
+        text = (
+            format_commander_decklist(result)
+            if fmt == "commander"
+            else format_60_decklist(result)
+        )
 
         self._result = result
         self._last_fmt = fmt
@@ -423,6 +471,14 @@ class DeckWidget(QWidget):
         synergy = result.get("synergy_score", 0)
         if synergy:
             parts.append(f"Synergy: {synergy:.1f}")
+
+        swaps = result.get("refinement_swaps")
+        if swaps is not None:
+            if swaps > 0:
+                iters = result.get("refinement_iterations", 0)
+                parts.append(f"Refined: {swaps} swap{'s' if swaps != 1 else ''} in {iters} iter{'s' if iters != 1 else ''}")
+            else:
+                parts.append("Already optimal")
 
         return "  |  ".join(parts)
 

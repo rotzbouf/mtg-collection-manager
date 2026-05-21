@@ -452,6 +452,63 @@ def curve_fit_score(actual_curve: dict[int, int], archetype: str, fmt: str = "co
     return round(dot / (mag_a * mag_i), 3)
 
 
+def card_deck_fit_score(
+    card: dict,
+    deck: list[dict],
+    archetype: str,
+    commander: dict | None = None,
+    fmt: str = "commander",
+    role_gaps: dict[str, int] | None = None,
+    _deck_curve: dict[int, int] | None = None,
+) -> float:
+    """Composite fit score for a card in the context of a specific deck (0–150).
+
+    Combines base power, archetype theme alignment, commander synergy,
+    role-gap fill bonus, and mana-curve position bonus.
+
+    Pass _deck_curve (pre-computed) to avoid re-computing per card in tight loops.
+    """
+    from core.deckbuilder import (
+        get_card_themes, tag_card_roles,
+        _commander_synergy_score, _ARCH_TO_THEME,
+    )
+
+    base = score_card(card, fmt)
+
+    themes = get_card_themes(card)
+    arch_theme = _ARCH_TO_THEME.get(archetype, "")
+    if arch_theme and arch_theme in themes:
+        base += 15.0
+    base += len(themes) * 1.2
+
+    if commander is not None:
+        base += _commander_synergy_score(card, commander) * 1.5
+
+    if role_gaps:
+        for r in tag_card_roles(card):
+            gap = role_gaps.get(r, 0)
+            if gap > 0:
+                base += min(gap * 2.5, 10.0)
+                break
+
+    # Curve-position bonus: reward cards filling under-represented CMC buckets
+    if _deck_curve is None:
+        _deck_curve = {}
+        for c in deck:
+            b = min(int(c.get("cmc") or 0), 6)
+            _deck_curve[b] = _deck_curve.get(b, 0) + 1
+
+    ideal = ideal_curve(archetype, fmt)
+    total_deck = max(len(deck), 1)
+    cmc_bucket = min(int(card.get("cmc") or 0), 6)
+    actual_frac = _deck_curve.get(cmc_bucket, 0) / total_deck
+    ideal_frac = ideal.get(cmc_bucket, 0.0)
+    if actual_frac < ideal_frac:
+        base += (ideal_frac - actual_frac) * 25.0
+
+    return round(min(base, 150.0), 2)
+
+
 def select_for_curve(
     candidates: list[dict],
     archetype: str,
