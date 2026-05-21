@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QTreeWidget, QTreeWidgetItem, QTableWidget, QTableWidgetItem,
     QHeaderView, QAbstractItemView, QMenu, QDialog,
     QDialogButtonBox, QFormLayout, QComboBox, QMessageBox,
-    QGroupBox, QTabWidget, QLineEdit, QProgressBar,
+    QGroupBox, QTabWidget, QLineEdit, QProgressBar, QFrame,
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor, QFont
@@ -213,9 +213,22 @@ class OvercountWidget(QWidget):
         menu.exec(self._tree.viewport().mapToGlobal(pos))
 
     def _on_move_to_container(self, card_ids: list[int]):
-        dlg = _MoveToContainerDialog(self._containers, self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            asyncio.ensure_future(self._do_move_cards(card_ids, dlg.selected_id()))
+        asyncio.ensure_future(self._do_open_move_dialog(card_ids))
+
+    async def _do_open_move_dialog(self, card_ids: list[int]):
+        from desktop.db import db
+        self._containers = await db.list_containers()
+        dlg = _MoveToContainerDialog(self._containers, len(card_ids), parent=self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        is_new, container_id, new_name, new_type = dlg.selected_result()
+        if is_new:
+            try:
+                container_id = await db.create_container(new_name, type=new_type)
+            except Exception as exc:
+                QMessageBox.critical(self, "Error", f"Could not create container:\n{exc}")
+                return
+        await self._do_move_cards(card_ids, container_id)
 
     async def _do_move_cards(self, card_ids: list[int], container_id):
         from desktop.db import db
@@ -371,10 +384,23 @@ class OvercountWidget(QWidget):
         cards = self._sell_selected_cards()
         if not cards:
             return
-        dlg = _MoveToContainerDialog(self._containers, self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            ids = [c["id"] for c in cards]
-            asyncio.ensure_future(self._do_sell_move(ids, dlg.selected_id()))
+        asyncio.ensure_future(self._do_open_sell_move_dialog(cards))
+
+    async def _do_open_sell_move_dialog(self, cards: list[dict]):
+        from desktop.db import db
+        self._containers = await db.list_containers()
+        dlg = _MoveToContainerDialog(self._containers, len(cards), parent=self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        is_new, container_id, new_name, new_type = dlg.selected_result()
+        if is_new:
+            try:
+                container_id = await db.create_container(new_name, type=new_type)
+            except Exception as exc:
+                QMessageBox.critical(self, "Error", f"Could not create container:\n{exc}")
+                return
+        ids = [c["id"] for c in cards]
+        await self._do_sell_move(ids, container_id)
 
     async def _do_sell_move(self, card_ids: list[int], container_id):
         from desktop.db import db
@@ -668,24 +694,83 @@ class OvercountWidget(QWidget):
 # ------------------------------------------------------------------ #
 
 class _MoveToContainerDialog(QDialog):
-    def __init__(self, containers: list[dict], parent=None):
+    def __init__(self, containers: list[dict], card_count: int, parent=None):
         super().__init__(parent)
+        import core.config as cfg
+
+        self._new_containers: list[tuple[str, str]] = []
+
         self.setWindowTitle("Move to container")
-        self.setMinimumWidth(300)
+        self.setMinimumWidth(400)
         layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+
+        layout.addWidget(QLabel(f"Move <b>{card_count}</b> card(s) to:"))
+
         self._combo = QComboBox()
         self._combo.addItem("— Remove from container —", None)
         for c in containers:
-            self._combo.addItem(c["name"], c["id"])
-        form = QFormLayout()
-        form.addRow("Container:", self._combo)
-        layout.addLayout(form)
-        btns = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        btns.accepted.connect(self.accept)
-        btns.rejected.connect(self.reject)
-        layout.addWidget(btns)
+            self._combo.addItem(f"{c['name']}  [{c.get('type', '')}]", c["id"])
+        layout.addWidget(self._combo)
 
-    def selected_id(self):
-        return self._combo.currentData()
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        layout.addWidget(sep)
+
+        layout.addWidget(QLabel("<b>Create new container:</b>"))
+
+        new_row = QHBoxLayout()
+        new_row.setSpacing(6)
+
+        self._new_name_edit = QLineEdit()
+        self._new_name_edit.setPlaceholderText("Container name…")
+        new_row.addWidget(self._new_name_edit, stretch=2)
+
+        self._new_type_cb = QComboBox()
+        self._new_type_cb.addItems(cfg.load().get("container_types", cfg.BUILTIN_TYPES))
+        new_row.addWidget(self._new_type_cb, stretch=1)
+
+        add_btn = QPushButton("Add & Select")
+        add_btn.setStyleSheet(
+            "padding: 4px 10px; background: #0f3460; color: white; border-radius: 3px;"
+        )
+        add_btn.clicked.connect(self._on_add_new)
+        new_row.addWidget(add_btn)
+        layout.addLayout(new_row)
+
+        sep2 = QFrame()
+        sep2.setFrameShape(QFrame.Shape.HLine)
+        layout.addWidget(sep2)
+
+        btn_row = QHBoxLayout()
+        ok_btn = QPushButton("Move")
+        ok_btn.setDefault(True)
+        cancel_btn = QPushButton("Cancel")
+        btn_row.addStretch()
+        btn_row.addWidget(cancel_btn)
+        btn_row.addWidget(ok_btn)
+        layout.addLayout(btn_row)
+
+        ok_btn.clicked.connect(self.accept)
+        cancel_btn.clicked.connect(self.reject)
+        self._new_name_edit.returnPressed.connect(self._on_add_new)
+
+    def _on_add_new(self):
+        name = self._new_name_edit.text().strip()
+        if not name:
+            self._new_name_edit.setFocus()
+            return
+        ctype = self._new_type_cb.currentText()
+        idx = len(self._new_containers)
+        self._new_containers.append((name, ctype))
+        self._combo.addItem(f"✦ {name}  [{ctype}]  (new)", ("NEW", idx))
+        self._combo.setCurrentIndex(self._combo.count() - 1)
+        self._new_name_edit.clear()
+
+    def selected_result(self) -> tuple[bool, object, str, str]:
+        """Return (is_new, container_id, new_name, new_type)."""
+        data = self._combo.currentData()
+        if isinstance(data, tuple) and data[0] == "NEW":
+            name, ctype = self._new_containers[data[1]]
+            return True, None, name, ctype
+        return False, data, "", ""
