@@ -29,7 +29,7 @@ Filter by name, type line, oracle text, set, colours, rarity, CMC, condition, la
 ![Search](docs/screenshots/04_search.png)
 
 ### Statistics
-At-a-glance overview: total value, rarity and language breakdown, foil split, and your top 5 most valuable cards with cover art.
+At-a-glance overview: total value, rarity and language breakdown, foil split, your top 10 most valuable cards with cover art, and a collection value chart showing EUR value over time.
 
 ![Statistics](docs/screenshots/05_statistics.png)
 
@@ -56,6 +56,7 @@ The database (`db/mtg_collection.db`) is created automatically on first launch.
 | PyQt6, qasync | Desktop GUI |
 | aiohttp, aiosqlite | Async networking and database |
 | EasyOCR, OpenCV | Card scanning (CPU-only) |
+| matplotlib | Price history and statistics charts |
 | Scryfall API | Card data and prices — no key required |
 
 Full dependency list in `deps/requirements.txt`. Run `bash install.sh` to handle everything automatically.
@@ -74,32 +75,47 @@ Launch with `bash start_desktop.sh`. Requires a display (X11 or Wayland).
 | **Collection** | Collection browser · Containers · Overcount |
 | **Decks** | Deck Builder · Deck Analysis |
 | **Search** | Full-text + multi-filter search across all fields |
-| **Statistics** | Totals, rarity & language breakdown, top-5 by value |
+| **Statistics** | Totals, rarity & language breakdown, top-10 by value, collection value chart |
 | **Logs** | Live log stream with level filter |
 | **Settings** | Config, container types, services (Discord bot / Web UI), backup / restore |
 
 ### Collection
 
-Paginated card list with text search and ID lookup. Multi-select rows for batch move or remove. Click any card to see full details and price history in the side panel. Edit, resync from Scryfall, or delete individual cards.
+Paginated card list with text search and ID lookup. Multi-select rows for batch move or remove. Click any card to see full details in the side panel — including a **Price History** button that opens a EUR line chart for that card. Edit, resync from Scryfall, or delete individual cards.
 
 ### Containers
 
-Organise cards into named binders, boxes, decks, trade piles, etc. Browse cards per container; multi-select context menu for move / remove. Toggle commander status on individual cards.
+Organise cards into named binders, boxes, decks, trade piles, etc. Browse cards per container; multi-select context menu for move / remove. Toggle commander status on individual cards. Every card's detail panel includes the Price History button.
 
 ### Overcount
 
 Three sub-tabs:
+
 - **Overcounted** — cards exceeding a configurable copy threshold, with detail panel and move / remove actions
 - **Sell Candidates** — cards in overcount containers above a price threshold, sorted by value
-- **Bundle Builder** — create preset bundles (50/100 commons, 50/100 uncommons, all rares & mythics, by set) and save them as new box containers
+- **Bundle Builder** — create preset bundles (50/100 commons, 50/100 uncommons, all rares & mythics, by set) and save them as new box containers. Bundles are automatically **split by language** — selecting "50 Commons" produces separate containers for each language present (e.g. *Commons Bulk (EN)*, *Commons Bulk (DE)*) so copies are never mixed.
 
 ### Deck Builder
 
-Auto-generates a Commander (100-card EDH) or 60-card (Timeless / Standard) deck from your collection using synergy scoring. Every card shows its storage location. Save directly to a new container.
+Auto-generates a Commander (100-card EDH) or 60-card (Timeless / Standard) deck from your collection using synergy scoring. Every card shows its storage location. The result includes detected archetype, synergy score, and mana curve. Save directly to a new container.
 
 ### Deck Analysis
 
-Analyse any container flagged as a deck: mana curve chart, colour distribution, type breakdown, card list with CMC and container origin.
+Analyse any container flagged as a deck: mana curve with delta vs. archetype ideal, detected archetypes with confidence, synergy score, colour distribution, type breakdown, and a card list with CMC and container origin.
+
+### Statistics
+
+The Statistics tab gives a full picture of your collection at a glance:
+
+- **Overview** — total card count, unique cards, foil split, total EUR / USD value
+- **Rarity breakdown** — count and EUR value per rarity tier
+- **Language breakdown** — totals and foil split for each language
+- **Top 10 most valuable cards** — thumbnails, names, and prices for your ten highest-value cards
+- **Collection value over time** — an inline EUR line chart built from daily price snapshots, showing the running total value of your entire collection. Automatically populated once at least two sync days have been recorded.
+
+### Price History
+
+Every card detail panel (Collection, Containers, Search, Overcount) has a **Price History** button. It opens a dedicated chart dialog showing the daily EUR price for that specific card over time, along with the total change since the first recorded price.
 
 ---
 
@@ -111,8 +127,11 @@ Analyse any container flagged as a deck: mana curve chart, colour distribution, 
 | **Scanner** | Webcam card isolation (OpenCV) + OCR (EasyOCR CPU / pytesseract fallback) |
 | **Full-text search** | SQLite FTS5 across name, type, oracle text, set, flavour text, notes |
 | **Chaos sort** | MTG-native colour order: W → U → B → R → G → Multi → Colourless → Land, then type, then CMC |
-| **Price history** | Daily EUR snapshots per card; history chart appears once 2+ data points exist |
+| **Price history (per card)** | Daily EUR snapshots; chart button in every card detail panel |
+| **Collection value chart** | Aggregate EUR value over time in the Statistics tab |
 | **Null-price refresh** | Cards without a price are automatically re-checked against Scryfall daily |
+| **Bundle builder** | Preset bundles split by language into separate containers automatically |
+| **Deck analysis engine** | Archetype detection, synergy scoring, mana curve fit vs. archetype ideal |
 | **Export** | Moxfield CSV (default), full CSV, or JSON |
 | **Import** | Moxfield CSV, bot-export CSV, or bot-export JSON |
 | **Backup & restore** | Save / restore `.db` or `.db.xz`; confirmation dialog with card and container counts |
@@ -149,6 +168,7 @@ core/               Shared service layer (used by all interfaces)
   image_cache.py    Local card image cache
   sorting.py        Chaos sort key computation
   deckbuilder.py    Synergy scoring and deck construction
+  analysis.py       Archetype detection, card scoring, mana curve optimisation
   exporter.py       Moxfield CSV, full CSV, JSON serialisation
   importer.py       Moxfield CSV, full CSV, JSON parsing
 
@@ -233,7 +253,7 @@ Admin  ≥  Collector  ≥  Guest
 
 | Role | Permissions |
 |---|---|
-| Guest | `/list`, `/search`, `/stats`, `/export`, `/browse`, `/deck propose`, `/showcase` |
+| Guest | `/list`, `/search`, `/stats`, `/showcase`, `/export`, `/browse`, `/deck propose` |
 | Collector | `/add`, Browse → Edit / Move / Resync + all Guest |
 | Admin | Browse → Delete, Rename container, `/resync`, `/backup` + all Collector |
 
