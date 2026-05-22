@@ -19,8 +19,12 @@ from qasync import asyncSlot
 
 FORMATS = [
     ("commander", "Commander (100-card EDH)"),
-    ("timeless",  "60-card — Timeless"),
     ("standard",  "60-card — Standard"),
+    ("modern",    "60-card — Modern"),
+    ("legacy",    "60-card — Legacy"),
+    ("vintage",   "60-card — Vintage"),
+    ("pauper",    "60-card — Pauper"),
+    ("timeless",  "60-card — Timeless (Arena)"),
 ]
 
 

@@ -132,6 +132,25 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_price_history_unique
     ON price_history(scryfall_id, recorded_at);
 CREATE INDEX IF NOT EXISTS idx_price_history_lookup
     ON price_history(scryfall_id);
+
+-- Format ban tracking (derived from Scryfall legalities, rebuilt on startup)
+CREATE TABLE IF NOT EXISTS format_bans (
+    format       TEXT NOT NULL,
+    card_name    TEXT NOT NULL,
+    status       TEXT NOT NULL,
+    refreshed_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (format, card_name)
+);
+
+-- Manual overrides: status='legal' un-bans a card, 'banned'/'restricted' force-bans one
+CREATE TABLE IF NOT EXISTS format_ban_overrides (
+    format    TEXT NOT NULL,
+    card_name TEXT NOT NULL,
+    status    TEXT NOT NULL,
+    reason    TEXT,
+    added_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (format, card_name)
+);
 """
 
 

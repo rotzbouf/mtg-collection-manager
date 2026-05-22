@@ -1,6 +1,6 @@
 """
 Deck building engine.
-Formats: commander, timeless, standard
+Formats: commander, standard, modern, legacy, vintage, pauper, timeless
 """
 
 import json
@@ -147,6 +147,37 @@ def is_legal(card: dict, fmt: str) -> bool:
         except Exception:
             return False
     return leg.get(fmt) == "legal"
+
+
+def _is_pool_eligible(card: dict, fmt: str) -> bool:
+    """Whether a card belongs in a format's pool.
+
+    Identical to is_legal for every format except vintage, where restricted
+    cards (max 1 copy) are still playable.
+    """
+    if fmt != "vintage":
+        return is_legal(card, fmt)
+    leg = card.get("legalities") or {}
+    if isinstance(leg, str):
+        try:
+            leg = json.loads(leg)
+        except Exception:
+            return False
+    return leg.get("vintage") in ("legal", "restricted")
+
+
+def _max_copies(card: dict, fmt: str) -> int:
+    """Hard copy-count cap for this card in this format (before availability limits)."""
+    if fmt == "vintage":
+        leg = card.get("legalities") or {}
+        if isinstance(leg, str):
+            try:
+                leg = json.loads(leg)
+            except Exception:
+                return 4
+        if leg.get("vintage") == "restricted":
+            return 1
+    return 4
 
 
 def color_identity(card: dict) -> frozenset:
@@ -451,7 +482,7 @@ def _build_land_base(
         tl = card.get("type_line") or ""
         if "Land" not in tl or "Basic" in tl:
             continue
-        if fmt != "commander" and not is_legal(card, fmt):
+        if fmt != "commander" and not _is_pool_eligible(card, fmt):
             continue
         card_ci = color_identity(card)
         if card_ci and not card_ci.issubset(ci):
@@ -738,7 +769,7 @@ def _build_60_core(
     from core.analysis import select_for_curve, deck_synergy_score, score_card, detect_archetypes
 
     legal_nonland = _apply_power_level_filter(
-        [c for c in pool if is_legal(c, fmt) and "Land" not in (c.get("type_line") or "")],
+        [c for c in pool if _is_pool_eligible(c, fmt) and "Land" not in (c.get("type_line") or "")],
         power_level, max_price,
     )
 
@@ -798,7 +829,7 @@ def _build_60_core(
         if total >= target_nonland:
             break
         name = (card.get("name_en") or "").lower()
-        take = min(available[name], 4, target_nonland - total)
+        take = min(available[name], _max_copies(card, fmt), target_nonland - total)
         if take > 0:
             deck_cards.append((card, take))
             total += take
@@ -865,7 +896,7 @@ def build_60_deck(
 
     legal_nonland = [
         c for c in pool
-        if is_legal(c, fmt) and "Land" not in (c.get("type_line") or "")
+        if _is_pool_eligible(c, fmt) and "Land" not in (c.get("type_line") or "")
     ]
 
     if forced_strategy:
@@ -940,7 +971,7 @@ def iterative_refine(
             return color_identity(c).issubset(ci) and is_legal(c, "commander")
     else:
         def _eligible(c: dict) -> bool:
-            return is_legal(c, fmt_key)
+            return _is_pool_eligible(c, fmt_key)
 
     role_targets = dict(_COMMANDER_ROLE_TARGETS if is_commander else _60_ROLE_TARGETS)
 

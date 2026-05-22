@@ -21,6 +21,7 @@ from desktop.widgets.settings import SettingsWidget
 from desktop.widgets.deck import DeckWidget
 from desktop.widgets.deck_analysis import DeckAnalysisWidget
 from desktop.widgets.overcount import OvercountWidget
+from desktop.widgets.format_bans import FormatBansWidget
 from desktop.widgets.logs_page import LogsWidget, QtLogHandler
 
 logger = logging.getLogger(__name__)
@@ -184,6 +185,7 @@ class MainWindow(QMainWindow):
                 ("Collection", CollectionWidget()),
                 ("Containers", ContainersWidget()),
                 ("Overcount",  OvercountWidget()),
+                ("Bans",       FormatBansWidget()),
             ])
         if key == "search":
             return SearchWidget()
@@ -276,6 +278,8 @@ class MainWindow(QMainWindow):
                     await db.update_card_prices(
                         sid, data.get("price_eur"), data.get("price_usd")
                     )
+                    if data.get("legalities"):
+                        await db.update_card_legalities(sid, data["legalities"])
                     updated += 1
             except Exception:
                 pass
@@ -284,6 +288,14 @@ class MainWindow(QMainWindow):
 
         try:
             await db.record_prices()
+        except Exception:
+            pass
+
+        # Rebuild format ban table from fresh legality data
+        try:
+            self._sync_lbl.setText("Rebuilding ban lists…")
+            ban_count = await db.rebuild_format_bans()
+            logger.info("Format bans rebuilt: %d entries", ban_count)
         except Exception:
             pass
 
@@ -316,5 +328,11 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
-        # Refresh all prices from Scryfall in the background.
+        # Rebuild ban lists from stored legalities (fast, no network).
+        try:
+            await db.rebuild_format_bans()
+        except Exception:
+            pass
+
+        # Refresh all prices + legalities from Scryfall in the background.
         asyncio.ensure_future(self._refresh_all_prices())
