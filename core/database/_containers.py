@@ -79,6 +79,7 @@ class _ContainersMixin:
             return result.rowcount
 
     async def delete_container(self, container_id: int) -> bool:
+        """Delete the container. Cards inside have their container_id set to NULL (kept)."""
         async with self._write_lock:
             async with self._db.execute(
                 "DELETE FROM containers WHERE id = ?", (container_id,)
@@ -86,6 +87,31 @@ class _ContainersMixin:
                 deleted = cur.rowcount > 0
             await self._db.commit()
             return deleted
+
+    async def delete_container_and_cards(self, container_id: int) -> tuple[int, bool]:
+        """Delete the container and all cards inside it.
+
+        Returns (cards_deleted, container_deleted).
+        """
+        async with self._write_lock:
+            async with self._db.execute(
+                "DELETE FROM collection WHERE container_id = ?", (container_id,)
+            ) as cur:
+                cards_deleted = cur.rowcount
+            async with self._db.execute(
+                "DELETE FROM containers WHERE id = ?", (container_id,)
+            ) as cur:
+                container_deleted = cur.rowcount > 0
+            await self._db.commit()
+        return cards_deleted, container_deleted
+
+    async def count_cards_in_container(self, container_id: int) -> int:
+        """Return the number of cards in a container."""
+        async with self._db.execute(
+            "SELECT COUNT(*) FROM collection WHERE container_id = ?", (container_id,)
+        ) as cur:
+            row = await cur.fetchone()
+        return row[0] if row else 0
 
     async def rename_container(self, container_id: int, new_name: str) -> bool:
         async with self._write_lock:

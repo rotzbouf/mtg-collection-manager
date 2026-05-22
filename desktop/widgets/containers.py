@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
     QListWidget, QListWidgetItem, QPushButton, QLabel,
     QTableWidget, QTableWidgetItem, QHeaderView,
     QMessageBox, QAbstractItemView, QFrame, QComboBox, QMenu, QApplication,
-    QDialog, QDialogButtonBox, QFormLayout,
+    QDialog, QDialogButtonBox, QFormLayout, QRadioButton, QButtonGroup,
 )
 from PyQt6.QtCore import Qt, QTimer, QMimeData, QByteArray, QEvent
 from PyQt6.QtGui import QColor, QDrag
@@ -615,20 +615,64 @@ class ContainersWidget(QWidget):
     def _on_delete_container(self):
         if self._selected_container is None:
             return
-        name = self._selected_container["name"]
-        reply = QMessageBox.question(
-            self, "Delete container",
-            f"Delete container '{name}'?\nCards will be moved out of it.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply == QMessageBox.StandardButton.Yes:
-            self._do_delete_container(self._selected_container["id"])
+        asyncio.ensure_future(self._do_open_delete_dialog(self._selected_container))
 
     @asyncSlot()
-    async def _do_delete_container(self, container_id: int):
+    async def _do_open_delete_dialog(self, container: dict):
         from desktop.db import db
 
-        await db.delete_container(container_id)
+        container_id = container["id"]
+        name         = container["name"]
+        card_count   = await db.count_cards_in_container(container_id)
+
+        if card_count == 0:
+            reply = QMessageBox.question(
+                self, "Delete container",
+                f"Delete empty container '{name}'?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                await db.delete_container(container_id)
+                self._selected_container = None
+                self._detail.clear()
+                await self._load_containers()
+            return
+
+        # Non-empty container — show choice dialog
+        dlg = _DeleteContainerDialog(name, card_count, parent=self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        delete_cards = dlg.delete_cards()
+
+        # Second confirmation
+        if delete_cards:
+            confirm_msg = (
+                f"Really delete container '{name}' and permanently remove "
+                f"all {card_count} card(s) from the collection?\n\n"
+                f"This cannot be undone."
+            )
+        else:
+            confirm_msg = (
+                f"Really delete container '{name}'?\n"
+                f"The {card_count} card(s) inside will be kept in the collection "
+                f"without a container."
+            )
+
+        reply = QMessageBox.warning(
+            self, "Confirm deletion",
+            confirm_msg,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        if delete_cards:
+            await db.delete_container_and_cards(container_id)
+        else:
+            await db.delete_container(container_id)
+
         self._selected_container = None
         self._detail.clear()
         await self._load_containers()
@@ -805,3 +849,48 @@ def _show_commander_check(cards: list[dict], deck_name: str, parent=None):
     layout.addWidget(btns)
 
     dlg.exec()
+
+
+class _DeleteContainerDialog(QDialog):
+    """First-step dialog: choose whether to delete or keep the cards inside."""
+
+    def __init__(self, container_name: str, card_count: int, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Delete container")
+        self.setMinimumWidth(420)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+
+        warn = QLabel(
+            f"<b>'{container_name}'</b> contains <b>{card_count} card(s)</b>.<br>"
+            "What should happen to them?"
+        )
+        warn.setWordWrap(True)
+        warn.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(warn)
+
+        self._group = QButtonGroup(self)
+
+        self._keep_rb = QRadioButton(
+            f"Keep cards in collection  (unassign from container)"
+        )
+        self._keep_rb.setChecked(True)
+        self._delete_rb = QRadioButton(
+            f"Delete cards too  (remove {card_count} card(s) from the collection permanently)"
+        )
+        self._delete_rb.setStyleSheet("color: #e05c5c;")
+        self._group.addButton(self._keep_rb)
+        self._group.addButton(self._delete_rb)
+        layout.addWidget(self._keep_rb)
+        layout.addWidget(self._delete_rb)
+
+        btns = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+    def delete_cards(self) -> bool:
+        return self._delete_rb.isChecked()
