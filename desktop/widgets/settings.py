@@ -1007,7 +1007,76 @@ class SettingsWidget(QWidget):
         self._bl_remove_btn.clicked.connect(self._on_bl_remove_row)
         self._bl_save_btn.clicked.connect(self._on_bl_save)
 
+        layout.addSpacing(4)
+        layout.addWidget(self._divider())
+        layout.addSpacing(4)
+
+        # ── Brave Web Search ──────────────────────────────────────────── #
+        layout.addWidget(self._section_header("Brave Web Search"))
+        layout.addWidget(QLabel(
+            "Use the Brave Search API to automatically discover buylist pages.\n"
+            "Get a free API key at https://brave.com/search/api/"
+        ))
+
+        key_row = QHBoxLayout()
+        key_row.addWidget(QLabel("API Key:"))
+        self._brave_key_edit = QLineEdit()
+        self._brave_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self._brave_key_edit.setPlaceholderText("BSA…")
+        self._brave_key_edit.setText(cfg.load().get("brave", {}).get("api_key", ""))
+        key_row.addWidget(self._brave_key_edit, stretch=1)
+        layout.addLayout(key_row)
+
+        layout.addWidget(QLabel("Search keywords (one per line):"))
+        self._brave_kw_edit = QPlainTextEdit()
+        self._brave_kw_edit.setMaximumHeight(90)
+        self._brave_kw_edit.setPlaceholderText("MTG Karten Ankauf Buylist\nMagic cards buylist kaufen")
+        kws = cfg.load().get("brave", {}).get("keywords", [])
+        self._brave_kw_edit.setPlainText("\n".join(kws))
+        layout.addWidget(self._brave_kw_edit)
+
+        res_row = QHBoxLayout()
+        res_row.addWidget(QLabel("Max results per keyword:"))
+        from PyQt6.QtWidgets import QSpinBox
+        self._brave_max_sb = QSpinBox()
+        self._brave_max_sb.setRange(1, 20)
+        self._brave_max_sb.setValue(cfg.load().get("brave", {}).get("max_results", 5))
+        res_row.addWidget(self._brave_max_sb)
+        res_row.addStretch()
+        layout.addLayout(res_row)
+
+        brave_save_row = QHBoxLayout()
+        self._brave_save_btn = QPushButton("Save")
+        self._brave_save_btn.setFixedWidth(90)
+        self._brave_status = QLabel("")
+        self._brave_status.setStyleSheet("color: #888;")
+        brave_save_row.addWidget(self._brave_save_btn)
+        brave_save_row.addWidget(self._brave_status)
+        brave_save_row.addStretch()
+        layout.addLayout(brave_save_row)
+        layout.addStretch()
+
+        self._brave_save_btn.clicked.connect(self._on_brave_save)
+
         return tab
+
+    def _on_brave_save(self):
+        kws = [
+            l.strip() for l in self._brave_kw_edit.toPlainText().splitlines()
+            if l.strip()
+        ]
+        config = cfg.load()
+        config.setdefault("brave", {})
+        config["brave"]["api_key"]     = self._brave_key_edit.text().strip()
+        config["brave"]["keywords"]    = kws
+        config["brave"]["max_results"] = self._brave_max_sb.value()
+        try:
+            cfg.save(config)
+            self._brave_status.setText("Saved.")
+            self._brave_status.setStyleSheet("color: #4caf50;")
+        except Exception as exc:
+            self._brave_status.setText(f"Error: {exc}")
+            self._brave_status.setStyleSheet("color: #e94560;")
 
     def _bl_add_row(self, name: str = "", url: str = ""):
         row = self._bl_table.rowCount()

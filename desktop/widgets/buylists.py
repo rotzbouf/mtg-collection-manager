@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
     QLabel, QLineEdit, QPushButton,
     QTextEdit, QTableWidget, QTableWidgetItem,
     QHeaderView, QSplitter, QFrame, QComboBox,
+    QTabWidget, QProgressBar, QSpinBox,
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor, QFont
@@ -252,8 +253,10 @@ class BuylistsWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._db_ready = False
-        self._entries: list[dict] = []   # parsed buylist
-        self._matches: list[dict] = []   # matched collection rows with buylist info
+        self._entries: list[dict] = []   # parsed buylist (manual tab)
+        self._matches: list[dict] = []   # matched rows (manual tab)
+        self._search_results: list[dict] = []  # per-store results (search tab)
+        self._selected_store_matches: list[dict] = []  # shown in detail table
         self._build_ui()
 
     # ── UI ────────────────────────────────────────────────────────────────────
@@ -264,6 +267,19 @@ class BuylistsWidget(QWidget):
         root.setSpacing(10)
 
         root.addWidget(QLabel("<h2>Buylists</h2>"))
+
+        self._tabs = QTabWidget()
+        self._tabs.addTab(self._build_manual_tab(), "Manual")
+        self._tabs.addTab(self._build_search_tab(), "Web Search")
+        root.addWidget(self._tabs)
+
+    # ── Manual tab ────────────────────────────────────────────────────────────
+
+    def _build_manual_tab(self) -> QWidget:
+        tab = QWidget()
+        root = QVBoxLayout(tab)
+        root.setContentsMargins(0, 8, 0, 0)
+        root.setSpacing(10)
 
         # ── Saved sources ─────────────────────────────────────────────────────
         sources_row = QHBoxLayout()
@@ -303,7 +319,7 @@ class BuylistsWidget(QWidget):
             "  Lightning Bolt\t0.30\n"
             "  Sol Ring\t2.50"
         )
-        self._paste_area.setMaximumHeight(160)
+        self._paste_area.setMaximumHeight(130)
         self._paste_area.setFont(QFont("Monospace", 9))
         root.addWidget(self._paste_area)
 
@@ -337,28 +353,8 @@ class BuylistsWidget(QWidget):
         summary_layout.addStretch()
         root.addWidget(self._summary_frame)
 
-        # ── Results table ─────────────────────────────────────────────────────
-        self._table = QTableWidget(0, 6)
-        self._table.setHorizontalHeaderLabels([
-            "Card name", "Set", "Buylist €", "Market €", "Count", "Container",
-        ])
-        hh = self._table.horizontalHeader()
-        hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        hh.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
-        hh.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-        hh.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
-        hh.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
-        hh.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
-        self._table.setColumnWidth(1, 80)
-        self._table.setColumnWidth(2, 90)
-        self._table.setColumnWidth(3, 90)
-        self._table.setColumnWidth(4, 55)
-        self._table.setAlternatingRowColors(True)
-        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self._table.setSortingEnabled(True)
-        self._table.verticalHeader().setVisible(False)
-
+        # ── Results table + preview ───────────────────────────────────────────
+        self._table = _make_card_table()
         self._preview = _CardPreview()
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -376,14 +372,122 @@ class BuylistsWidget(QWidget):
         self._refresh_sources_btn.clicked.connect(self._load_sources)
         self._table.itemSelectionChanged.connect(self._on_row_selected)
 
+        return tab
+
+    # ── Web Search tab ────────────────────────────────────────────────────────
+
+    def _build_search_tab(self) -> QWidget:
+        tab = QWidget()
+        root = QVBoxLayout(tab)
+        root.setContentsMargins(0, 8, 0, 0)
+        root.setSpacing(8)
+
+        # ── Controls ──────────────────────────────────────────────────────────
+        ctrl_row = QHBoxLayout()
+        ctrl_row.addWidget(QLabel("Keyword:"))
+        self._search_kw_combo = QComboBox()
+        self._search_kw_combo.setEditable(True)
+        self._search_kw_combo.setMinimumWidth(280)
+        ctrl_row.addWidget(self._search_kw_combo, stretch=1)
+
+        ctrl_row.addWidget(QLabel("Max results:"))
+        self._search_max_sb = QSpinBox()
+        self._search_max_sb.setRange(1, 20)
+        self._search_max_sb.setValue(5)
+        self._search_max_sb.setFixedWidth(55)
+        ctrl_row.addWidget(self._search_max_sb)
+
+        self._search_btn = QPushButton("Search & Match")
+        self._search_btn.setEnabled(False)
+        ctrl_row.addWidget(self._search_btn)
+        root.addLayout(ctrl_row)
+
+        # ── Progress ──────────────────────────────────────────────────────────
+        self._search_progress = QProgressBar()
+        self._search_progress.setVisible(False)
+        self._search_progress.setTextVisible(True)
+        root.addWidget(self._search_progress)
+
+        self._search_status = QLabel("")
+        self._search_status.setStyleSheet("color: #888; font-size: 11px;")
+        root.addWidget(self._search_status)
+
+        # ── Splitter: store ranking | card detail ─────────────────────────────
+        h_splitter = QSplitter(Qt.Orientation.Horizontal)
+
+        # Left: store ranking
+        left = QWidget()
+        left_lay = QVBoxLayout(left)
+        left_lay.setContentsMargins(0, 0, 4, 0)
+        left_lay.setSpacing(4)
+        left_lay.addWidget(QLabel("<b>Store Ranking</b>  (by total buylist value)"))
+
+        self._store_table = QTableWidget(0, 5)
+        self._store_table.setHorizontalHeaderLabels([
+            "Store", "Matches", "BL Total €", "MKT Total €", "Above Market",
+        ])
+        sh = self._store_table.horizontalHeader()
+        sh.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        sh.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
+        sh.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        sh.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
+        sh.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
+        self._store_table.setColumnWidth(1, 65)
+        self._store_table.setColumnWidth(2, 85)
+        self._store_table.setColumnWidth(3, 85)
+        self._store_table.setColumnWidth(4, 100)
+        self._store_table.setAlternatingRowColors(True)
+        self._store_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._store_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._store_table.setSortingEnabled(True)
+        self._store_table.verticalHeader().setVisible(False)
+        left_lay.addWidget(self._store_table)
+
+        h_splitter.addWidget(left)
+
+        # Right: card detail for selected store
+        right = QWidget()
+        right_lay = QVBoxLayout(right)
+        right_lay.setContentsMargins(4, 0, 0, 0)
+        right_lay.setSpacing(4)
+
+        self._detail_header = QLabel("Select a store to view card matches")
+        self._detail_header.setStyleSheet("color: #888; font-size: 11px;")
+        right_lay.addWidget(self._detail_header)
+
+        self._detail_table = _make_card_table()
+        self._detail_preview = _CardPreview()
+
+        detail_splitter = QSplitter(Qt.Orientation.Horizontal)
+        detail_splitter.addWidget(self._detail_table)
+        detail_splitter.addWidget(self._detail_preview)
+        detail_splitter.setStretchFactor(0, 1)
+        detail_splitter.setStretchFactor(1, 0)
+        right_lay.addWidget(detail_splitter)
+
+        h_splitter.addWidget(right)
+        h_splitter.setStretchFactor(0, 1)
+        h_splitter.setStretchFactor(1, 2)
+        root.addWidget(h_splitter)
+
+        # ── Signals ───────────────────────────────────────────────────────────
+        self._search_btn.clicked.connect(self._on_search)
+        self._store_table.itemSelectionChanged.connect(self._on_store_selected)
+        self._detail_table.itemSelectionChanged.connect(self._on_detail_row_selected)
+
+        self._load_search_keywords()
+        return tab
+
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
     def db_ready(self):
         self._db_ready = True
         self._match_btn.setEnabled(True)
+        self._load_search_keywords()
 
     def refresh(self):
         self._load_sources()
+        self._load_search_keywords()
 
     # ── Source helpers ────────────────────────────────────────────────────────
 
@@ -404,12 +508,256 @@ class BuylistsWidget(QWidget):
         if url:
             self._url_edit.setText(url)
 
+    def _load_search_keywords(self):
+        import core.config as _cfg
+        brave = _cfg.load().get("brave", {})
+        api_key = brave.get("api_key", "")
+        keywords = brave.get("keywords", [])
+        max_res = brave.get("max_results", 5)
+        self._search_kw_combo.blockSignals(True)
+        current = self._search_kw_combo.currentText()
+        self._search_kw_combo.clear()
+        for kw in keywords:
+            self._search_kw_combo.addItem(kw)
+        if current and self._search_kw_combo.findText(current) == -1:
+            self._search_kw_combo.addItem(current)
+        if current:
+            idx = self._search_kw_combo.findText(current)
+            if idx >= 0:
+                self._search_kw_combo.setCurrentIndex(idx)
+        self._search_kw_combo.blockSignals(False)
+        self._search_max_sb.setValue(max_res)
+        self._search_btn.setEnabled(bool(api_key) and self._db_ready)
+
     # ── Slots ─────────────────────────────────────────────────────────────────
 
     def _on_paste_changed(self):
         has_text = bool(self._paste_area.toPlainText().strip())
         if self._db_ready:
             self._match_btn.setEnabled(has_text or bool(self._entries))
+
+    # ── Web search slots ──────────────────────────────────────────────────────
+
+    @asyncSlot()
+    async def _on_search(self):
+        import core.config as _cfg
+        from core.brave_search import search_buylist_urls
+        from desktop.db import db
+        import aiohttp
+
+        brave = _cfg.load().get("brave", {})
+        api_key = brave.get("api_key", "").strip()
+        if not api_key:
+            self._search_status.setText("No Brave API key — set it in Settings → Buylists.")
+            return
+
+        query = self._search_kw_combo.currentText().strip()
+        if not query:
+            self._search_status.setText("Enter a search keyword.")
+            return
+
+        max_res = self._search_max_sb.value()
+        self._search_btn.setEnabled(False)
+        self._search_status.setText("Searching…")
+        self._search_progress.setVisible(True)
+        self._search_progress.setRange(0, 0)
+        self._search_results = []
+        self._store_table.setRowCount(0)
+        self._detail_table.setRowCount(0)
+        self._detail_header.setText("Select a store to view card matches")
+
+        try:
+            urls = await search_buylist_urls(api_key, query, max_res)
+        except Exception as exc:
+            self._search_status.setText(f"Search error: {exc}")
+            self._search_progress.setVisible(False)
+            self._search_btn.setEnabled(True)
+            return
+
+        if not urls:
+            self._search_status.setText("No results found.")
+            self._search_progress.setVisible(False)
+            self._search_btn.setEnabled(True)
+            return
+
+        self._search_progress.setRange(0, len(urls))
+        self._search_progress.setValue(0)
+
+        store_results: list[dict] = []
+        for i, hit in enumerate(urls):
+            url   = hit["url"]
+            title = hit["title"] or url
+            self._search_status.setText(f"Fetching {i+1}/{len(urls)}: {title[:60]}…")
+            self._search_progress.setValue(i)
+
+            html = await self._fetch_url_silent(url)
+            if html is None:
+                store_results.append({
+                    "title": title, "url": url, "status": "fetch_error",
+                    "entries": [], "matches": [],
+                    "total_bl": 0.0, "total_mkt": 0.0, "above_market": 0,
+                })
+                continue
+
+            entries = parse_buylist_text(html)
+            if not entries:
+                store_results.append({
+                    "title": title, "url": url, "status": "no_entries",
+                    "entries": [], "matches": [],
+                    "total_bl": 0.0, "total_mkt": 0.0, "above_market": 0,
+                })
+                continue
+
+            buylist_by_name = {e["name"].lower(): e for e in entries}
+            card_names = list(buylist_by_name.keys())
+            try:
+                collection_cards = await db.get_cards_by_names(card_names)
+            except Exception:
+                collection_cards = []
+
+            grouped: dict[str, dict] = {}
+            for card in collection_cards:
+                key = self._resolve_key(card, buylist_by_name)
+                if key is None:
+                    continue
+                if key not in grouped:
+                    grouped[key] = {
+                        "name":      card.get("name_en") or card.get("printed_name") or key,
+                        "set_code":  buylist_by_name[key].get("set") or card.get("set_code") or "",
+                        "bl_price":  buylist_by_name[key].get("price"),
+                        "mkt_price": card.get("price_eur"),
+                        "count":     0,
+                        "container": card.get("container_name") or "—",
+                        "_cards":    [],
+                    }
+                grouped[key]["count"] += 1
+                grouped[key]["_cards"].append(card)
+                mkt = card.get("price_eur") or 0.0
+                if mkt > (grouped[key]["mkt_price"] or 0.0):
+                    grouped[key]["mkt_price"] = mkt
+                ct = card.get("container_name") or "—"
+                existing = grouped[key]["container"]
+                if ct not in existing:
+                    grouped[key]["container"] = f"{existing}, {ct}" if existing != "—" else ct
+
+            matches = list(grouped.values())
+            total_bl  = sum((m["bl_price"]  or 0) * m["count"] for m in matches)
+            total_mkt = sum((m["mkt_price"] or 0) * m["count"] for m in matches)
+            above = sum(
+                1 for m in matches
+                if m["bl_price"] is not None and m["mkt_price"] is not None
+                and m["bl_price"] >= m["mkt_price"] * 0.8
+            )
+            store_results.append({
+                "title": title, "url": url, "status": "ok",
+                "entries": entries, "matches": matches,
+                "total_bl": total_bl, "total_mkt": total_mkt, "above_market": above,
+            })
+
+        self._search_progress.setValue(len(urls))
+        self._search_progress.setVisible(False)
+
+        # Sort by total buylist value descending (profit ranking)
+        store_results.sort(key=lambda s: s["total_bl"], reverse=True)
+        self._search_results = store_results
+
+        ok = [s for s in store_results if s["status"] == "ok"]
+        self._search_status.setText(
+            f"Done — {len(ok)}/{len(store_results)} stores matched · "
+            f"Best: {ok[0]['title'][:40] if ok else '—'}"
+        )
+        self._render_store_table()
+        self._search_btn.setEnabled(True)
+
+    async def _fetch_url_silent(self, url: str) -> Optional[str]:
+        import aiohttp
+        try:
+            jar = aiohttp.CookieJar(unsafe=True)
+            async with aiohttp.ClientSession(
+                headers=_FETCH_HEADERS, cookie_jar=jar,
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as s:
+                async with s.get(url, allow_redirects=True) as resp:
+                    html = await resp.text(errors="replace")
+            return html if len(html) >= 300 else None
+        except Exception:
+            return None
+
+    def _render_store_table(self):
+        self._store_table.blockSignals(True)
+        self._store_table.setSortingEnabled(False)
+        self._store_table.setRowCount(0)
+        self._store_table.setRowCount(len(self._search_results))
+
+        for row_idx, s in enumerate(self._search_results):
+            ok = s["status"] == "ok"
+            name_item = QTableWidgetItem(s["title"])
+            name_item.setData(Qt.ItemDataRole.UserRole, row_idx)
+            if not ok:
+                name_item.setForeground(QColor("#585b70"))
+                name_item.setToolTip(f"{s['url']}\nStatus: {s['status']}")
+            else:
+                name_item.setToolTip(s["url"])
+
+            match_item = _numeric_item(len(s["matches"]) if ok else 0, decimals=0)
+            bl_item    = _numeric_item(s["total_bl"]  if ok else None)
+            mkt_item   = _numeric_item(s["total_mkt"] if ok else None)
+            above_item = _numeric_item(s["above_market"] if ok else 0, decimals=0)
+
+            if ok and s["above_market"] > 0:
+                above_item.setForeground(QColor("#a6e3a1"))
+
+            self._store_table.setItem(row_idx, 0, name_item)
+            self._store_table.setItem(row_idx, 1, match_item)
+            self._store_table.setItem(row_idx, 2, bl_item)
+            self._store_table.setItem(row_idx, 3, mkt_item)
+            self._store_table.setItem(row_idx, 4, above_item)
+
+        self._store_table.setSortingEnabled(True)
+        self._store_table.blockSignals(False)
+
+    def _on_store_selected(self):
+        row = self._store_table.currentRow()
+        if row < 0:
+            return
+        name_item = self._store_table.item(row, 0)
+        if name_item is None:
+            return
+        store_idx = name_item.data(Qt.ItemDataRole.UserRole)
+        if store_idx is None or store_idx >= len(self._search_results):
+            return
+
+        store = self._search_results[store_idx]
+        self._selected_store_matches = store.get("matches", [])
+        self._detail_header.setText(
+            f"{store['title']}  —  {len(self._selected_store_matches)} matches  |  "
+            f"BL: €{store['total_bl']:.2f}  MKT: €{store['total_mkt']:.2f}  "
+            f"Above market: {store['above_market']}"
+        )
+        _render_card_table(self._detail_table, self._selected_store_matches)
+
+    @asyncSlot()
+    async def _on_detail_row_selected(self):
+        from desktop.utils import async_pixmap
+
+        row = self._detail_table.currentRow()
+        if row < 0:
+            self._detail_preview.clear()
+            return
+        name_item = self._detail_table.item(row, 0)
+        if name_item is None:
+            return
+        match_idx = name_item.data(Qt.ItemDataRole.UserRole)
+        if match_idx is None or match_idx >= len(self._selected_store_matches):
+            return
+        match = self._selected_store_matches[match_idx]
+        self._detail_preview.show_card(match)
+        cards = match.get("_cards", [])
+        if cards:
+            pixmap = await async_pixmap(cards[0].get("scryfall_id"), cards[0].get("image_url"))
+            self._detail_preview.set_image(pixmap)
+
+    # ── Manual tab slots ──────────────────────────────────────────────────────
 
     @asyncSlot()
     async def _on_fetch(self):
@@ -515,38 +863,7 @@ class BuylistsWidget(QWidget):
         return None
 
     def _render_table(self):
-        self._table.blockSignals(True)
-        self._table.setSortingEnabled(False)
-        self._table.setRowCount(0)
-        self._table.setRowCount(len(self._matches))
-
-        for row_idx, m in enumerate(self._matches):
-            bl_price  = m["bl_price"]
-            mkt_price = m["mkt_price"]
-
-            name_item = QTableWidgetItem(m["name"])
-            name_item.setData(Qt.ItemDataRole.UserRole, row_idx)
-            set_item  = QTableWidgetItem(str(m["set_code"] or ""))
-            bl_item   = _numeric_item(bl_price)
-            mkt_item  = _numeric_item(mkt_price)
-            cnt_item  = _numeric_item(m["count"], decimals=0)
-            ct_item   = QTableWidgetItem(m["container"])
-
-            # Colour buylist price red if lower than market, green if higher
-            if bl_price is not None and mkt_price is not None:
-                if bl_price >= mkt_price * 0.8:
-                    bl_item.setForeground(QColor("#a6e3a1"))  # green — good deal
-                else:
-                    bl_item.setForeground(QColor("#f38ba8"))  # red — low offer
-
-            for col, item in enumerate((name_item, set_item, bl_item,
-                                        mkt_item, cnt_item, ct_item)):
-                self._table.setItem(row_idx, col, item)
-
-        self._table.setSortingEnabled(True)
-        self._table.blockSignals(False)
-        # Default sort: buylist price descending
-        self._table.sortItems(2, Qt.SortOrder.DescendingOrder)
+        _render_card_table(self._table, self._matches)
         self._preview.clear()
 
     def _update_summary(self):
@@ -591,6 +908,59 @@ class BuylistsWidget(QWidget):
         card = cards[0]
         pixmap = await async_pixmap(card.get("scryfall_id"), card.get("image_url"))
         self._preview.set_image(pixmap)
+
+
+def _make_card_table() -> QTableWidget:
+    t = QTableWidget(0, 6)
+    t.setHorizontalHeaderLabels(["Card name", "Set", "Buylist €", "Market €", "Count", "Container"])
+    hh = t.horizontalHeader()
+    hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+    hh.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
+    hh.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+    hh.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
+    hh.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
+    hh.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
+    t.setColumnWidth(1, 80)
+    t.setColumnWidth(2, 90)
+    t.setColumnWidth(3, 90)
+    t.setColumnWidth(4, 55)
+    t.setAlternatingRowColors(True)
+    t.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+    t.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+    t.setSortingEnabled(True)
+    t.verticalHeader().setVisible(False)
+    return t
+
+
+def _render_card_table(table: QTableWidget, matches: list[dict]) -> None:
+    table.blockSignals(True)
+    table.setSortingEnabled(False)
+    table.setRowCount(0)
+    table.setRowCount(len(matches))
+    for row_idx, m in enumerate(matches):
+        bl_price  = m["bl_price"]
+        mkt_price = m["mkt_price"]
+        name_item = QTableWidgetItem(m["name"])
+        name_item.setData(Qt.ItemDataRole.UserRole, row_idx)
+        bl_item  = _numeric_item(bl_price)
+        mkt_item = _numeric_item(mkt_price)
+        if bl_price is not None and mkt_price is not None:
+            if bl_price >= mkt_price * 0.8:
+                bl_item.setForeground(QColor("#a6e3a1"))
+            else:
+                bl_item.setForeground(QColor("#f38ba8"))
+        for col, item in enumerate((
+            name_item,
+            QTableWidgetItem(str(m.get("set_code") or "")),
+            bl_item,
+            mkt_item,
+            _numeric_item(m["count"], decimals=0),
+            QTableWidgetItem(m.get("container") or "—"),
+        )):
+            table.setItem(row_idx, col, item)
+    table.setSortingEnabled(True)
+    table.blockSignals(False)
+    table.sortItems(2, Qt.SortOrder.DescendingOrder)
 
 
 def _numeric_item(value, decimals: int = 2) -> QTableWidgetItem:

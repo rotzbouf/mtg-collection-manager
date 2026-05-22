@@ -64,6 +64,11 @@ _DEFAULTS: dict = {
     "container_types":          list(BUILTIN_TYPES),
     "overcount_excluded_types": [],
     "buylist_sources":          [],
+    "brave": {
+        "api_key":     "",
+        "keywords":    ["MTG Karten Ankauf Buylist", "Magic cards buylist kaufen"],
+        "max_results": 5,
+    },
 }
 
 # config.json path → environment variable name
