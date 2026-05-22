@@ -218,7 +218,8 @@ class OvercountWidget(QWidget):
     async def _do_open_move_dialog(self, card_ids: list[int]):
         from desktop.db import db
         self._containers = await db.list_containers()
-        dlg = _MoveToContainerDialog(self._containers, len(card_ids), parent=self)
+        dlg = _MoveToContainerDialog(self._containers, len(card_ids), parent=self,
+                                     allowed_types=["overcount"])
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         is_new, container_id, new_name, new_type = dlg.selected_result()
@@ -389,7 +390,8 @@ class OvercountWidget(QWidget):
     async def _do_open_sell_move_dialog(self, cards: list[dict]):
         from desktop.db import db
         self._containers = await db.list_containers()
-        dlg = _MoveToContainerDialog(self._containers, len(cards), parent=self)
+        dlg = _MoveToContainerDialog(self._containers, len(cards), parent=self,
+                                     allowed_types=["overcount"])
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         is_new, container_id, new_name, new_type = dlg.selected_result()
@@ -694,7 +696,8 @@ class OvercountWidget(QWidget):
 # ------------------------------------------------------------------ #
 
 class _MoveToContainerDialog(QDialog):
-    def __init__(self, containers: list[dict], card_count: int, parent=None):
+    def __init__(self, containers: list[dict], card_count: int, parent=None,
+                 allowed_types: list[str] | None = None):
         super().__init__(parent)
         import core.config as cfg
 
@@ -710,6 +713,8 @@ class _MoveToContainerDialog(QDialog):
         self._combo = QComboBox()
         self._combo.addItem("— Remove from container —", None)
         for c in containers:
+            if allowed_types and c.get("type") not in allowed_types:
+                continue
             self._combo.addItem(f"{c['name']}  [{c.get('type', '')}]", c["id"])
         layout.addWidget(self._combo)
 
@@ -727,7 +732,12 @@ class _MoveToContainerDialog(QDialog):
         new_row.addWidget(self._new_name_edit, stretch=2)
 
         self._new_type_cb = QComboBox()
-        self._new_type_cb.addItems(cfg.load().get("container_types", cfg.BUILTIN_TYPES))
+        type_choices = (
+            allowed_types
+            if allowed_types
+            else cfg.load().get("container_types", cfg.BUILTIN_TYPES)
+        )
+        self._new_type_cb.addItems(type_choices)
         new_row.addWidget(self._new_type_cb, stretch=1)
 
         add_btn = QPushButton("Add & Select")
