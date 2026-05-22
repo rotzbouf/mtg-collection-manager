@@ -24,10 +24,16 @@ def _config_dir() -> Path:
 
 
 def _seed_bundled_config(path: Path) -> None:
-    """Copy the bundled default config.json next to the exe on first run."""
+    """Copy the bundled default config.json next to the exe on first run.
+
+    PyInstaller: files extracted to sys._MEIPASS.
+    Nuitka onefile: files extracted relative to __file__ (no _MEIPASS).
+    """
     if path.exists():
         return
-    bundled = Path(getattr(sys, '_MEIPASS', '')) / "config.json"
+    # PyInstaller provides _MEIPASS; Nuitka uses __file__-relative extraction dir.
+    extract_root = Path(getattr(sys, '_MEIPASS', None) or Path(__file__).parent.parent)
+    bundled = extract_root / "config.json"
     if bundled.exists():
         import shutil
         shutil.copy(bundled, path)
