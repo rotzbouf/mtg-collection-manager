@@ -336,6 +336,13 @@ class DeckWidget(QWidget):
 
         self._pool = pool
 
+        try:
+            deck_affinity, _affinity_n_decks = await db.get_deck_card_affinity(
+                fmt if fmt != "commander" else "commander"
+            )
+        except Exception:
+            deck_affinity, _affinity_n_decks = {}, 0
+
         if fmt == "commander":
             combo_card = self._cmd_combo.currentData()
             if combo_card is not None:
@@ -372,13 +379,15 @@ class DeckWidget(QWidget):
                 )
 
             result = build_commander_deck(
-                commander, pool, power_level=power_level, max_price=max_price
+                commander, pool, power_level=power_level, max_price=max_price,
+                deck_affinity=deck_affinity,
             )
         else:
             forced = self._strategy_cb.currentData()
             result = build_60_deck(
                 pool, fmt, forced_strategy=forced,
                 power_level=power_level, max_price=max_price,
+                deck_affinity=deck_affinity,
             )
 
         # ── Iterative refinement ────────────────────────────────────────
@@ -417,6 +426,8 @@ class DeckWidget(QWidget):
             if fmt == "commander"
             else format_60_decklist(result)
         )
+
+        result["_affinity_deck_count"] = _affinity_n_decks
 
         self._result = result
         self._last_fmt = fmt
@@ -474,6 +485,28 @@ class DeckWidget(QWidget):
         synergy = result.get("synergy_score", 0)
         if synergy:
             parts.append(f"Synergy: {synergy:.1f}")
+
+        try:
+            from core.analysis import rate_deck
+            _all_cards = (
+                [c for c, _ in (result.get("deck") or [])]
+                + (result.get("nonbasic_lands") or [])
+                + (result.get("basics_from_collection") or [])
+            )
+            _fmt_key = "commander" if fmt == "commander" else "60"
+            _rating = rate_deck(
+                _all_cards, _fmt_key,
+                result.get("archetype", ""),
+                synergy=synergy,
+                archetype_conf=result.get("archetype_confidence"),
+            )
+            parts.append(f"Grade: {_rating['grade']}  ({_rating['overall']:.0f}/100)")
+        except Exception:
+            pass
+
+        n_decks = result.get("_affinity_deck_count", 0)
+        if n_decks:
+            parts.append(f"Learned from {n_decks} deck{'s' if n_decks != 1 else ''}")
 
         swaps = result.get("refinement_swaps")
         if swaps is not None:

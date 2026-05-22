@@ -267,3 +267,60 @@ class _ContainersMixin:
                 }
             cards[name]["entries"].append(d)
         return list(cards.values())
+
+    async def get_deck_card_affinity(self, fmt: Optional[str] = None) -> tuple[dict[str, float], int]:
+        """Return ({lowercase_card_name: deck_count}, num_decks) for existing deck containers.
+
+        deck_count is how many distinct deck containers the card appears in.
+        num_decks is the total number of deck containers in the query scope.
+        Optionally filtered to a specific format (deck_format column).
+        Falls back to all decks if the format filter returns nothing.
+        """
+        def _queries(fmt_filter: Optional[str]) -> tuple[tuple[str, list], tuple[str, list]]:
+            if fmt_filter:
+                card_q = (
+                    """
+                    SELECT LOWER(c.name_en) AS nm, COUNT(DISTINCT c.container_id) AS cnt
+                    FROM collection c
+                    JOIN containers ct ON c.container_id = ct.id
+                    WHERE ct.type IN ('deck', 'commander')
+                      AND ct.deck_format = ?
+                    GROUP BY nm
+                    """,
+                    [fmt_filter],
+                )
+                deck_q = (
+                    "SELECT COUNT(*) FROM containers WHERE type IN ('deck','commander') AND deck_format = ?",
+                    [fmt_filter],
+                )
+            else:
+                card_q = (
+                    """
+                    SELECT LOWER(c.name_en) AS nm, COUNT(DISTINCT c.container_id) AS cnt
+                    FROM collection c
+                    JOIN containers ct ON c.container_id = ct.id
+                    WHERE ct.type IN ('deck', 'commander')
+                    GROUP BY nm
+                    """,
+                    [],
+                )
+                deck_q = (
+                    "SELECT COUNT(*) FROM containers WHERE type IN ('deck','commander')",
+                    [],
+                )
+            return card_q, deck_q
+
+        card_q, deck_q = _queries(fmt)
+        async with self._db.execute(card_q[0], card_q[1]) as cur:
+            rows = await cur.fetchall()
+
+        if not rows and fmt:
+            card_q, deck_q = _queries(None)
+            async with self._db.execute(card_q[0], card_q[1]) as cur:
+                rows = await cur.fetchall()
+
+        async with self._db.execute(deck_q[0], deck_q[1]) as cur:
+            count_row = await cur.fetchone()
+        num_decks = count_row[0] if count_row else 0
+
+        return {row[0]: float(row[1]) for row in rows if row[0]}, num_decks

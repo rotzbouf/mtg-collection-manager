@@ -145,6 +145,12 @@ class DeckAnalysisWidget(QWidget):
         self._stats_lbl.setStyleSheet("color: #aaa; font-size: 11px; padding: 2px 0;")
         root.addWidget(self._stats_lbl)
 
+        # Deck rating badge
+        self._rating_lbl = QLabel("")
+        self._rating_lbl.setTextFormat(Qt.TextFormat.RichText)
+        self._rating_lbl.setStyleSheet("font-size: 12px; padding: 2px 0;")
+        root.addWidget(self._rating_lbl)
+
         # Strategy / archetype section
         self._strategy_lbl = QLabel("")
         self._strategy_lbl.setWordWrap(True)
@@ -332,6 +338,7 @@ class DeckAnalysisWidget(QWidget):
         if not self._cards:
             self._cmd_header.setVisible(False)
             self._stats_lbl.setText("")
+            self._rating_lbl.setText("")
             self._strategy_lbl.setText("")
             self._curve_fig.clear()
             self._curve_canvas.draw()
@@ -387,6 +394,10 @@ class DeckAnalysisWidget(QWidget):
 
         # Strategy section
         self._render_strategy(archetypes, synergy, fit)
+
+        # Deck rating
+        self._render_rating(self._cards, fmt_key, top_arch, synergy=synergy, curve_fit=fit,
+                            archetype_conf=archetypes[0][1] if archetypes else 0.0)
 
         # Mana curve chart
         if curve:
@@ -449,6 +460,52 @@ class DeckAnalysisWidget(QWidget):
             f'{int(fit * 100)}%</span>'
         )
         self._strategy_lbl.setText(html)
+
+    def _render_rating(self, cards: list, fmt: str, archetype: str,
+                       *, synergy: float, curve_fit: float, archetype_conf: float):
+        from core.analysis import rate_deck
+
+        _GRADE_COLORS = {
+            "S": "#f8d000", "A": "#27ae60", "B": "#2ecc71",
+            "C": "#f39c12", "D": "#e67e22", "F": "#e74c3c",
+        }
+        _ROLE_LABELS = {
+            "ramp": "Ramp", "removal": "Removal", "draw": "Draw",
+            "board_wipe": "Wipes", "wincon": "Win cons",
+        }
+
+        rating = rate_deck(
+            cards, fmt, archetype,
+            synergy=synergy, curve_fit=curve_fit, archetype_conf=archetype_conf,
+        )
+        grade = rating["grade"]
+        overall = rating["overall"]
+        comp = rating["components"]
+        roles = rating["role_detail"]
+
+        grade_color = _GRADE_COLORS.get(grade, "#aaa")
+        grade_html = (
+            f'<span style="font-size:15px; font-weight:bold; color:{grade_color};">'
+            f'{grade}</span>'
+            f'<span style="color:#666; font-size:10px;"> &nbsp;{overall:.0f}/100</span>'
+            f'&nbsp;&nbsp;'
+            f'<span style="color:#555; font-size:10px;">'
+            f'Synergy&nbsp;{comp["synergy"]:.0f}&nbsp;·&nbsp;'
+            f'Curve&nbsp;{comp["curve"]:.0f}&nbsp;·&nbsp;'
+            f'Roles&nbsp;{comp["roles"]:.0f}&nbsp;·&nbsp;'
+            f'Coherence&nbsp;{comp["coherence"]:.0f}'
+            f'</span>'
+        )
+
+        missing = [_ROLE_LABELS[r] for r, ok in roles.items() if not ok]
+        if missing:
+            warn = (
+                f'&nbsp;&nbsp;<span style="color:#e67e22; font-size:10px;">'
+                f'Missing: {", ".join(missing)}</span>'
+            )
+            grade_html += warn
+
+        self._rating_lbl.setText(grade_html)
 
     def _render_curve_chart(self, curve: dict, ideal: dict, archetype: str):
         self._curve_fig.clear()

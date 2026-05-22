@@ -12,6 +12,9 @@ from ._pool import _apply_power_level_filter, _enforce_diversity
 from ._constants import _60_ROLE_TARGETS, _THEME_TO_ARCH, _ARCH_TO_THEME
 
 
+_AFFINITY_WEIGHT = 12.0  # bonus per deck the card appears in
+
+
 def _build_60_core(
     pool: list[dict],
     fmt: str,
@@ -19,9 +22,16 @@ def _build_60_core(
     theme_key: Optional[str],
     power_level: str,
     max_price: Optional[float],
+    deck_affinity: Optional[dict[str, float]] = None,
 ) -> dict:
     """Build a single 60-card deck for one archetype (no variants)."""
     from core.analysis import select_for_curve, deck_synergy_score, score_card, detect_archetypes
+
+    affinity = deck_affinity or {}
+
+    def _score(c: dict) -> float:
+        name = (c.get("name_en") or "").lower()
+        return score_card(c, fmt) + affinity.get(name, 0.0) * _AFFINITY_WEIGHT
 
     legal_nonland = _apply_power_level_filter(
         [c for c in pool if _is_pool_eligible(c, fmt) and "Land" not in (c.get("type_line") or "")],
@@ -37,7 +47,7 @@ def _build_60_core(
             name_first[name] = card
 
     unique_nonland = sorted(
-        name_first.values(), key=lambda c: score_card(c, fmt), reverse=True
+        name_first.values(), key=_score, reverse=True
     )
 
     target_nonland = 36
@@ -136,6 +146,7 @@ def build_60_deck(
     forced_strategy: Optional[str] = None,
     power_level: str = "focused",
     max_price: Optional[float] = None,
+    deck_affinity: Optional[dict[str, float]] = None,
 ) -> dict:
     """Build a 60-card deck for the given format.
 
@@ -165,12 +176,12 @@ def build_60_deck(
         if conf < 0.15 and variants:
             break
         theme = forced_strategy if (forced_strategy and not variants) else _ARCH_TO_THEME.get(arch)
-        result = _build_60_core(pool, fmt, arch, theme, power_level, max_price)
+        result = _build_60_core(pool, fmt, arch, theme, power_level, max_price, deck_affinity)
         result["archetype_confidence"] = round(conf, 3)
         variants.append(result)
 
     if not variants:
-        fallback = _build_60_core(pool, fmt, "Midrange", None, power_level, max_price)
+        fallback = _build_60_core(pool, fmt, "Midrange", None, power_level, max_price, deck_affinity)
         fallback["archetype_confidence"] = 1.0
         variants.append(fallback)
 

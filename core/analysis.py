@@ -557,3 +557,111 @@ def select_for_curve(
         selected.extend(overflow[:remaining])
 
     return selected[:target_count]
+
+
+# ── Deck rating ────────────────────────────────────────────────────────────────
+
+_GRADE_THRESHOLDS = [
+    (90, "S"), (75, "A"), (60, "B"), (45, "C"), (30, "D"),
+]
+
+# Key roles and their weight contribution to the roles component (sums to 1.0)
+_ROLE_WEIGHTS: dict[str, float] = {
+    "ramp":       0.25,
+    "removal":    0.30,
+    "draw":       0.25,
+    "board_wipe": 0.10,
+    "wincon":     0.10,
+}
+
+# Minimum card count to consider a role "covered"
+_ROLE_MIN_CMD = {"ramp": 5, "removal": 5, "draw": 5, "board_wipe": 2, "wincon": 2}
+_ROLE_MIN_60  = {"ramp": 2, "removal": 3, "draw": 2, "board_wipe": 1, "wincon": 1}
+
+
+def rate_deck(
+    cards: list[dict],
+    fmt: str = "commander",
+    archetype: str = "",
+    *,
+    synergy: float | None = None,
+    curve_fit: float | None = None,
+    archetype_conf: float | None = None,
+) -> dict:
+    """Return a composite deck quality rating.
+
+    All component scores are 0–100; overall is a weighted average.
+    Pre-computed values (synergy, curve_fit, archetype_conf) are used when
+    provided, otherwise computed from *cards*.
+
+    Returns:
+        overall      — 0-100
+        grade        — S/A/B/C/D/F
+        components   — {synergy, curve, roles, coherence} each 0-100
+        role_detail  — {role: covered bool}
+    """
+    from core.deckbuilder import tag_card_roles
+
+    nonland = [c for c in cards if "Land" not in (c.get("type_line") or "")]
+
+    # ── Synergy (25%) ────────────────────────────────────────────────────── #
+    if synergy is None:
+        synergy = deck_synergy_score(nonland[:40])
+    # Typical well-built deck: 20-60; cap normalisation at 60.
+    synergy_score = min(synergy / 55.0 * 100, 100.0)
+
+    # ── Curve fit (25%) ──────────────────────────────────────────────────── #
+    if curve_fit is None:
+        from core.deckbuilder import curve_analysis as _ca
+        _curve = _ca([(c, 1) for c in nonland])
+        arch = archetype or (detect_archetypes(nonland)[:1] or [("default",)])[0][0]
+        curve_fit = curve_fit_score(_curve, arch, fmt="commander" if fmt == "commander" else "60")
+    curve_score = curve_fit * 100.0
+
+    # ── Role coverage (30%) ──────────────────────────────────────────────── #
+    role_counts: dict[str, int] = {}
+    for c in nonland:
+        for r in tag_card_roles(c):
+            role_counts[r] = role_counts.get(r, 0) + 1
+
+    mins = _ROLE_MIN_CMD if fmt == "commander" else _ROLE_MIN_60
+    role_detail: dict[str, bool] = {}
+    roles_score = 0.0
+    for role, weight in _ROLE_WEIGHTS.items():
+        covered = role_counts.get(role, 0) >= mins.get(role, 1)
+        role_detail[role] = covered
+        if covered:
+            roles_score += weight
+    roles_score *= 100.0
+
+    # ── Archetype coherence (20%) ─────────────────────────────────────────── #
+    if archetype_conf is None:
+        detected = detect_archetypes(nonland)
+        archetype_conf = detected[0][1] if detected else 0.0
+    coherence_score = min(archetype_conf * 100.0, 100.0)
+
+    overall = round(
+        0.25 * synergy_score
+        + 0.25 * curve_score
+        + 0.30 * roles_score
+        + 0.20 * coherence_score,
+        1,
+    )
+
+    grade = "F"
+    for threshold, letter in _GRADE_THRESHOLDS:
+        if overall >= threshold:
+            grade = letter
+            break
+
+    return {
+        "overall":     overall,
+        "grade":       grade,
+        "components":  {
+            "synergy":    round(synergy_score, 1),
+            "curve":      round(curve_score, 1),
+            "roles":      round(roles_score, 1),
+            "coherence":  round(coherence_score, 1),
+        },
+        "role_detail": role_detail,
+    }

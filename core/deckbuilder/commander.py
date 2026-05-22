@@ -36,15 +36,20 @@ def rank_commanders(pool: list[dict]) -> list[tuple[dict, int]]:
     return [(cmd, syn) for cmd, syn, _ in results[:10]]
 
 
+_AFFINITY_WEIGHT = 12.0
+
+
 def _build_commander_for_archetype(
     commander: dict,
     pool: list[dict],
     archetype: str,
     power_level: str,
     max_price: Optional[float],
+    deck_affinity: Optional[dict[str, float]] = None,
 ) -> dict:
     from core.analysis import select_for_curve, deck_synergy_score, score_card, detect_archetypes
 
+    affinity   = deck_affinity or {}
     ci         = color_identity(commander)
     cmd_themes = get_card_themes(commander)
     cmd_name   = (commander.get("name_en") or "").lower()
@@ -62,10 +67,12 @@ def _build_commander_for_archetype(
     eligible = _apply_power_level_filter(eligible_base, power_level, max_price)
 
     def _score(c: dict) -> float:
+        name = (c.get("name_en") or "").lower()
         return (
             score_card(c, "commander")
             + len(get_card_themes(c) & cmd_themes) * 8.0
             + _commander_synergy_score(c, commander)
+            + affinity.get(name, 0.0) * _AFFINITY_WEIGHT
         )
 
     by_name: dict[str, dict] = {}
@@ -152,6 +159,7 @@ def build_commander_deck(
     pool: list[dict],
     power_level: str = "focused",
     max_price: Optional[float] = None,
+    deck_affinity: Optional[dict[str, float]] = None,
 ) -> dict:
     """Build a commander deck; returns primary result with up to 3 archetype variants."""
     from core.analysis import detect_archetypes
@@ -169,12 +177,12 @@ def build_commander_deck(
     for arch, conf in archetypes[:3]:
         if conf < 0.15 and variants:
             break
-        result = _build_commander_for_archetype(commander, pool, arch, power_level, max_price)
+        result = _build_commander_for_archetype(commander, pool, arch, power_level, max_price, deck_affinity)
         result["archetype_confidence"] = round(conf, 3)
         variants.append(result)
 
     if not variants:
-        result = _build_commander_for_archetype(commander, pool, "default", power_level, max_price)
+        result = _build_commander_for_archetype(commander, pool, "default", power_level, max_price, deck_affinity)
         result["archetype_confidence"] = 1.0
         variants = [result]
 
