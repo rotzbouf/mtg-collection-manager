@@ -22,6 +22,7 @@ from desktop.widgets.deck import DeckWidget
 from desktop.widgets.deck_analysis import DeckAnalysisWidget
 from desktop.widgets.overcount import OvercountWidget
 from desktop.widgets.format_bans import FormatBansWidget
+from desktop.widgets.buylists import BuylistsWidget
 from desktop.widgets.logs_page import LogsWidget, QtLogHandler
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,7 @@ _NAV_ITEMS = [
     ("Collection",  "collection"),
     ("Decks",       "decks"),
     ("Search",      "search"),
+    ("Buylists",    "buylists"),
     ("Statistics",  "stats"),
     ("Logs",        "logs"),
 ]
@@ -196,6 +198,8 @@ class MainWindow(QMainWindow):
             bridge.register_scan_widget(scan)
             bridge.set_navigate_callback(lambda: self._navigate_to_scanner())
             return page
+        if key == "buylists":
+            return BuylistsWidget()
         if key == "stats":
             return StatsWidget()
         if key == "decks":

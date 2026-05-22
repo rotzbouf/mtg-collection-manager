@@ -181,6 +181,31 @@ class _SearchMixin:
             rows = await cur.fetchall()
         return [_row_to_dict(r) for r in rows]
 
+    async def get_cards_by_names(self, names: list[str]) -> list[dict]:
+        """Return all collection rows whose name_en, name_de, or printed_name
+        matches any of the given names (case-insensitive)."""
+        if not names:
+            return []
+        placeholders = ",".join("?" * len(names))
+        lower = [n.lower() for n in names]
+        async with self._db.execute(
+            f"""
+            SELECT c.*, ct.name as container_name,
+                   COALESCE(cp.price_eur, c.price_eur) AS price_eur,
+                   COALESCE(cp.price_usd, c.price_usd) AS price_usd
+            FROM collection_with_prices c
+            LEFT JOIN containers ct ON c.container_id = ct.id
+            LEFT JOIN card_prices cp ON c.scryfall_id = cp.scryfall_id
+            WHERE lower(c.name_en)      IN ({placeholders})
+               OR lower(c.name_de)      IN ({placeholders})
+               OR lower(c.printed_name) IN ({placeholders})
+            ORDER BY c.chaos_key
+            """,
+            lower * 3,
+        ) as cur:
+            rows = await cur.fetchall()
+        return [_row_to_dict(r) for r in rows]
+
     async def list_cards(
         self,
         limit: int = 200,
