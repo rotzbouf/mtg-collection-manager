@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS collection (
     -- Scryfall identifiers
     scryfall_id         TEXT,
     oracle_id           TEXT,
+    cardmarket_id       INTEGER,
     -- Names
     name_en             TEXT NOT NULL,
     name_de             TEXT,
@@ -150,6 +151,19 @@ CREATE TABLE IF NOT EXISTS format_ban_overrides (
     reason    TEXT,
     added_at  TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (format, card_name)
+);
+
+-- Cardmarket price cache (downloaded from CM bulk data, refreshed manually or daily)
+CREATE TABLE IF NOT EXISTS cm_prices (
+    cm_id       INTEGER PRIMARY KEY,
+    low         REAL,
+    trend       REAL,
+    avg7        REAL,
+    avg30       REAL,
+    foil_low    REAL,
+    foil_trend  REAL,
+    foil_avg30  REAL,
+    updated_at  TEXT DEFAULT (datetime('now'))
 );
 """
 

@@ -42,7 +42,7 @@ class _CardsMixin:
         async with self._db.execute(
             """
             INSERT INTO collection (
-                scryfall_id, oracle_id, name_en, name_de, printed_name,
+                scryfall_id, oracle_id, cardmarket_id, name_en, name_de, printed_name,
                 set_code, set_name, collector_number, released_at,
                 rarity, colors, color_identity, mana_cost, cmc,
                 type_line, oracle_text, flavor_text, power, toughness, loyalty,
@@ -50,7 +50,7 @@ class _CardsMixin:
                 image_url, language, condition, foil, quantity, notes,
                 added_by, chaos_key, color_order, type_order, container_id
             ) VALUES (
-                :scryfall_id, :oracle_id, :name_en, :name_de, :printed_name,
+                :scryfall_id, :oracle_id, :cardmarket_id, :name_en, :name_de, :printed_name,
                 :set_code, :set_name, :collector_number, :released_at,
                 :rarity, :colors, :color_identity, :mana_cost, :cmc,
                 :type_line, :oracle_text, :flavor_text, :power, :toughness, :loyalty,
@@ -62,6 +62,7 @@ class _CardsMixin:
             {
                 "scryfall_id":      card.get("scryfall_id"),
                 "oracle_id":        card.get("oracle_id"),
+                "cardmarket_id":    card.get("cardmarket_id"),
                 "name_en":          card.get("name_en", ""),
                 "name_de":          card.get("name_de"),
                 "printed_name":     card.get("printed_name"),
@@ -191,6 +192,7 @@ class _CardsMixin:
                 price_usd      = COALESCE(:price_usd, price_usd),
                 price_eur      = COALESCE(:price_eur, price_eur),
                 image_url      = :image_url,
+                cardmarket_id  = COALESCE(:cardmarket_id, cardmarket_id),
                 chaos_key      = :chaos_key,
                 color_order    = :color_order,
                 type_order     = :type_order,
@@ -219,6 +221,7 @@ class _CardsMixin:
                 "price_usd":      card.get("price_usd"),
                 "price_eur":      card.get("price_eur"),
                 "image_url":      card.get("image_url"),
+                "cardmarket_id":  card.get("cardmarket_id"),
                 "chaos_key":      chaos_key,
                 "color_order":    c_order,
                 "type_order":     t_order,

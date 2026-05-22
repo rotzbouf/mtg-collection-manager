@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from pathlib import Path
 
 import matplotlib
@@ -17,8 +18,31 @@ from PyQt6.QtWidgets import (
     QDialogButtonBox, QListWidget, QListWidgetItem, QAbstractItemView,
 )
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QFont, QAction
+from PyQt6.QtGui import QFont, QAction, QPixmap, QPainter
+from PyQt6.QtSvg import QSvgRenderer
 from qasync import asyncSlot
+
+_MANA_DIR = Path(__file__).parent.parent.parent / "images" / "mana"
+
+
+def _parse_mana_cost(mana_cost: str) -> list[str]:
+    """Return individual symbols from a Scryfall mana cost string like '{2}{W}{U}'."""
+    return re.findall(r'\{([^}]+)\}', mana_cost or "")
+
+
+def _mana_pixmap(symbol: str, size: int = 22) -> QPixmap | None:
+    """Render one mana symbol SVG to a QPixmap. Returns None when no SVG exists."""
+    normalized = symbol.replace("/", "")  # W/U → WU for hybrid symbols
+    path = _MANA_DIR / f"{normalized}.svg"
+    if not path.exists():
+        return None
+    renderer = QSvgRenderer(str(path))
+    px = QPixmap(size, size)
+    px.fill(Qt.GlobalColor.transparent)
+    p = QPainter(px)
+    renderer.render(p)
+    p.end()
+    return px
 
 
 _ARCHETYPE_DESCRIPTIONS: dict[str, str] = {
@@ -96,7 +120,26 @@ class DeckAnalysisWidget(QWidget):
         hdr.addWidget(self._refresh_btn)
         root.addLayout(hdr)
 
-        # Stats bar (commander, colors, format, counts, value)
+        # Commander header (visible only for commander decks)
+        self._cmd_header = QWidget()
+        self._cmd_header.setVisible(False)
+        cmd_row = QHBoxLayout(self._cmd_header)
+        cmd_row.setContentsMargins(0, 4, 0, 2)
+        cmd_row.setSpacing(8)
+        self._cmd_name_lbl = QLabel()
+        self._cmd_name_lbl.setStyleSheet(
+            "font-size: 17px; font-weight: bold; color: #f8d000;"
+        )
+        cmd_row.addWidget(self._cmd_name_lbl)
+        self._cmd_icons_widget = QWidget()
+        icons_lay = QHBoxLayout(self._cmd_icons_widget)
+        icons_lay.setContentsMargins(0, 0, 0, 0)
+        icons_lay.setSpacing(3)
+        cmd_row.addWidget(self._cmd_icons_widget)
+        cmd_row.addStretch()
+        root.addWidget(self._cmd_header)
+
+        # Stats bar (format, counts, value)
         self._stats_lbl = QLabel("")
         self._stats_lbl.setWordWrap(True)
         self._stats_lbl.setStyleSheet("color: #aaa; font-size: 11px; padding: 2px 0;")
@@ -132,7 +175,7 @@ class DeckAnalysisWidget(QWidget):
 
         # Card table
         self._table = QTableWidget(0, 5)
-        self._table.setHorizontalHeaderLabels(["CMC", "Name", "Type", "Container", "€"])
+        self._table.setHorizontalHeaderLabels(["MV", "Name", "Type", "Container", "€"])
         hh = self._table.horizontalHeader()
         hh.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         hh.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
@@ -287,6 +330,7 @@ class DeckAnalysisWidget(QWidget):
 
     def _update_stats(self):
         if not self._cards:
+            self._cmd_header.setVisible(False)
             self._stats_lbl.setText("")
             self._strategy_lbl.setText("")
             self._curve_fig.clear()
@@ -323,11 +367,17 @@ class DeckAnalysisWidget(QWidget):
         synergy = deck_synergy_score([c for c, _ in nonland[:40]])
         fit = curve_fit_score(curve, top_arch, fmt=fmt_key) if top_arch else 0.0
 
-        # Stats line: commander · colors · format · card counts · value
+        # Commander header
+        if commander:
+            self._cmd_name_lbl.setText(f"⚔  {cmd_name}")
+            self._update_cmd_mana_icons(_parse_mana_cost(commander.get("mana_cost") or ""))
+            self._cmd_header.setVisible(True)
+        else:
+            self._cmd_header.setVisible(False)
+
+        # Stats line: (colors for non-commander) · format · card counts · value
         parts = []
-        if cmd_name:
-            parts.append(f"⚔ {cmd_name}")
-        if color_str:
+        if not commander and color_str:
             parts.append(f"[{color_str}]")
         if fmt:
             parts.append(fmt)
@@ -345,6 +395,21 @@ class DeckAnalysisWidget(QWidget):
         else:
             self._curve_fig.clear()
             self._curve_canvas.draw()
+
+    def _update_cmd_mana_icons(self, symbols: list[str]):
+        layout = self._cmd_icons_widget.layout()
+        while layout.count():
+            item = layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        for sym in symbols:
+            px = _mana_pixmap(sym)
+            if px is None:
+                continue
+            lbl = QLabel()
+            lbl.setPixmap(px)
+            lbl.setFixedSize(22, 22)
+            layout.addWidget(lbl)
 
     def _render_strategy(self, archetypes: list, synergy: float, fit: float):
         if not archetypes:
@@ -422,7 +487,7 @@ class DeckAnalysisWidget(QWidget):
         ax.set_xticks(x)
         ax.set_xticklabels(["0", "1", "2", "3", "4", "5", "6+"], color="#ccc", fontsize=9)
         ax.set_ylabel("Cards", color="#888", fontsize=8, labelpad=4)
-        ax.set_xlabel("Mana Cost (CMC)", color="#888", fontsize=8, labelpad=4)
+        ax.set_xlabel("Mana Value", color="#888", fontsize=8, labelpad=4)
         ax.set_xlim(-0.5, 6.5)
         ax.set_ylim(0, max_y * 1.3 + 1)
         ax.tick_params(axis="y", colors="#888", labelsize=8)
@@ -635,7 +700,7 @@ class _AddCardsDialog(QDialog):
                 continue
             cont = card.get("container_name") or "no container"
             cmc = card.get("cmc") or 0
-            item = QListWidgetItem(f"{name}  (CMC {int(cmc)})  📦 {cont}")
+            item = QListWidgetItem(f"{name}  (MV {int(cmc)})  📦 {cont}")
             item.setData(Qt.ItemDataRole.UserRole, card["id"])
             self._list.addItem(item)
 

@@ -135,7 +135,7 @@ class CardDetailPanel(QWidget):
         for lbl in (
             self._lbl_name, self._lbl_set, self._lbl_type,
             self._lbl_oracle, self._lbl_cmc,
-            self._lbl_pt, self._lbl_price_eur, self._lbl_price_usd,
+            self._lbl_pt, self._lbl_price_eur, self._lbl_cm_price, self._lbl_price_usd,
             self._lbl_lang, self._lbl_cond,
         ):
             lbl.setText("")
@@ -194,12 +194,13 @@ class CardDetailPanel(QWidget):
         self._mana_widget = ManaWidget()
         info.addWidget(self._mana_widget)
 
-        self._lbl_cmc = _row("CMC")
+        self._lbl_cmc = _row("Mana Value")
         self._lbl_oracle = _row("Oracle text")
         self._lbl_pt = _row("P / T / Loyalty")
         self._lbl_lang = _row("Language")
         self._lbl_cond = _row("Condition")
         self._lbl_price_eur = _row("Price (EUR)")
+        self._lbl_cm_price = _row("CM Trend (EUR)")
         self._lbl_price_usd = _row("Price (USD)")
 
         info.addStretch()
@@ -256,6 +257,8 @@ class CardDetailPanel(QWidget):
         self._lbl_lang.setText(f"{flag} ({lang})")
         self._lbl_cond.setText(card.get("condition") or "")
         self._lbl_price_eur.setText(format_price(card.get("price_eur")))
+        cm_trend = card.get("cm_trend")
+        self._lbl_cm_price.setText(f"€{float(cm_trend):.2f}" if cm_trend else "—")
         usd = card.get("price_usd")
         self._lbl_price_usd.setText(f"${float(usd):.2f}" if usd else "—")
 

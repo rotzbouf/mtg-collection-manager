@@ -9,6 +9,7 @@ Internal structure:
   _containers.py — _ContainersMixin (CRUD + overcount queries)
   _backup.py     — _BackupMixin  (backup_bytes, inspect_backup, restore_from_bytes)
   _legality.py   — _LegalityMixin (format_bans, overrides, rebuild_format_bans)
+  _cm_prices.py  — _CMPricesMixin (sync_cm_prices, get_cm_prices_meta)
 """
 import asyncio
 
@@ -20,6 +21,7 @@ from ._prices import _PricesMixin
 from ._containers import _ContainersMixin
 from ._backup import _BackupMixin
 from ._legality import _LegalityMixin
+from ._cm_prices import _CMPricesMixin
 
 
 class Database(
@@ -30,6 +32,7 @@ class Database(
     _ContainersMixin,
     _BackupMixin,
     _LegalityMixin,
+    _CMPricesMixin,
 ):
     def __init__(self, path: str = DB_PATH):
         self.path = path

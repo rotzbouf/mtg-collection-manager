@@ -63,6 +63,7 @@ _DEFAULTS: dict = {
     },
     "container_types":          list(BUILTIN_TYPES),
     "overcount_excluded_types": [],
+    "buylist_sources":          [],
 }
 
 # config.json path → environment variable name

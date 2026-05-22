@@ -178,7 +178,7 @@ class SearchWidget(QWidget):
         rar_row.addStretch()
         props_layout.addLayout(rar_row)
 
-        props_layout.addWidget(QLabel("CMC:"))
+        props_layout.addWidget(QLabel("Mana Value:"))
         cmc_row = QHBoxLayout()
         cmc_row.setSpacing(4)
         self._f_cmc_min = QSpinBox()

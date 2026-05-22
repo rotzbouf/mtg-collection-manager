@@ -124,6 +124,7 @@ class SettingsWidget(QWidget):
         tabs.addTab(self._build_maintenance_tab(), "Maintenance")
         tabs.addTab(self._build_env_tab(), "Configuration")
         tabs.addTab(self._build_containers_tab(), "Containers & Overcount")
+        tabs.addTab(self._build_buylists_tab(), "Buylists")
         root.addWidget(tabs)
 
         # Signals
@@ -540,6 +541,33 @@ class SettingsWidget(QWidget):
         layout.addWidget(self._divider())
         layout.addSpacing(4)
 
+        # ── Cardmarket Prices ───────────────────────────────────────────── #
+        layout.addWidget(self._section_header("Cardmarket Prices"))
+        layout.addWidget(QLabel(
+            "Download the daily Cardmarket price guide (~25 MB) and cache it locally.\n"
+            "Trend prices are then shown alongside Scryfall prices in the card detail panel."
+        ))
+        cm_row = QHBoxLayout()
+        self._cm_sync_btn = QPushButton("↻  Sync CM prices")
+        self._cm_backfill_btn = QPushButton("↻  Backfill CM IDs")
+        self._cm_backfill_btn.setToolTip(
+            "Fetch Scryfall data for collection cards that are missing a Cardmarket ID."
+        )
+        cm_row.addWidget(self._cm_sync_btn)
+        cm_row.addWidget(self._cm_backfill_btn)
+        cm_row.addStretch()
+        layout.addLayout(cm_row)
+        self._cm_status = QLabel("")
+        self._cm_status.setStyleSheet("color: #888; font-size: 12px;")
+        layout.addWidget(self._cm_status)
+
+        self._cm_sync_btn.clicked.connect(self._on_sync_cm)
+        self._cm_backfill_btn.clicked.connect(self._on_backfill_cm_ids)
+
+        layout.addSpacing(4)
+        layout.addWidget(self._divider())
+        layout.addSpacing(4)
+
         # ── Export Collection ───────────────────────────────────────────── #
         layout.addWidget(self._section_header("Export Collection"))
         layout.addWidget(QLabel(
@@ -927,6 +955,102 @@ class SettingsWidget(QWidget):
             self._ct_status.setText(f"Error: {exc}")
             self._ct_status.setStyleSheet("color: #e94560;")
 
+    # ------------------------------------------------------------------ #
+    # Buylists tab                                                         #
+    # ------------------------------------------------------------------ #
+
+    def _build_buylists_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(12)
+
+        layout.addWidget(self._section_header("Online Buylist Sources"))
+        layout.addWidget(QLabel(
+            "Add store buylist URLs here.\n"
+            "They appear as quick-select options in the Buylists view."
+        ))
+
+        self._bl_table = QTableWidget(0, 2)
+        self._bl_table.setHorizontalHeaderLabels(["Name", "URL"])
+        hh = self._bl_table.horizontalHeader()
+        hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        hh.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self._bl_table.setColumnWidth(0, 200)
+        self._bl_table.verticalHeader().setVisible(False)
+        self._bl_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._bl_table.setAlternatingRowColors(True)
+        layout.addWidget(self._bl_table)
+
+        for src in cfg.load().get("buylist_sources", []):
+            self._bl_add_row(src.get("name", ""), src.get("url", ""))
+
+        btn_row = QHBoxLayout()
+        self._bl_add_btn    = QPushButton("Add row")
+        self._bl_add_btn.setFixedWidth(90)
+        self._bl_remove_btn = QPushButton("Remove selected")
+        self._bl_remove_btn.setFixedWidth(130)
+        btn_row.addWidget(self._bl_add_btn)
+        btn_row.addWidget(self._bl_remove_btn)
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
+
+        save_row = QHBoxLayout()
+        self._bl_save_btn = QPushButton("Save")
+        self._bl_save_btn.setFixedWidth(90)
+        self._bl_status   = QLabel("")
+        self._bl_status.setStyleSheet("color: #888;")
+        save_row.addWidget(self._bl_save_btn)
+        save_row.addWidget(self._bl_status)
+        save_row.addStretch()
+        layout.addLayout(save_row)
+        layout.addStretch()
+
+        self._bl_add_btn.clicked.connect(self._on_bl_add_row)
+        self._bl_remove_btn.clicked.connect(self._on_bl_remove_row)
+        self._bl_save_btn.clicked.connect(self._on_bl_save)
+
+        return tab
+
+    def _bl_add_row(self, name: str = "", url: str = ""):
+        row = self._bl_table.rowCount()
+        self._bl_table.insertRow(row)
+        self._bl_table.setItem(row, 0, QTableWidgetItem(name))
+        self._bl_table.setItem(row, 1, QTableWidgetItem(url))
+
+    def _on_bl_add_row(self):
+        self._bl_add_row()
+        row = self._bl_table.rowCount() - 1
+        self._bl_table.setCurrentCell(row, 0)
+        self._bl_table.editItem(self._bl_table.item(row, 0))
+
+    def _on_bl_remove_row(self):
+        rows = sorted(
+            {idx.row() for idx in self._bl_table.selectedIndexes()},
+            reverse=True,
+        )
+        for row in rows:
+            self._bl_table.removeRow(row)
+
+    def _on_bl_save(self):
+        sources = []
+        for row in range(self._bl_table.rowCount()):
+            name_item = self._bl_table.item(row, 0)
+            url_item  = self._bl_table.item(row, 1)
+            name = name_item.text().strip() if name_item else ""
+            url  = url_item.text().strip()  if url_item  else ""
+            if name or url:
+                sources.append({"name": name, "url": url})
+        config = cfg.load()
+        config["buylist_sources"] = sources
+        try:
+            cfg.save(config)
+            self._bl_status.setText("Saved.")
+            self._bl_status.setStyleSheet("color: #4caf50;")
+        except Exception as exc:
+            self._bl_status.setText(f"Error: {exc}")
+            self._bl_status.setStyleSheet("color: #e94560;")
+
     @staticmethod
     def _section_header(text: str) -> QLabel:
         lbl = QLabel(f"<b>{text}</b>")
@@ -1268,6 +1392,72 @@ class SettingsWidget(QWidget):
             self._price_status.setText(f"Error: {exc}")
         finally:
             self._record_prices_btn.setEnabled(True)
+
+    def db_ready(self):
+        """Called when the database is ready — populate CM price status."""
+        import asyncio
+        asyncio.ensure_future(self._load_cm_meta())
+
+    async def _load_cm_meta(self):
+        try:
+            from desktop.db import db
+            meta = await db.get_cm_prices_meta()
+            count = meta.get("count", 0)
+            updated_at = meta.get("updated_at")
+            if count and updated_at:
+                self._cm_status.setText(
+                    f"Last sync: {updated_at[:10]}  ({count:,} entries cached)"
+                )
+            elif count:
+                self._cm_status.setText(f"{count:,} entries cached")
+            else:
+                self._cm_status.setText("No CM prices cached yet.")
+        except Exception as exc:
+            self._cm_status.setText(f"Error loading CM meta: {exc}")
+
+    def _cm_progress(self, msg: str, done: int, total: int):
+        self._cm_status.setText(msg)
+
+    @asyncSlot()
+    async def _on_sync_cm(self):
+        from desktop.db import db
+        self._cm_sync_btn.setEnabled(False)
+        self._cm_status.setText("Starting…")
+        try:
+            n = await db.sync_cm_prices(progress_cb=self._cm_progress)
+            self._cm_status.setText(f"✓ Synced {n:,} CM prices.")
+        except Exception as exc:
+            self._cm_status.setText(f"Error: {exc}")
+        finally:
+            self._cm_sync_btn.setEnabled(True)
+
+    @asyncSlot()
+    async def _on_backfill_cm_ids(self):
+        from desktop.db import db, scryfall
+        self._cm_backfill_btn.setEnabled(False)
+        try:
+            ids = await db.get_scryfall_ids_missing_cm_id()
+            total = len(ids)
+            if total == 0:
+                self._cm_status.setText("All collection cards already have a CM ID.")
+                return
+            self._cm_status.setText(f"Backfilling 0 / {total}…")
+            filled = 0
+            for i, sid in enumerate(ids, 1):
+                try:
+                    data = await scryfall.get_by_id(sid)
+                    if data and data.get("cardmarket_id"):
+                        await db.update_card_cm_id(sid, data["cardmarket_id"])
+                        filled += 1
+                except Exception:
+                    pass
+                if i % 5 == 0 or i == total:
+                    self._cm_status.setText(f"Backfilling {i} / {total}…")
+            self._cm_status.setText(f"✓ CM IDs backfilled: {filled} / {total} cards updated.")
+        except Exception as exc:
+            self._cm_status.setText(f"Error: {exc}")
+        finally:
+            self._cm_backfill_btn.setEnabled(True)
 
     # ------------------------------------------------------------------ #
     # Backup                                                                #

@@ -140,8 +140,7 @@ def build_60_deck(
     """Build a 60-card deck for the given format.
 
     Supports standard, modern, legacy, vintage, and pauper.
-    Returns primary result with up to 3 archetype variants when strategy is
-    auto-detected.
+    Always attempts to return up to 3 archetype variants (primary + alternatives).
     """
     from core.analysis import detect_archetypes
 
@@ -150,26 +149,31 @@ def build_60_deck(
         if _is_pool_eligible(c, fmt) and "Land" not in (c.get("type_line") or "")
     ]
 
+    detected = detect_archetypes(legal_nonland)
+
     if forced_strategy:
-        archetype  = _THEME_TO_ARCH.get(forced_strategy, forced_strategy.replace("tribal_", "").title())
-        archetypes = [(archetype, 1.0)]
+        forced_arch = _THEME_TO_ARCH.get(forced_strategy, forced_strategy.replace("tribal_", "").title())
+        # Put forced archetype first, then detected ones as alternatives.
+        detected_arches = {a for a, _ in detected}
+        alts = [(a, c) for a, c in detected if a != forced_arch]
+        archetypes = [(forced_arch, 1.0)] + alts[:2]
     else:
-        archetypes = detect_archetypes(legal_nonland)
-        archetype  = archetypes[0][0] if archetypes else "Midrange"
+        archetypes = detected or [("Midrange", 1.0)]
 
-    primary_theme = forced_strategy or _ARCH_TO_THEME.get(archetype)
-    primary = _build_60_core(pool, fmt, archetype, primary_theme, power_level, max_price)
-    primary["archetype_confidence"] = archetypes[0][1] if archetypes else 1.0
+    variants: list[dict] = []
+    for arch, conf in archetypes[:3]:
+        if conf < 0.15 and variants:
+            break
+        theme = forced_strategy if (forced_strategy and not variants) else _ARCH_TO_THEME.get(arch)
+        result = _build_60_core(pool, fmt, arch, theme, power_level, max_price)
+        result["archetype_confidence"] = round(conf, 3)
+        variants.append(result)
 
-    variants: list[dict] = [primary]
-    if not forced_strategy and len(archetypes) > 1:
-        for alt_arch, alt_conf in archetypes[1:3]:
-            if alt_conf < 0.15:
-                break
-            alt_theme = _ARCH_TO_THEME.get(alt_arch)
-            alt = _build_60_core(pool, fmt, alt_arch, alt_theme, power_level, max_price)
-            alt["archetype_confidence"] = round(alt_conf, 3)
-            variants.append(alt)
+    if not variants:
+        fallback = _build_60_core(pool, fmt, "Midrange", None, power_level, max_price)
+        fallback["archetype_confidence"] = 1.0
+        variants.append(fallback)
 
+    primary = variants[0]
     primary["variants"] = variants
     return primary

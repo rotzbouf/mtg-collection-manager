@@ -284,6 +284,8 @@ class MainWindow(QMainWindow):
                     )
                     if data.get("legalities"):
                         await db.update_card_legalities(sid, data["legalities"])
+                    if data.get("cardmarket_id"):
+                        await db.update_card_cm_id(sid, data["cardmarket_id"])
                     updated += 1
             except Exception:
                 pass

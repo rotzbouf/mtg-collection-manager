@@ -63,6 +63,7 @@ def _extract_card(data: dict, preferred_lang: Optional[str] = None) -> dict:
     return {
         "scryfall_id": data.get("id"),
         "oracle_id": data.get("oracle_id"),
+        "cardmarket_id": data.get("cardmarket_id"),
         "name_en": name_en,
         "name_de": name_de,
         "printed_name": printed,

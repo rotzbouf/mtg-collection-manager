@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton,
     QTextEdit, QTableWidget, QTableWidgetItem,
-    QHeaderView, QSplitter, QFrame,
+    QHeaderView, QSplitter, QFrame, QComboBox,
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor, QFont
@@ -169,6 +169,83 @@ def _parse_html_buylist(html: str) -> list[dict]:
     return entries
 
 
+# ── Card image preview ────────────────────────────────────────────────────────
+
+_IMG_W = 200
+_IMG_H = 280
+
+
+class _CardPreview(QFrame):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFrameShape(QFrame.Shape.StyledPanel)
+        self.setMinimumWidth(_IMG_W + 24)
+        self.setMaximumWidth(_IMG_W + 40)
+        self._build_ui()
+
+    def _build_ui(self):
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(8, 12, 8, 8)
+        lay.setSpacing(6)
+        lay.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        self._img_lbl = QLabel("Karte\nauswählen")
+        self._img_lbl.setFixedSize(_IMG_W, _IMG_H)
+        self._img_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._img_lbl.setStyleSheet(
+            "background: #1e1e2e; border-radius: 10px; color: #555; font-size: 11px;"
+        )
+        lay.addWidget(self._img_lbl, alignment=Qt.AlignmentFlag.AlignHCenter)
+
+        self._name_lbl = QLabel()
+        self._name_lbl.setWordWrap(True)
+        self._name_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._name_lbl.setStyleSheet("font-size: 11px; font-weight: bold; padding-top: 6px;")
+        lay.addWidget(self._name_lbl)
+
+        self._info_lbl = QLabel()
+        self._info_lbl.setWordWrap(True)
+        self._info_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._info_lbl.setStyleSheet("font-size: 10px; color: #aaa;")
+        lay.addWidget(self._info_lbl)
+
+        lay.addStretch()
+
+    def clear(self):
+        self._img_lbl.clear()
+        self._img_lbl.setText("Karte\nauswählen")
+        self._name_lbl.clear()
+        self._info_lbl.clear()
+
+    def show_card(self, match: dict):
+        self._name_lbl.setText(match.get("name", ""))
+        bl  = match.get("bl_price")
+        mkt = match.get("mkt_price")
+        parts = []
+        if bl  is not None: parts.append(f"Buylist:  €{bl:.2f}")
+        if mkt is not None: parts.append(f"Markt:    €{mkt:.2f}")
+        parts.append(f"Anzahl:  {match.get('count', 0)}")
+        ct = match.get("container", "")
+        if ct and ct != "—":
+            parts.append(ct)
+        self._info_lbl.setText("\n".join(parts))
+        self._img_lbl.clear()
+        self._img_lbl.setText("⋯")
+
+    def set_image(self, pixmap):
+        if pixmap:
+            scaled = pixmap.scaled(
+                _IMG_W, _IMG_H,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            self._img_lbl.setPixmap(scaled)
+            self._img_lbl.setText("")
+        else:
+            self._img_lbl.clear()
+            self._img_lbl.setText("Kein Bild")
+
+
 # ── Widget ─────────────────────────────────────────────────────────────────────
 
 class BuylistsWidget(QWidget):
@@ -187,6 +264,20 @@ class BuylistsWidget(QWidget):
         root.setSpacing(10)
 
         root.addWidget(QLabel("<h2>Buylists</h2>"))
+
+        # ── Saved sources ─────────────────────────────────────────────────────
+        sources_row = QHBoxLayout()
+        sources_row.addWidget(QLabel("Saved source:"))
+        self._sources_combo = QComboBox()
+        self._sources_combo.setMinimumWidth(220)
+        sources_row.addWidget(self._sources_combo)
+        self._refresh_sources_btn = QPushButton("↻")
+        self._refresh_sources_btn.setFixedWidth(32)
+        self._refresh_sources_btn.setToolTip("Reload saved sources from settings")
+        sources_row.addWidget(self._refresh_sources_btn)
+        sources_row.addStretch()
+        root.addLayout(sources_row)
+        self._load_sources()
 
         # ── URL row ───────────────────────────────────────────────────────────
         url_row = QHBoxLayout()
@@ -267,12 +358,23 @@ class BuylistsWidget(QWidget):
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setSortingEnabled(True)
         self._table.verticalHeader().setVisible(False)
-        root.addWidget(self._table)
+
+        self._preview = _CardPreview()
+
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.addWidget(self._table)
+        splitter.addWidget(self._preview)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 0)
+        root.addWidget(splitter)
 
         # ── Signals ───────────────────────────────────────────────────────────
         self._fetch_btn.clicked.connect(self._on_fetch)
         self._match_btn.clicked.connect(self._on_match)
         self._paste_area.textChanged.connect(self._on_paste_changed)
+        self._sources_combo.currentIndexChanged.connect(self._on_source_selected)
+        self._refresh_sources_btn.clicked.connect(self._load_sources)
+        self._table.itemSelectionChanged.connect(self._on_row_selected)
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -281,7 +383,26 @@ class BuylistsWidget(QWidget):
         self._match_btn.setEnabled(True)
 
     def refresh(self):
-        pass
+        self._load_sources()
+
+    # ── Source helpers ────────────────────────────────────────────────────────
+
+    def _load_sources(self):
+        import core.config as _cfg
+        sources = _cfg.load().get("buylist_sources", [])
+        self._sources_combo.blockSignals(True)
+        self._sources_combo.clear()
+        self._sources_combo.addItem("— select saved source —", "")
+        for src in sources:
+            name = src.get("name") or src.get("url", "")
+            url  = src.get("url", "")
+            self._sources_combo.addItem(name, url)
+        self._sources_combo.blockSignals(False)
+
+    def _on_source_selected(self, index: int):
+        url = self._sources_combo.itemData(index)
+        if url:
+            self._url_edit.setText(url)
 
     # ── Slots ─────────────────────────────────────────────────────────────────
 
@@ -394,6 +515,7 @@ class BuylistsWidget(QWidget):
         return None
 
     def _render_table(self):
+        self._table.blockSignals(True)
         self._table.setSortingEnabled(False)
         self._table.setRowCount(0)
         self._table.setRowCount(len(self._matches))
@@ -403,6 +525,7 @@ class BuylistsWidget(QWidget):
             mkt_price = m["mkt_price"]
 
             name_item = QTableWidgetItem(m["name"])
+            name_item.setData(Qt.ItemDataRole.UserRole, row_idx)
             set_item  = QTableWidgetItem(str(m["set_code"] or ""))
             bl_item   = _numeric_item(bl_price)
             mkt_item  = _numeric_item(mkt_price)
@@ -421,8 +544,10 @@ class BuylistsWidget(QWidget):
                 self._table.setItem(row_idx, col, item)
 
         self._table.setSortingEnabled(True)
+        self._table.blockSignals(False)
         # Default sort: buylist price descending
         self._table.sortItems(2, Qt.SortOrder.DescendingOrder)
+        self._preview.clear()
 
     def _update_summary(self):
         n_bl   = len(self._entries)
@@ -435,6 +560,37 @@ class BuylistsWidget(QWidget):
         self._sum_bl_val_lbl.setText(f"Buylist value: €{total_bl:.2f}")
         self._sum_mkt_val_lbl.setText(f"Market value: €{total_mkt:.2f}")
         self._status_lbl.setText(f"Done — {n_hit} of {n_bl} buylist cards found in collection")
+
+    @asyncSlot()
+    async def _on_row_selected(self):
+        from desktop.utils import async_pixmap
+
+        row = self._table.currentRow()
+        if row < 0:
+            self._preview.clear()
+            return
+
+        name_item = self._table.item(row, 0)
+        if name_item is None:
+            self._preview.clear()
+            return
+
+        match_idx = name_item.data(Qt.ItemDataRole.UserRole)
+        if match_idx is None or match_idx >= len(self._matches):
+            self._preview.clear()
+            return
+
+        match = self._matches[match_idx]
+        self._preview.show_card(match)
+
+        cards = match.get("_cards", [])
+        if not cards:
+            self._preview.set_image(None)
+            return
+
+        card = cards[0]
+        pixmap = await async_pixmap(card.get("scryfall_id"), card.get("image_url"))
+        self._preview.set_image(pixmap)
 
 
 def _numeric_item(value, decimals: int = 2) -> QTableWidgetItem:

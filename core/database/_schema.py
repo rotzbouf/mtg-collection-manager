@@ -78,12 +78,41 @@ class _SchemaMixin:
             await self._db.commit()
             logger.info("Migrated: created card_prices table")
 
+        if "cardmarket_id" not in cols:
+            await self._db.execute(
+                "ALTER TABLE collection ADD COLUMN cardmarket_id INTEGER"
+            )
+            await self._db.commit()
+            logger.info("Migrated: added cardmarket_id to collection")
+
+        async with self._db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='cm_prices'"
+        ) as cur:
+            has_cm_prices = (await cur.fetchone()) is not None
+
+        if not has_cm_prices:
+            await self._db.execute("""
+                CREATE TABLE cm_prices (
+                    cm_id       INTEGER PRIMARY KEY,
+                    low         REAL,
+                    trend       REAL,
+                    avg7        REAL,
+                    avg30       REAL,
+                    foil_low    REAL,
+                    foil_trend  REAL,
+                    foil_avg30  REAL,
+                    updated_at  TEXT DEFAULT (datetime('now'))
+                )
+            """)
+            await self._db.commit()
+            logger.info("Migrated: created cm_prices table")
+
         # Recreate view every startup so it stays in sync with column additions.
         await self._db.execute("DROP VIEW IF EXISTS collection_with_prices")
         await self._db.execute("""
             CREATE VIEW collection_with_prices AS
             SELECT
-                c.id, c.scryfall_id, c.oracle_id,
+                c.id, c.scryfall_id, c.oracle_id, c.cardmarket_id,
                 c.name_en, c.name_de, c.printed_name,
                 c.set_code, c.set_name, c.collector_number, c.released_at,
                 c.rarity, c.colors, c.color_identity, c.mana_cost, c.cmc,
@@ -95,9 +124,13 @@ class _SchemaMixin:
                 c.language, c.condition, c.foil, c.quantity, c.notes,
                 c.added_by, c.added_at, c.updated_at,
                 c.container_id, c.is_commander,
-                c.chaos_key, c.color_order, c.type_order
+                c.chaos_key, c.color_order, c.type_order,
+                cmp.trend AS cm_trend,
+                cmp.avg30 AS cm_avg30,
+                cmp.foil_trend AS cm_foil_trend
             FROM collection c
             LEFT JOIN card_prices cp ON c.scryfall_id = cp.scryfall_id
+            LEFT JOIN cm_prices cmp ON c.cardmarket_id = cmp.cm_id
         """)
         await self._db.commit()
 
