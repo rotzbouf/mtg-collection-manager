@@ -10,7 +10,7 @@ import matplotlib.dates as mdates
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QScrollArea,
+    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QScrollArea,
     QLabel, QPushButton, QFrame, QTableWidget,
     QTableWidgetItem, QHeaderView, QSizePolicy,
 )
@@ -297,17 +297,16 @@ class StatsWidget(QWidget):
         lang_row.addStretch()
         lay.addLayout(lang_row)
 
-        # ── Row 3: Top 10 most valuable ───────────────────────────────── #
+        # ── Row 3: Top 10 most valuable — 2 rows × 5 ─────────────────── #
         lay.addWidget(_section_header("Top 10 Most Valuable Cards"))
         top_cards = stats.get("top_cards", [])
-        embeds_row = QHBoxLayout()
-        embeds_row.setSpacing(10)
-        embeds_row.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        for card in top_cards:
+        embeds_grid = QGridLayout()
+        embeds_grid.setSpacing(10)
+        for i, card in enumerate(top_cards):
             embed = _CardEmbed(card)
-            embeds_row.addWidget(embed)
+            embeds_grid.addWidget(embed, i // 5, i % 5)
             self._embeds.append(embed)
-        lay.addLayout(embeds_row)
+        lay.addLayout(embeds_grid)
 
         QTimer.singleShot(50, self._load_embed_images)
 
