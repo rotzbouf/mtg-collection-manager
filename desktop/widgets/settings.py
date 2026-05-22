@@ -78,9 +78,6 @@ _CONFIG_GROUPS: list[tuple[str, list[tuple[str, str, str, bool]]]] = [
          False),
     ]),
     ("App", [
-        ("app.backup_dir",         "Backup Directory",
-         "Directory where backup files are stored (relative to project root or absolute).",
-         False),
         ("app.price_source",       "Price Source",
          "Price data source: 'cardmarket' or 'scryfall'.",
          False),
