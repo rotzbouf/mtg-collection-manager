@@ -24,7 +24,6 @@ FORMATS = [
     ("legacy",    "60-card — Legacy"),
     ("vintage",   "60-card — Vintage"),
     ("pauper",    "60-card — Pauper"),
-    ("timeless",  "60-card — Timeless (Arena)"),
 ]
 
 
