@@ -95,7 +95,7 @@ class _LegalityMixin:
               AND b.card_name IS NULL
               AND o.status != 'legal'
 
-            ORDER BY card_name
+            ORDER BY 1
             """,
             (fmt, fmt),
         ) as cur:
