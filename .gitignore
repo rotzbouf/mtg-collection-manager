@@ -28,3 +28,7 @@ build/*
 
 # Logs
 *.log
+
+# Claude Code internal workspaces
+.claude/
+images/
