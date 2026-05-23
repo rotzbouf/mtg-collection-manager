@@ -206,6 +206,10 @@ class DeckAnalysisWidget(QWidget):
         self._remove_btn.setEnabled(False)
         bar.addWidget(self._remove_btn)
         bar.addStretch()
+        self._manifest_btn = QPushButton("📋 Manifest…")
+        self._manifest_btn.setToolTip("View, print, or export the card picking manifest sorted by container")
+        self._manifest_btn.setEnabled(False)
+        bar.addWidget(self._manifest_btn)
         self._exp_full_btn = QPushButton("Export .txt")
         self._exp_full_btn.setEnabled(False)
         bar.addWidget(self._exp_full_btn)
@@ -223,6 +227,7 @@ class DeckAnalysisWidget(QWidget):
         self._table.itemSelectionChanged.connect(self._on_selection_changed)
         self._add_btn.clicked.connect(self._on_add_cards)
         self._remove_btn.clicked.connect(self._on_remove_selected)
+        self._manifest_btn.clicked.connect(self._on_manifest)
         self._exp_full_btn.clicked.connect(lambda: self._on_export(mtga=False))
         self._exp_mtga_btn.clicked.connect(lambda: self._on_export(mtga=True))
 
@@ -377,7 +382,16 @@ class DeckAnalysisWidget(QWidget):
         # Commander header
         if commander:
             self._cmd_name_lbl.setText(f"⚔  {cmd_name}")
-            self._update_cmd_mana_icons(_parse_mana_cost(commander.get("mana_cost") or ""))
+            import json as _json
+            _ci_raw = commander.get("color_identity") or []
+            if isinstance(_ci_raw, str):
+                try:
+                    _ci_raw = _json.loads(_ci_raw)
+                except Exception:
+                    _ci_raw = []
+            _ORDER = "WUBRG"
+            _ci_syms = sorted(_ci_raw, key=lambda x: _ORDER.index(x) if x in _ORDER else 9)
+            self._update_cmd_mana_icons(_ci_syms)
             self._cmd_header.setVisible(True)
         else:
             self._cmd_header.setVisible(False)
@@ -566,6 +580,7 @@ class DeckAnalysisWidget(QWidget):
 
     def _set_buttons_enabled(self, enabled: bool):
         self._add_btn.setEnabled(enabled)
+        self._manifest_btn.setEnabled(enabled)
         self._exp_full_btn.setEnabled(enabled)
         self._exp_mtga_btn.setEnabled(enabled)
 
@@ -668,6 +683,19 @@ class DeckAnalysisWidget(QWidget):
     # ------------------------------------------------------------------ #
     # Export                                                                #
     # ------------------------------------------------------------------ #
+
+    def _on_manifest(self):
+        from core.deckbuilder import format_container_location_manifest
+        from desktop.widgets.deck import _ManifestDialog
+        if not self._cards or self._current_container is None:
+            return
+        deck_name = self._current_container.get("name", "")
+        text = format_container_location_manifest(self._cards, deck_name=deck_name)
+        if not text:
+            QMessageBox.information(self, "Manifest", "No cards with container data.")
+            return
+        dlg = _ManifestDialog(text, parent=self)
+        dlg.exec()
 
     def _on_export(self, mtga: bool):
         from core.deckbuilder import format_container_decklist

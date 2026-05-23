@@ -181,13 +181,27 @@ class _SearchMixin:
             rows = await cur.fetchall()
         return [_row_to_dict(r) for r in rows]
 
-    async def get_cards_by_names(self, names: list[str]) -> list[dict]:
+    async def get_cards_by_names(
+        self,
+        names: list[str],
+        exclude_container_types: list[str] | None = None,
+    ) -> list[dict]:
         """Return all collection rows whose name_en, name_de, or printed_name
-        matches any of the given names (case-insensitive)."""
+        matches any of the given names (case-insensitive).
+        Pass exclude_container_types to skip cards in certain container kinds
+        (e.g. ["deck", "commander"] to ignore cards already in a deck)."""
         if not names:
             return []
-        placeholders = ",".join("?" * len(names))
-        lower = [n.lower() for n in names]
+        name_ph = ",".join("?" * len(names))
+        lower   = [n.lower() for n in names]
+
+        extra_where = ""
+        extra_params: list = []
+        if exclude_container_types:
+            ct_ph = ",".join("?" * len(exclude_container_types))
+            extra_where = f" AND (ct.type IS NULL OR ct.type NOT IN ({ct_ph}))"
+            extra_params = list(exclude_container_types)
+
         async with self._db.execute(
             f"""
             SELECT c.*, ct.name as container_name,
@@ -196,12 +210,14 @@ class _SearchMixin:
             FROM collection_with_prices c
             LEFT JOIN containers ct ON c.container_id = ct.id
             LEFT JOIN card_prices cp ON c.scryfall_id = cp.scryfall_id
-            WHERE lower(c.name_en)      IN ({placeholders})
-               OR lower(c.name_de)      IN ({placeholders})
-               OR lower(c.printed_name) IN ({placeholders})
+            WHERE (
+                lower(c.name_en)      IN ({name_ph})
+             OR lower(c.name_de)      IN ({name_ph})
+             OR lower(c.printed_name) IN ({name_ph})
+            ){extra_where}
             ORDER BY c.chaos_key
             """,
-            lower * 3,
+            lower * 3 + extra_params,
         ) as cur:
             rows = await cur.fetchall()
         return [_row_to_dict(r) for r in rows]

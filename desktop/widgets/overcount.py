@@ -19,7 +19,8 @@ from qasync import asyncSlot
 from desktop.utils import lang_flag, format_price, display_name, RARITY_COLORS
 from desktop.widgets.card_detail import CardDetailPanel
 
-_OC_COLS     = ["Name / ID", "Set", "Cond", "Foil", "Lang", "Container", "Price (EUR)"]
+_OC_COLS          = ["Name / ID", "Set", "Cond", "Foil", "Lang", "Container", "Price (EUR)"]
+_OC_COLS_CONTAINER = ["Name", "Set", "Cond", "Foil", "Lang", "×", "Price (EUR)"]
 _SELL_COLS   = ["Name", "Set", "Rarity", "Foil", "Cond", "Lang", "Container", "Price (EUR)"]
 _BUNDLE_COLS = ["Name", "Set", "Rarity", "Lang", "Price (EUR)"]
 
@@ -35,6 +36,8 @@ class OvercountWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._threshold   = 4
+        self._oc_groups:   list[dict] = []
+        self._oc_view:     str = "card"   # "card" | "container"
         self._containers: list[dict] = []
         self._bundle_cards: list[dict] = []
         self._build_ui()
@@ -79,6 +82,13 @@ class OvercountWidget(QWidget):
         toolbar = QHBoxLayout()
         toolbar.addWidget(QLabel("<b>Overcounted Cards</b>"))
         toolbar.addStretch()
+        toolbar.addWidget(QLabel("View:"))
+        self._view_combo = QComboBox()
+        self._view_combo.addItem("By Card", "card")
+        self._view_combo.addItem("By Container", "container")
+        self._view_combo.setFixedWidth(130)
+        toolbar.addWidget(self._view_combo)
+        toolbar.addSpacing(12)
         toolbar.addWidget(QLabel("Threshold ≥"))
         self._spin = QSpinBox()
         self._spin.setRange(2, 99)
@@ -119,6 +129,7 @@ class OvercountWidget(QWidget):
 
         self._spin.valueChanged.connect(self._on_threshold_changed)
         self._refresh_btn.clicked.connect(self._load)
+        self._view_combo.currentIndexChanged.connect(self._on_view_changed)
         self._tree.currentItemChanged.connect(self._on_oc_item_selected)
         self._tree.customContextMenuRequested.connect(self._on_oc_context_menu)
         return w
@@ -127,13 +138,19 @@ class OvercountWidget(QWidget):
         self._threshold = value
         self._load()
 
+    def _on_view_changed(self, _idx: int):
+        self._oc_view = self._view_combo.currentData()
+        self._render_overcount()
+
     @asyncSlot()
     async def _load(self):
         import core.config as cfg
         from desktop.db import db
         excluded = cfg.load().get("overcount_excluded_types", [])
-        cards = await db.get_overcount_cards(threshold=self._threshold, excluded_types=excluded)
-        self._populate_overcount(cards)
+        self._oc_groups = await db.get_overcount_cards(
+            threshold=self._threshold, excluded_types=excluded
+        )
+        self._render_overcount()
 
     @asyncSlot()
     async def _load_containers(self):
@@ -144,6 +161,20 @@ class OvercountWidget(QWidget):
             pass
 
     def _populate_overcount(self, groups: list[dict]):
+        """Backward-compat entry point (caches and renders)."""
+        self._oc_groups = groups
+        self._render_overcount()
+
+    def _render_overcount(self):
+        if self._oc_view == "container":
+            self._render_by_container(self._oc_groups)
+        else:
+            self._render_by_card(self._oc_groups)
+
+    # ── By-Card view (original) ────────────────────────────────────────
+
+    def _render_by_card(self, groups: list[dict]):
+        self._tree.setHeaderLabels(_OC_COLS)
         self._tree.clear()
         self._detail.clear()
         if not groups:
@@ -153,10 +184,10 @@ class OvercountWidget(QWidget):
         self._oc_status.setText(f"{len(groups)} unique card(s)  ·  {total} total copies")
 
         for group in groups:
-            name_en  = group.get("name_en") or ""
-            printed  = group.get("printed_name") or group.get("name_de") or ""
-            disp     = f"{printed}  ({name_en})" if printed and printed != name_en else name_en
-            cnt      = group["total"]
+            name_en = group.get("name_en") or ""
+            printed = group.get("printed_name") or group.get("name_de") or ""
+            disp    = f"{printed}  ({name_en})" if printed and printed != name_en else name_en
+            cnt     = group["total"]
 
             parent = QTreeWidgetItem([f"  {disp}  ×{cnt}", "", "", "", "", "", ""])
             parent.setExpanded(True)
@@ -165,7 +196,10 @@ class OvercountWidget(QWidget):
             parent.setForeground(0, QColor("#7eb8f7"))
 
             for entry in group["entries"]:
-                set_info = f"{(entry.get('set_code') or '').upper()} #{entry.get('collector_number') or ''}"
+                set_info = (
+                    f"{(entry.get('set_code') or '').upper()} "
+                    f"#{entry.get('collector_number') or ''}"
+                )
                 child = QTreeWidgetItem([
                     f"    ID {entry.get('id', '?')}",
                     set_info,
@@ -178,6 +212,73 @@ class OvercountWidget(QWidget):
                 child.setData(0, _ENTRY_ROLE, entry.get("id"))
                 child.setData(0, _CARD_ROLE,  entry)
                 parent.addChild(child)
+            self._tree.addTopLevelItem(parent)
+
+    # ── By-Container view (new) ────────────────────────────────────────
+
+    def _render_by_container(self, groups: list[dict]):
+        from collections import defaultdict
+
+        self._tree.setHeaderLabels(_OC_COLS_CONTAINER)
+        self._tree.clear()
+        self._detail.clear()
+        if not groups:
+            self._oc_status.setText(f"No cards with {self._threshold}+ copies.")
+            return
+
+        # Flatten all entries, tag each with its display name and per-card copy count
+        cont_map: dict[tuple, list[tuple[dict, str, int]]] = defaultdict(list)
+        for group in groups:
+            name_en = group.get("name_en") or ""
+            printed = group.get("printed_name") or group.get("name_de") or ""
+            disp    = f"{printed}  ({name_en})" if printed and printed != name_en else name_en
+            cnt     = group["total"]   # total copies of this card across all containers
+            for entry in group["entries"]:
+                key = (
+                    entry.get("container_id") or 0,
+                    entry.get("container_name") or "— No container —",
+                )
+                cont_map[key].append((entry, disp, cnt))
+
+        total_entries = sum(len(v) for v in cont_map.values())
+        self._oc_status.setText(
+            f"{total_entries} copies  ·  {len(cont_map)} container(s)"
+        )
+
+        for (cont_id, cont_name), items in sorted(
+            cont_map.items(), key=lambda kv: kv[0][1].lower()
+        ):
+            cont_total = sum((e.get("price_eur") or 0) for e, _, _ in items)
+            header_txt = f"  📦 {cont_name}  ({len(items)} cards · {format_price(cont_total)})"
+
+            parent = QTreeWidgetItem([header_txt, "", "", "", "", "", ""])
+            parent.setExpanded(True)
+            f = parent.font(0); f.setBold(True); parent.setFont(0, f)
+            parent.setBackground(0, QColor("#1e2a3a"))
+            parent.setForeground(0, QColor("#7eb8f7"))
+
+            # Sort children: highest price first, then alphabetically
+            for entry, card_disp, card_total in sorted(
+                items,
+                key=lambda t: (-(t[0].get("price_eur") or 0), t[1].lower()),
+            ):
+                set_info = (
+                    f"{(entry.get('set_code') or '').upper()} "
+                    f"#{entry.get('collector_number') or ''}"
+                )
+                child = QTreeWidgetItem([
+                    f"    {card_disp}",
+                    set_info,
+                    entry.get("condition") or "",
+                    "★" if entry.get("foil") else "",
+                    lang_flag(entry),
+                    f"×{card_total}",   # total copies of this card name
+                    format_price(entry.get("price_eur")),
+                ])
+                child.setData(0, _ENTRY_ROLE, entry.get("id"))
+                child.setData(0, _CARD_ROLE,  entry)
+                parent.addChild(child)
+
             self._tree.addTopLevelItem(parent)
 
     def _on_oc_item_selected(self, current: QTreeWidgetItem, _prev):

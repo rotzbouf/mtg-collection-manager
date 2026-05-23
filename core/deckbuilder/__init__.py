@@ -75,6 +75,8 @@ from .formatting import (
     format_60_decklist,
     format_60_decklist_mtga,
     format_container_decklist,
+    format_location_manifest,
+    format_container_location_manifest,
 )
 
 __all__ = [
@@ -101,4 +103,5 @@ __all__ = [
     "format_commander_decklist", "format_commander_decklist_mtga",
     "format_60_decklist", "format_60_decklist_mtga",
     "format_container_decklist",
+    "format_location_manifest", "format_container_location_manifest",
 ]

@@ -10,19 +10,39 @@ _BRAVE_URL = "https://api.search.brave.com/res/v1/web/search"
 
 _BUYLIST_HINTS = (
     "buylist", "ankauf", "kaufen", "wanted", "buying",
-    "buy-list", "buy_list", "karten-ankauf",
+    "buy-list", "buy_list", "karten-ankauf", "wantlist",
+    "sell", "verkaufen", "we buy", "wir kaufen",
+)
+
+# Patterns that suggest a result is a store's buylist page rather than
+# a news article, forum post, or general shop landing page.
+_STRONG_BUYLIST_HINTS = (
+    "buylist", "ankauf", "buy-list", "buy_list", "karten-ankauf", "wantlist",
 )
 
 
-def _looks_like_buylist(url: str, title: str, description: str) -> bool:
+def _buylist_score(url: str, title: str, description: str) -> int:
+    """Return a relevance score (higher = more likely a real buylist page)."""
     combined = (url + " " + title + " " + description).lower()
-    return any(h in combined for h in _BUYLIST_HINTS)
+    score = 0
+    for h in _STRONG_BUYLIST_HINTS:
+        if h in combined:
+            score += 2
+    for h in _BUYLIST_HINTS:
+        if h in combined:
+            score += 1
+    # Prefer pages where the buylist hint appears in the URL path itself
+    url_lower = url.lower()
+    for h in _STRONG_BUYLIST_HINTS:
+        if h in url_lower:
+            score += 3
+    return score
 
 
 async def search_buylist_urls(
     api_key: str,
     query: str,
-    count: int = 5,
+    count: int = 10,
     *,
     country: str = "DE",
     lang: str = "de",
@@ -31,8 +51,8 @@ async def search_buylist_urls(
     """Call Brave Search API and return up to *count* results.
 
     Each result: {title, url, description, score}
-    Results are soft-filtered: entries that look like buylists float to the top,
-    but all results are returned so the caller can decide.
+    Results are scored: entries that look like actual buylist pages
+    (hint in URL, strong keywords) rank higher.
     """
     import aiohttp
 
@@ -46,7 +66,8 @@ async def search_buylist_urls(
         "count":       min(count, 20),
         "country":     country,
         "search_lang": lang,
-        "freshness":   "pw",  # past week for fresh buylists
+        # No freshness filter — buylist pages are persistent, not news.
+        # "freshness: pw" was previously used but excluded most valid results.
     }
 
     async with aiohttp.ClientSession() as session:
@@ -67,7 +88,7 @@ async def search_buylist_urls(
         url   = r.get("url", "")
         title = r.get("title", "")
         desc  = r.get("description", "") or ""
-        score = 1 if _looks_like_buylist(url, title, desc) else 0
+        score = _buylist_score(url, title, desc)
         results.append({"title": title, "url": url, "description": desc, "score": score})
 
     results.sort(key=lambda x: x["score"], reverse=True)

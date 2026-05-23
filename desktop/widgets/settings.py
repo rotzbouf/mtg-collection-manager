@@ -78,9 +78,6 @@ _CONFIG_GROUPS: list[tuple[str, list[tuple[str, str, str, bool]]]] = [
          False),
     ]),
     ("App", [
-        ("app.price_source",       "Price Source",
-         "Price data source: 'cardmarket' or 'scryfall'.",
-         False),
         ("app.debug_scan_preview", "Debug Scan Preview",
          "Set to 1 to send a debug preview image after each scan. Keep at 0 in production.",
          False),

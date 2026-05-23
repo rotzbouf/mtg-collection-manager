@@ -1,4 +1,5 @@
-"""Deck list formatting: human-readable and MTGA-importable output."""
+"""Deck list formatting: human-readable, MTGA-importable, and location manifest output."""
+from collections import defaultdict
 from ._cards import _type_group
 
 
@@ -19,33 +20,99 @@ def _mtga_line(card: dict, count: int = 1) -> str:
     return f"{count} {name}"
 
 
-def _location_manifest(cards: list[dict]) -> str:
-    rows = []
-    for c in cards:
-        if not c.get("id"):
+# ── Location manifest ──────────────────────────────────────────────────────────
+
+_W = 66  # manifest line width
+
+
+def _location_manifest(entries: list[tuple[dict, int]]) -> str:
+    """
+    entries: list of (card_dict, count).
+    Groups by container, sorted alphabetically by container name.
+    Returns a standalone printable text block (empty string if no entries with IDs).
+    """
+    groups: dict[tuple[int, str], list[tuple[int, str, str]]] = defaultdict(list)
+
+    for card, count in entries:
+        if not card.get("id"):
             continue
-        en  = c.get("name_en") or "?"
-        loc = c.get("printed_name") or c.get("name_de") or en
-        name_col = f"{loc} / {en}" if loc != en else en
-        rows.append((
-            str(c.get("id") or "—"),
-            str(c.get("container_id") or "—"),
-            c.get("container_name") or "—",
-            name_col,
-        ))
-    if not rows:
+        cont_key = (
+            card.get("container_id") or 0,
+            card.get("container_name") or "— No container —",
+        )
+        en  = card.get("name_en") or "?"
+        loc = card.get("printed_name") or card.get("name_de") or en
+        name_col = f"{loc}  //  {en}" if loc != en else en
+        groups[cont_key].append((count, str(card.get("id")), name_col))
+
+    if not groups:
         return ""
-    w_cid  = max(len(r[0]) for r in rows)
-    w_ctid = max(len(r[1]) for r in rows)
-    w_ct   = max(len(r[2]) for r in rows)
-    header = f"{'Card ID':<{w_cid}}  {'Cont. ID':<{w_ctid}}  {'Container':<{w_ct}}  Card"
-    sep    = "-" * (w_cid + 2 + w_ctid + 2 + w_ct + 2 + 40)
-    lines  = ["", "// --- Location Manifest ---",
-              "// Original card locations at time of proposal", header, sep]
-    for card_id, cont_id, cont_name, name in rows:
-        lines.append(f"{card_id:<{w_cid}}  {cont_id:<{w_ctid}}  {cont_name:<{w_ct}}  {name}")
+
+    n_containers = len(groups)
+    n_cards      = sum(c for rows in groups.values() for c, _, _ in rows)
+
+    lines = [
+        "=" * _W,
+        " LOCATION MANIFEST",
+        f" {n_cards} card{'s' if n_cards != 1 else ''} "
+        f"across {n_containers} container{'s' if n_containers != 1 else ''}",
+        " Pick all cards from each container before moving to the next.",
+        "=" * _W,
+    ]
+
+    for (_cont_id, cont_name), rows in sorted(
+        groups.items(), key=lambda kv: kv[0][1].lower()
+    ):
+        n = sum(c for c, _, _ in rows)
+        header = f"  {cont_name}  ({n} card{'s' if n != 1 else ''})"
+        lines.append("")
+        lines.append(header)
+        lines.append("  " + "-" * (_W - 2))
+        for count, card_id, name in sorted(rows, key=lambda r: r[2].lower()):
+            qty = f"{count}x " if count > 1 else "   "
+            lines.append(f"  {qty}{name}  [#{card_id}]")
+
+    lines.append("")
+    lines.append("=" * _W)
     return "\n".join(lines)
 
+
+def format_location_manifest(result: dict, fmt: str = "commander") -> str:
+    """Return a standalone printable location manifest for a build result."""
+    entries: list[tuple[dict, int]] = []
+
+    if fmt == "commander":
+        cmd = result.get("commander") or {}
+        if cmd.get("id"):
+            entries.append((cmd, 1))
+        for c in result.get("deck") or []:
+            if c.get("id"):
+                entries.append((c, 1))
+    else:
+        for card, count in result.get("deck") or []:
+            if card.get("id"):
+                entries.append((card, count))
+
+    for c in result.get("nonbasic_lands") or []:
+        if c.get("id"):
+            entries.append((c, 1))
+    for c in result.get("basics_from_collection") or []:
+        if c.get("id"):
+            entries.append((c, 1))
+
+    manifest = _location_manifest(entries)
+
+    basics_missing = result.get("basics_missing") or {}
+    if basics_missing:
+        extra = ["\n  Basics to acquire (not in collection):"]
+        for land, n in sorted(basics_missing.items()):
+            extra.append(f"    {n}x {land}")
+        return manifest + "\n" + "\n".join(extra)
+
+    return manifest
+
+
+# ── Plain-text decklist formatters ─────────────────────────────────────────────
 
 def format_commander_decklist(result: dict) -> str:
     cmd         = result["commander"]
@@ -85,15 +152,6 @@ def format_commander_decklist(result: dict) -> str:
     for land, n in sorted(basics_missing.items()):
         lines.append(f"{n} {land}  // ⚠ not in collection")
 
-    all_cards = (
-        ([result["commander"]] if result["commander"].get("id") else [])
-        + result["deck"]
-        + nonbasic_lands
-        + basics_from_collection
-    )
-    manifest = _location_manifest(all_cards)
-    if manifest:
-        lines.append(manifest)
     return "\n".join(lines)
 
 
@@ -145,10 +203,6 @@ def format_60_decklist(result: dict) -> str:
         for land, n in sorted(basics_missing.items()):
             lines.append(f"{n} {land}  // ⚠ not in collection")
 
-    all_cards = [c for c, _ in result["deck"]] + nonbasic_lands + basics_from_collection
-    manifest = _location_manifest(all_cards)
-    if manifest:
-        lines.append(manifest)
     return "\n".join(lines)
 
 
@@ -199,8 +253,14 @@ def format_container_decklist(cards: list[dict], deck_name: str = "", mtga: bool
                 )
             if not mtga:
                 lines.append("")
-    if not mtga:
-        manifest = _location_manifest(commanders + rest)
-        if manifest:
-            lines.append(manifest)
     return "\n".join(lines)
+
+
+def format_container_location_manifest(cards: list[dict], deck_name: str = "") -> str:
+    """Standalone manifest for a deck container (deck_analysis export)."""
+    entries = [(c, 1) for c in cards if c.get("id")]
+    manifest = _location_manifest(entries)
+    if deck_name and manifest:
+        header = f"Deck: {deck_name}\n"
+        return header + manifest
+    return manifest

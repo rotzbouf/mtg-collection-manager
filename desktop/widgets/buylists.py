@@ -393,7 +393,7 @@ class BuylistsWidget(QWidget):
         ctrl_row.addWidget(QLabel("Max results:"))
         self._search_max_sb = QSpinBox()
         self._search_max_sb.setRange(1, 20)
-        self._search_max_sb.setValue(5)
+        self._search_max_sb.setValue(10)
         self._search_max_sb.setFixedWidth(55)
         ctrl_row.addWidget(self._search_max_sb)
 
@@ -513,7 +513,7 @@ class BuylistsWidget(QWidget):
         brave = _cfg.load().get("brave", {})
         api_key = brave.get("api_key", "")
         keywords = brave.get("keywords", [])
-        max_res = brave.get("max_results", 5)
+        max_res = brave.get("max_results", 10)
         self._search_kw_combo.blockSignals(True)
         current = self._search_kw_combo.currentText()
         self._search_kw_combo.clear()
@@ -611,7 +611,9 @@ class BuylistsWidget(QWidget):
             buylist_by_name = {e["name"].lower(): e for e in entries}
             card_names = list(buylist_by_name.keys())
             try:
-                collection_cards = await db.get_cards_by_names(card_names)
+                collection_cards = await db.get_cards_by_names(
+                    card_names, exclude_container_types=["deck", "commander"]
+                )
             except Exception:
                 collection_cards = []
 
@@ -817,7 +819,9 @@ class BuylistsWidget(QWidget):
             buylist_by_name[e["name"].lower()] = e
 
         card_names = list(buylist_by_name.keys())
-        collection_cards = await db.get_cards_by_names(card_names)
+        collection_cards = await db.get_cards_by_names(
+            card_names, exclude_container_types=["deck", "commander"]
+        )
 
         # Group collection rows by normalised name, attach buylist info
         grouped: dict[str, dict] = {}

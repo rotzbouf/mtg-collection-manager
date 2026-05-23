@@ -62,7 +62,6 @@ _DEFAULTS: dict = {
     },
     "app": {
         "backup_dir":         "",
-        "price_source":       "scryfall",
         "ui_port":            8080,
         "ui_host":            "0.0.0.0",
         "debug_scan_preview": False,
@@ -72,8 +71,22 @@ _DEFAULTS: dict = {
     "buylist_sources":          [],
     "brave": {
         "api_key":     "",
-        "keywords":    ["MTG Karten Ankauf Buylist", "Magic cards buylist kaufen"],
-        "max_results": 5,
+        "keywords":    [
+            # German
+            "MTG Karten Ankauf Buylist",
+            "Magic the Gathering Ankauf Buylist",
+            "MTG Karten Ankauf Liste",
+            "Magic Karten verkaufen Ankauf",
+            "MTG Ankauf Preisliste",
+            # English
+            "MTG buylist",
+            "Magic the Gathering buylist",
+            "MTG singles buylist",
+            "Magic cards buylist store",
+            "MTG we buy singles",
+            "Magic the Gathering buy list",
+        ],
+        "max_results": 10,
     },
 }
 
@@ -103,9 +116,6 @@ def load() -> dict:
             # Handle legacy flat format (backup_dir / price_source at top level)
             if "backup_dir" in data and "app" not in data:
                 data.setdefault("app", {})["backup_dir"]   = data.pop("backup_dir")
-            if "price_source" in data and "app" not in data:
-                data.setdefault("app", {})["price_source"] = data.pop("price_source")
-
             for key, default_val in _DEFAULTS.items():
                 if key not in data:
                     continue
@@ -115,6 +125,18 @@ def load() -> dict:
                     merged[key] = data[key]
         except Exception:
             pass
+
+    # Strip obsolete keys
+    merged.get("app", {}).pop("price_source", None)
+
+    # Merge default brave keywords into existing configs so new entries are picked up
+    default_kws = _DEFAULTS["brave"]["keywords"]
+    existing_kws: list = merged.get("brave", {}).get("keywords", [])
+    existing_lower = {k.lower() for k in existing_kws}
+    for kw in default_kws:
+        if kw.lower() not in existing_lower:
+            existing_kws.append(kw)
+    merged.setdefault("brave", {})["keywords"] = existing_kws
 
     # Ensure builtin types are always present
     current: list[str] = list(merged.get("container_types", []))

@@ -7,7 +7,7 @@ from pathlib import Path
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QComboBox, QPushButton,
-    QTextEdit, QMessageBox, QFileDialog,
+    QTextEdit, QPlainTextEdit, QMessageBox, QFileDialog,
     QDialog, QDialogButtonBox, QFormLayout,
     QDoubleSpinBox, QCheckBox, QSpinBox,
 )
@@ -15,6 +15,136 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QGuiApplication
 from desktop.utils import color_identity_icon
 from qasync import asyncSlot
+
+
+# ── HTML decklist renderer ────────────────────────────────────────────────────
+
+_TYPE_COLORS = {
+    "Creatures":     "#2e7d32",
+    "Planeswalkers": "#b71c1c",
+    "Instants":      "#1565c0",
+    "Sorceries":     "#1565c0",
+    "Enchantments":  "#6a1b9a",
+    "Artifacts":     "#e65100",
+    "Lands":         "#546e7a",
+    "Other":         "#555555",
+}
+
+_HTML_STYLE = """
+<style>
+body{font-family:'Courier New',Courier,monospace;font-size:10pt;margin:8px;}
+.hdr{color:#666;font-size:9pt;border-bottom:1px solid #ddd;padding-bottom:4px;margin-bottom:6px;}
+.sec{font-weight:bold;margin-top:10px;margin-bottom:2px;}
+.cnt{font-size:8pt;font-weight:normal;color:#999;margin-left:4px;}
+.ct{color:#aaa;font-size:8pt;margin-left:6px;}
+.cmd-line{color:#f57f17;font-weight:bold;}
+.miss{color:#c62828;font-style:italic;}
+p{margin:1px 0;}
+</style>
+"""
+
+
+def _he(s: str) -> str:
+    """HTML-escape a string."""
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _card_html(n: int, name: str, container: str, extra_class: str = "") -> str:
+    cls = f' class="{extra_class}"' if extra_class else ""
+    return (
+        f'<p{cls}>{n} {_he(name)}'
+        f'<span class="ct">&#128230; {_he(container)}</span></p>'
+    )
+
+
+def _section(label: str, count: int, color: str) -> str:
+    return (
+        f'<p class="sec" style="color:{color};">'
+        f'{_he(label)}<span class="cnt">({count})</span></p>'
+    )
+
+
+def _decklist_html(result: dict, fmt: str) -> str:
+    from core.deckbuilder._cards import _type_group
+
+    def _dname(card: dict) -> str:
+        en  = card.get("name_en") or "?"
+        loc = card.get("printed_name") or card.get("name_de") or en
+        return f"{loc}  //  {en}" if loc != en else en
+
+    def _cont(card: dict) -> str:
+        return card.get("container_name") or "—"
+
+    parts = [f"<html><head>{_HTML_STYLE}</head><body>"]
+
+    if fmt == "commander":
+        cmd         = result["commander"]
+        arch        = result.get("archetype", "")
+        pl          = result.get("power_level", "").title()
+        synergy     = result.get("synergy_score", 0)
+        parts.append(
+            f'<p class="hdr">Commander · {_he(arch)} · {_he(pl)} · Synergy&nbsp;{synergy:.1f}</p>'
+        )
+        parts.append('<p class="sec" style="color:#f57f17;">Commander</p>')
+        parts.append(_card_html(1, _dname(cmd), _cont(cmd), "cmd-line"))
+
+        for group, cards in sorted(result.get("groups", {}).items()):
+            color = _TYPE_COLORS.get(group, "#555")
+            parts.append(_section(group, len(cards), color))
+            for c in cards:
+                parts.append(_card_html(1, _dname(c), _cont(c)))
+
+        nonbasic = result.get("nonbasic_lands") or []
+        basics   = result.get("basics_from_collection") or []
+        missing  = result.get("basics_missing") or {}
+        land_cnt = len(nonbasic) + len(basics) + sum(missing.values())
+        if land_cnt:
+            parts.append(_section("Lands", land_cnt, _TYPE_COLORS["Lands"]))
+            for c in nonbasic:
+                parts.append(_card_html(1, _dname(c), _cont(c)))
+            for c in basics:
+                parts.append(_card_html(1, _dname(c), _cont(c)))
+            for land, n in sorted(missing.items()):
+                parts.append(
+                    f'<p class="miss">{n} {_he(land)} — not in collection</p>'
+                )
+    else:
+        fmt_name = result.get("format", "").capitalize()
+        strategy = result.get("strategy", "")
+        arch     = result.get("archetype", "")
+        pl       = result.get("power_level", "").title()
+        parts.append(
+            f'<p class="hdr">{_he(fmt_name)} · {_he(strategy)} · {_he(arch)} · {_he(pl)}</p>'
+        )
+
+        groups: dict[str, list[tuple[dict, int]]] = {}
+        for card, n in result.get("deck") or []:
+            groups.setdefault(_type_group(card), []).append((card, n))
+
+        for group, group_cards in sorted(groups.items()):
+            total = sum(n for _, n in group_cards)
+            color = _TYPE_COLORS.get(group, "#555")
+            parts.append(_section(group, total, color))
+            for c, n in group_cards:
+                parts.append(_card_html(n, _dname(c), _cont(c)))
+
+        nonbasic = result.get("nonbasic_lands") or []
+        basics   = result.get("basics_from_collection") or []
+        missing  = result.get("basics_missing") or {}
+        land_cnt = len(nonbasic) + len(basics) + sum(missing.values())
+        if land_cnt:
+            parts.append(_section("Lands", land_cnt, _TYPE_COLORS["Lands"]))
+            for c in nonbasic:
+                parts.append(_card_html(1, _dname(c), _cont(c)))
+            for c in basics:
+                parts.append(_card_html(1, _dname(c), _cont(c)))
+            for land, n in sorted(missing.items()):
+                parts.append(
+                    f'<p class="miss">{n} {_he(land)} — not in collection</p>'
+                )
+
+    parts.append("</body></html>")
+    return "".join(parts)
 
 
 FORMATS = [
@@ -35,6 +165,7 @@ class DeckWidget(QWidget):
         self._pool: list[dict] = []
         self._commanders: list[dict] = []
         self._variants: list[dict] = []
+        self._plain_text: str = ""
         self._build_ui()
 
     def db_ready(self):
@@ -170,7 +301,7 @@ class DeckWidget(QWidget):
         self._curve_label.setWordWrap(False)
         root.addWidget(self._curve_label)
 
-        # Output
+        # Output — fancy HTML display
         root.addWidget(QLabel("<b>Decklist:</b>"))
         self._output = QTextEdit()
         self._output.setReadOnly(True)
@@ -180,11 +311,12 @@ class DeckWidget(QWidget):
         # ── Action buttons ────────────────────────────────────────────────
         action_row = QHBoxLayout()
         self._copy_btn = QPushButton("Copy to clipboard")
+        self._copy_btn.setToolTip("Copy plain-text decklist to clipboard")
         self._copy_btn.setEnabled(False)
         action_row.addWidget(self._copy_btn)
 
         self._export_full_btn = QPushButton("Export .txt")
-        self._export_full_btn.setToolTip("Save decklist with container locations (picking reference)")
+        self._export_full_btn.setToolTip("Save plain-text decklist (with container info)")
         self._export_full_btn.setEnabled(False)
         action_row.addWidget(self._export_full_btn)
 
@@ -192,6 +324,11 @@ class DeckWidget(QWidget):
         self._export_mtga_btn.setToolTip("Save clean format importable into MTGA, Moxfield, etc.")
         self._export_mtga_btn.setEnabled(False)
         action_row.addWidget(self._export_mtga_btn)
+
+        self._manifest_btn = QPushButton("📋 Location Manifest…")
+        self._manifest_btn.setToolTip("View, print, or export the card picking manifest sorted by container")
+        self._manifest_btn.setEnabled(False)
+        action_row.addWidget(self._manifest_btn)
 
         self._save_btn = QPushButton("📦 Move to deck container…")
         self._save_btn.setToolTip("Move all deck cards from their current containers into a new dedicated container")
@@ -209,6 +346,7 @@ class DeckWidget(QWidget):
         self._copy_btn.clicked.connect(self._on_copy)
         self._export_full_btn.clicked.connect(lambda: self._on_export(mtga=False))
         self._export_mtga_btn.clicked.connect(lambda: self._on_export(mtga=True))
+        self._manifest_btn.clicked.connect(self._on_manifest)
         self._save_btn.clicked.connect(self._on_save_to_container)
         self._on_format_changed()
 
@@ -318,10 +456,12 @@ class DeckWidget(QWidget):
 
         self._build_btn.setEnabled(False)
         self._stats_label.setText("Loading collection…")
-        self._output.setPlainText("")
+        self._output.clear()
+        self._plain_text = ""
         self._copy_btn.setEnabled(False)
         self._export_full_btn.setEnabled(False)
         self._export_mtga_btn.setEnabled(False)
+        self._manifest_btn.setEnabled(False)
         self._save_btn.setEnabled(False)
         self._curve_label.setText("")
         self._variant_widget.setVisible(False)
@@ -421,7 +561,7 @@ class DeckWidget(QWidget):
             if len(refined_variants) > 1:
                 result["variants"] = refined_variants
 
-        text = (
+        plain = (
             format_commander_decklist(result)
             if fmt == "commander"
             else format_60_decklist(result)
@@ -431,13 +571,15 @@ class DeckWidget(QWidget):
 
         self._result = result
         self._last_fmt = fmt
-        self._output.setPlainText(text)
+        self._plain_text = plain
+        self._output.setHtml(_decklist_html(result, fmt))
         self._curve_label.setText(self._compact_curve(result.get("curve") or {}))
         self._stats_label.setText(self._render_stats(result, fmt))
         self._update_variant_selector(result)
         self._copy_btn.setEnabled(True)
         self._export_full_btn.setEnabled(True)
         self._export_mtga_btn.setEnabled(True)
+        self._manifest_btn.setEnabled(True)
         self._save_btn.setEnabled(True)
         self._build_btn.setEnabled(True)
 
@@ -552,11 +694,12 @@ class DeckWidget(QWidget):
         variant = self._variants[idx]
         self._result = variant
         fmt = self._last_fmt
-        if fmt == "commander":
-            text = format_commander_decklist(variant)
-        else:
-            text = format_60_decklist(variant)
-        self._output.setPlainText(text)
+        self._plain_text = (
+            format_commander_decklist(variant)
+            if fmt == "commander"
+            else format_60_decklist(variant)
+        )
+        self._output.setHtml(_decklist_html(variant, fmt))
         self._curve_label.setText(self._compact_curve(variant.get("curve") or {}))
         self._stats_label.setText(self._render_stats(variant, fmt))
 
@@ -577,9 +720,8 @@ class DeckWidget(QWidget):
         return "  ".join(parts)
 
     def _on_copy(self):
-        text = self._output.toPlainText()
-        if text:
-            QGuiApplication.clipboard().setText(text)
+        if self._plain_text:
+            QGuiApplication.clipboard().setText(self._plain_text)
 
     def _on_export(self, mtga: bool):
         from datetime import date
@@ -612,6 +754,19 @@ class DeckWidget(QWidget):
                 Path(path).write_text(text, encoding="utf-8")
             except OSError as exc:
                 QMessageBox.warning(self, "Export failed", str(exc))
+
+    def _on_manifest(self):
+        from core.deckbuilder import format_location_manifest
+        result = self._result
+        fmt = self._last_fmt
+        if not result:
+            return
+        manifest_text = format_location_manifest(result, fmt)
+        if not manifest_text:
+            QMessageBox.information(self, "Manifest", "No collection cards with container data.")
+            return
+        dlg = _ManifestDialog(manifest_text, parent=self)
+        dlg.exec()
 
     # ------------------------------------------------------------------ #
     # Save to container                                                     #
@@ -654,8 +809,7 @@ class DeckWidget(QWidget):
             QMessageBox.information(
                 self, "Saved",
                 f"Moved {len(card_ids)} card(s) to container '{name}'.\n\n"
-                "The location manifest in the decklist shows where each card "
-                "was originally stored."
+                "Use 'Location Manifest…' to see where each card originally was."
             )
             # Refresh pool metadata so commanders / strategies are up to date
             await self._load_pool_metadata()
@@ -697,6 +851,75 @@ class DeckWidget(QWidget):
         return [i for i in ids if not (i in seen or seen.add(i))]
 
 
+# ── Location manifest dialog ──────────────────────────────────────────────────
+
+class _ManifestDialog(QDialog):
+    """Shows the location manifest with print and export options."""
+
+    def __init__(self, text: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Location Manifest")
+        self.setMinimumSize(600, 500)
+        self._text = text
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(8)
+
+        self._view = QPlainTextEdit()
+        self._view.setReadOnly(True)
+        self._view.setFont(_monofont())
+        self._view.setPlainText(text)
+        layout.addWidget(self._view)
+
+        btn_row = QHBoxLayout()
+
+        print_btn = QPushButton("🖨 Print…")
+        print_btn.clicked.connect(self._on_print)
+        btn_row.addWidget(print_btn)
+
+        save_btn = QPushButton("💾 Save as .txt…")
+        save_btn.clicked.connect(self._on_save)
+        btn_row.addWidget(save_btn)
+
+        copy_btn = QPushButton("Copy")
+        copy_btn.clicked.connect(self._on_copy)
+        btn_row.addWidget(copy_btn)
+
+        btn_row.addStretch()
+
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        btn_row.addWidget(close_btn)
+
+        layout.addLayout(btn_row)
+
+    def _on_print(self):
+        try:
+            from PyQt6.QtPrintSupport import QPrinter, QPrintDialog
+        except ImportError:
+            QMessageBox.warning(self, "Unavailable", "Printing support is not installed.")
+            return
+        printer = QPrinter()
+        dlg = QPrintDialog(printer, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._view.document().print_(printer)
+
+    def _on_save(self):
+        from datetime import date
+        default_name = f"manifest_{date.today()}.txt"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save Manifest", default_name, "Text files (*.txt);;All files (*)"
+        )
+        if path:
+            try:
+                Path(path).write_text(self._text, encoding="utf-8")
+            except OSError as exc:
+                QMessageBox.warning(self, "Save failed", str(exc))
+
+    def _on_copy(self):
+        QGuiApplication.clipboard().setText(self._text)
+
+
 # ── New deck container dialog ─────────────────────────────────────────────────
 
 class _NewDeckContainerDialog(QDialog):
@@ -721,7 +944,7 @@ class _NewDeckContainerDialog(QDialog):
 
         info = QLabel(
             "Cards are moved from their current containers into the new one.\n"
-            "The decklist's location manifest shows where each card originally was."
+            "Use 'Location Manifest…' before moving to record where each card originally was."
         )
         info.setStyleSheet("color: #666; font-size: 10px;")
         info.setWordWrap(True)
