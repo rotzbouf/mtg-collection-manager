@@ -31,7 +31,8 @@ def _location_manifest(entries: list[tuple[dict, int]]) -> str:
     Groups by container, sorted alphabetically by container name.
     Returns a standalone printable text block (empty string if no entries with IDs).
     """
-    groups: dict[tuple[int, str], list[tuple[int, str, str]]] = defaultdict(list)
+    # rows: (count, card_id, name_col, set_tag)
+    groups: dict[tuple[int, str], list[tuple[int, str, str, str]]] = defaultdict(list)
 
     for card, count in entries:
         if not card.get("id"):
@@ -43,13 +44,16 @@ def _location_manifest(entries: list[tuple[dict, int]]) -> str:
         en  = card.get("name_en") or "?"
         loc = card.get("printed_name") or card.get("name_de") or en
         name_col = f"{loc}  //  {en}" if loc != en else en
-        groups[cont_key].append((count, str(card.get("id")), name_col))
+        set_code = (card.get("set_code") or "").upper()
+        cn       = card.get("collector_number") or ""
+        set_tag  = f"({set_code}) {cn}" if set_code and cn else set_code or ""
+        groups[cont_key].append((count, str(card.get("id")), name_col, set_tag))
 
     if not groups:
         return ""
 
     n_containers = len(groups)
-    n_cards      = sum(c for rows in groups.values() for c, _, _ in rows)
+    n_cards      = sum(c for rows in groups.values() for c, _, _, _ in rows)
 
     lines = [
         "=" * _W,
@@ -63,14 +67,15 @@ def _location_manifest(entries: list[tuple[dict, int]]) -> str:
     for (_cont_id, cont_name), rows in sorted(
         groups.items(), key=lambda kv: kv[0][1].lower()
     ):
-        n = sum(c for c, _, _ in rows)
+        n = sum(c for c, _, _, _ in rows)
         header = f"  {cont_name}  ({n} card{'s' if n != 1 else ''})"
         lines.append("")
         lines.append(header)
         lines.append("  " + "-" * (_W - 2))
-        for count, card_id, name in sorted(rows, key=lambda r: r[2].lower()):
-            qty = f"{count}x " if count > 1 else "   "
-            lines.append(f"  {qty}{name}  [#{card_id}]")
+        for count, card_id, name, set_tag in sorted(rows, key=lambda r: r[2].lower()):
+            qty     = f"{count}x " if count > 1 else "   "
+            set_str = f"  {set_tag}" if set_tag else ""
+            lines.append(f"  {qty}{name}{set_str}  [#{card_id}]")
 
     lines.append("")
     lines.append("=" * _W)
