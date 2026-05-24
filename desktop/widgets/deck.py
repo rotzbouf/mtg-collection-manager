@@ -614,12 +614,16 @@ class DeckWidget(QWidget):
                 parts.append(role_str)
 
         col_count = result.get("collection_count", 0)
-        missing = result.get("basics_missing") or {}
+        padding   = result.get("padding_basics", 0)
+        missing   = result.get("basics_missing") or {}
+        base_str  = f"{col_count} from collection"
+        if padding:
+            base_str += f"  (⚑ +{padding} basic{'s' if padding != 1 else ''} added as filler)"
         if missing:
             missing_str = ", ".join(f"{n}× {land}" for land, n in sorted(missing.items()))
-            parts.append(f"{col_count} from collection  ⚠ Basics missing: {missing_str}")
+            parts.append(f"{base_str}  ⚠ Basics missing: {missing_str}")
         else:
-            parts.append(f"{col_count} from collection")
+            parts.append(base_str)
 
         val = result.get("value_eur", 0)
         parts.append(f"€{val:.2f}")

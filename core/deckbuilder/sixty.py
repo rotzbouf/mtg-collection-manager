@@ -104,8 +104,14 @@ def _build_60_core(
         colors_used |= color_identity(card)
     ci = frozenset(colors_used)
 
+    # If the pool didn't fill all nonland slots, pad with extra basics so the
+    # total always reaches 60 (e.g. 28 spells → 32 lands instead of 24).
+    actual_nonland  = sum(n for _, n in deck_cards)
+    nonland_shortfall = max(0, target_nonland - actual_nonland)
+    adjusted_lands  = target_lands + nonland_shortfall
+
     nonland_for_pips = [c for c, _ in deck_cards]
-    land_base = _build_land_base(pool, ci, nonland_for_pips, target_lands, fmt)
+    land_base = _build_land_base(pool, ci, nonland_for_pips, adjusted_lands, fmt)
     nonbasic_lands         = land_base["nonbasic_lands"]
     basics_from_collection = land_base["basics_from_collection"]
     basics_missing         = land_base["basics_missing"]
@@ -132,6 +138,7 @@ def _build_60_core(
         "nonbasic_lands":         nonbasic_lands,
         "basics_from_collection": basics_from_collection,
         "basics_missing":         basics_missing,
+        "padding_basics":         nonland_shortfall,
         "strategy":               (theme_key or "").replace("tribal_", "").title() or archetype,
         "format":                 fmt,
         "collection_count":       collection_count,
