@@ -365,8 +365,9 @@ class _CardsMixin:
         """Non-land, non-commander deck cards with their competitive meta score."""
         async with self._db.execute(
             """
-            SELECT c.id, c.name_en, c.printed_name, c.name_de,
+            SELECT c.id, c.scryfall_id, c.name_en, c.printed_name, c.name_de,
                    c.type_line, c.cmc, c.color_identity,
+                   c.image_url, c.image_url_back,
                    c.container_id, ct.name AS container_name,
                    COALESCE(mcs.score, 0)       AS meta_score,
                    COALESCE(mcs.appearances, 0) AS meta_appearances
@@ -392,8 +393,9 @@ class _CardsMixin:
         """
         async with self._db.execute(
             """
-            SELECT c.id, c.name_en, c.printed_name, c.name_de,
+            SELECT c.id, c.scryfall_id, c.name_en, c.printed_name, c.name_de,
                    c.type_line, c.cmc, c.color_identity,
+                   c.image_url, c.image_url_back,
                    c.container_id, ct.name AS container_name,
                    mcs.score       AS meta_score,
                    mcs.appearances AS meta_appearances
