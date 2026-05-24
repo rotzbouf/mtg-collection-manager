@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS collection (
     price_tix           REAL,
     -- Image
     image_url           TEXT,
+    image_url_back      TEXT,
     -- Collection metadata
     language            TEXT NOT NULL DEFAULT 'en',
     condition           TEXT NOT NULL DEFAULT 'NM',

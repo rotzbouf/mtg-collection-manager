@@ -487,9 +487,14 @@ class SettingsWidget(QWidget):
         self._sync_lang_btn.setToolTip(
             "Check non-English cards for missing localized text/name and back-fill from Scryfall"
         )
+        self._sync_dfc_btn = QPushButton("🔄 Fix DFC data")
+        self._sync_dfc_btn.setToolTip(
+            "Re-fetch double-faced cards that are missing mana cost or back-face image"
+        )
         btn_grid.addWidget(self._sync_missing_btn)
         btn_grid.addWidget(self._sync_full_btn)
         btn_grid.addWidget(self._sync_lang_btn)
+        btn_grid.addWidget(self._sync_dfc_btn)
         btn_grid.addStretch()
         layout.addLayout(btn_grid)
 
@@ -746,6 +751,7 @@ class SettingsWidget(QWidget):
         self._sync_missing_btn.clicked.connect(self._on_sync_missing)
         self._sync_full_btn.clicked.connect(self._on_sync_full)
         self._sync_lang_btn.clicked.connect(self._on_sync_lang)
+        self._sync_dfc_btn.clicked.connect(self._on_sync_dfc)
         self._sync_cancel_btn.clicked.connect(self._on_sync_cancel)
         self._record_prices_btn.clicked.connect(self._on_record_prices)
         self._backup_dir_browse_btn.clicked.connect(self._on_browse_backup_dir)
@@ -1371,7 +1377,7 @@ class SettingsWidget(QWidget):
     # ------------------------------------------------------------------ #
 
     def _set_sync_busy(self, busy: bool):
-        for btn in (self._sync_missing_btn, self._sync_full_btn, self._sync_lang_btn):
+        for btn in (self._sync_missing_btn, self._sync_full_btn, self._sync_lang_btn, self._sync_dfc_btn):
             btn.setEnabled(not busy)
         self._sync_progress.setVisible(busy)
         self._sync_cancel_btn.setVisible(busy)
@@ -1398,6 +1404,9 @@ class SettingsWidget(QWidget):
     def _on_sync_lang(self):
         self._run_sync(mode="lang")
 
+    def _on_sync_dfc(self):
+        self._run_sync(mode="dfc")
+
     @asyncSlot()
     async def _run_sync(self, mode: str):
         from desktop.db import db, scryfall
@@ -1418,6 +1427,8 @@ class SettingsWidget(QWidget):
                 await self._run_id_sync(ids, label, db, scryfall)
             elif mode == "lang":
                 await self._run_lang_fix(db, scryfall)
+            elif mode == "dfc":
+                await self._run_dfc_fix(db, scryfall)
         finally:
             self._set_sync_busy(False)
 
@@ -1506,6 +1517,41 @@ class SettingsWidget(QWidget):
         parts = [f"✓ {updated} fixed"]
         if skipped:
             parts.append(f"{skipped} skipped (no localized data on Scryfall)")
+        if failed:
+            parts.append(f"{failed} errors")
+        self._sync_status.setText("  ·  ".join(parts))
+
+    async def _run_dfc_fix(self, db, scryfall):
+        """Re-fetch double-faced cards missing mana_cost or image_url_back."""
+        rows = await db.get_cards_needing_dfc_fix()
+        total = len(rows)
+
+        if total == 0:
+            self._sync_status.setText("✓ All double-faced cards already have complete data.")
+            self._sync_progress.setRange(0, 1)
+            self._sync_progress.setValue(1)
+            return
+
+        self._sync_progress.setRange(0, total)
+        updated = failed = 0
+
+        for i, row in enumerate(rows):
+            if self._sync_cancelled:
+                break
+            name = row["name_en"] or ""
+            self._sync_status.setText(f"DFC fix: {i + 1} / {total}  ({name})")
+            self._sync_progress.setValue(i + 1)
+            try:
+                card = await scryfall.get_by_id(row["scryfall_id"])
+                if card:
+                    await db.resync_card(row["scryfall_id"], card)
+                    updated += 1
+                else:
+                    failed += 1
+            except Exception:
+                failed += 1
+
+        parts = [f"✓ {updated} DFC(s) updated"]
         if failed:
             parts.append(f"{failed} errors")
         self._sync_status.setText("  ·  ".join(parts))

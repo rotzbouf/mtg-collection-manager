@@ -149,3 +149,29 @@ async def async_pixmap(
 
     pixmap = await asyncio.to_thread(load_pixmap, path)
     return pixmap
+
+
+async def async_pixmap_back(
+    scryfall_id: Optional[str],
+    image_url_back: Optional[str],
+) -> Optional[QPixmap]:
+    """Return a QPixmap for the back face of a DFC, downloading if necessary.
+
+    Uses ``{scryfall_id}_back`` as the cache key so it never collides with the
+    front-face image stored under ``scryfall_id``.
+    """
+    if not scryfall_id or not image_url_back:
+        return None
+
+    from core.image_cache import get_cached_path, ensure_cached
+
+    back_key = f"{scryfall_id}_back"
+    path = await asyncio.to_thread(get_cached_path, back_key)
+    if path is None:
+        path = await ensure_cached(back_key, image_url_back)
+
+    if path is None:
+        return None
+
+    pixmap = await asyncio.to_thread(load_pixmap, path)
+    return pixmap

@@ -31,23 +31,46 @@ def _extract_card(data: dict, preferred_lang: Optional[str] = None) -> dict:
     # Prices
     prices = data.get("prices", {})
 
-    # Image
+    # Image — for DFCs the top-level image_uris is absent; use the front face.
     images = data.get("image_uris", {})
     faces = data.get("card_faces")
     if not images and faces:
         images = faces[0].get("image_uris", {})
     image_url = images.get("normal") or images.get("small")
 
-    # English vs German name
-    printed = data.get("printed_name")
+    # Back-face image URL (transform / modal DFCs only)
+    image_url_back: Optional[str] = None
+    if faces and len(faces) > 1:
+        back_imgs = faces[1].get("image_uris", {})
+        image_url_back = back_imgs.get("normal") or back_imgs.get("small")
+
+    # ── Names ──────────────────────────────────────────────────────────────
+    # For DFCs Scryfall puts printed_name (and mana_cost/power/toughness)
+    # on individual card_faces, not the top-level object.
+    top_printed = data.get("printed_name")
+
     if lang == "en":
         name_en = data.get("name", "")
         name_de = None
+        printed = top_printed  # always None for EN cards
     else:
-        name_en = data.get("name", "")  # Scryfall always gives oracle name
-        name_de = data.get("printed_name") if lang == "de" else None
+        name_en = data.get("name", "")  # Scryfall always gives the oracle (EN) name
+        # Reconstruct the localized DFC name from faces when missing at top level
+        if top_printed is None and faces:
+            f0_p = faces[0].get("printed_name")
+            f1_p = faces[1].get("printed_name") if len(faces) > 1 else None
+            if f0_p:
+                top_printed = f"{f0_p} // {f1_p}" if f1_p else f0_p
+        printed = top_printed
+        name_de = printed if lang == "de" else None
 
-    # For non-English cards use the localized printed fields when available
+    # ── mana_cost / power / toughness ──────────────────────────────────────
+    # On DFCs these live on card_faces[0], not the top-level object.
+    mana_cost  = data.get("mana_cost")  or (faces[0].get("mana_cost")  if faces else None)
+    power      = data.get("power")      or (faces[0].get("power")      if faces else None)
+    toughness  = data.get("toughness")  or (faces[0].get("toughness")  if faces else None)
+
+    # ── Oracle / type text ─────────────────────────────────────────────────
     if lang != "en":
         type_line = data.get("printed_type_line") or data.get("type_line", "")
         oracle_text = (
@@ -61,34 +84,35 @@ def _extract_card(data: dict, preferred_lang: Optional[str] = None) -> dict:
         oracle_text = data.get("oracle_text") or (faces[0].get("oracle_text") if faces else None)
 
     return {
-        "scryfall_id": data.get("id"),
-        "oracle_id": data.get("oracle_id"),
+        "scryfall_id":   data.get("id"),
+        "oracle_id":     data.get("oracle_id"),
         "cardmarket_id": data.get("cardmarket_id"),
-        "name_en": name_en,
-        "name_de": name_de,
-        "printed_name": printed,
-        "set_code": data.get("set"),
-        "set_name": data.get("set_name"),
+        "name_en":       name_en,
+        "name_de":       name_de,
+        "printed_name":  printed,
+        "set_code":      data.get("set"),
+        "set_name":      data.get("set_name"),
         "collector_number": data.get("collector_number"),
-        "released_at": data.get("released_at"),
-        "rarity": data.get("rarity"),
-        "colors": data.get("colors", []),
+        "released_at":   data.get("released_at"),
+        "rarity":        data.get("rarity"),
+        "colors":        data.get("colors", []),
         "color_identity": data.get("color_identity", []),
-        "mana_cost": data.get("mana_cost"),
-        "cmc": data.get("cmc", 0),
-        "type_line": type_line,
-        "oracle_text": oracle_text,
-        "flavor_text": data.get("flavor_text"),
-        "power": data.get("power"),
-        "toughness": data.get("toughness"),
-        "loyalty": data.get("loyalty"),
-        "keywords": data.get("keywords", []),
-        "legalities": data.get("legalities", {}),
-        "price_usd": _safe_float(prices.get("usd")),
-        "price_eur": _safe_float(prices.get("eur")),
-        "price_tix": _safe_float(prices.get("tix")),
-        "image_url": image_url,
-        "language": lang,
+        "mana_cost":     mana_cost,
+        "cmc":           data.get("cmc", 0),
+        "type_line":     type_line,
+        "oracle_text":   oracle_text,
+        "flavor_text":   data.get("flavor_text"),
+        "power":         power,
+        "toughness":     toughness,
+        "loyalty":       data.get("loyalty"),
+        "keywords":      data.get("keywords", []),
+        "legalities":    data.get("legalities", {}),
+        "price_usd":     _safe_float(prices.get("usd")),
+        "price_eur":     _safe_float(prices.get("eur")),
+        "price_tix":     _safe_float(prices.get("tix")),
+        "image_url":     image_url,
+        "image_url_back": image_url_back,
+        "language":      lang,
     }
 
 

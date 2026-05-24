@@ -85,6 +85,13 @@ class _SchemaMixin:
             await self._db.commit()
             logger.info("Migrated: added cardmarket_id to collection")
 
+        if "image_url_back" not in cols:
+            await self._db.execute(
+                "ALTER TABLE collection ADD COLUMN image_url_back TEXT"
+            )
+            await self._db.commit()
+            logger.info("Migrated: added image_url_back to collection")
+
         async with self._db.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='cm_prices'"
         ) as cur:
@@ -120,7 +127,7 @@ class _SchemaMixin:
                 c.power, c.toughness, c.loyalty, c.keywords, c.legalities,
                 COALESCE(cp.price_eur, c.price_eur) AS price_eur,
                 COALESCE(cp.price_usd, c.price_usd) AS price_usd,
-                c.price_tix, c.image_url,
+                c.price_tix, c.image_url, c.image_url_back,
                 c.language, c.condition, c.foil, c.quantity, c.notes,
                 c.added_by, c.added_at, c.updated_at,
                 c.container_id, c.is_commander,
@@ -155,7 +162,7 @@ class _SchemaMixin:
                             rarity, colors, color_identity, mana_cost, cmc,
                             type_line, oracle_text, flavor_text, power, toughness,
                             loyalty, keywords, legalities, price_usd, price_eur,
-                            price_tix, image_url, language, condition, foil,
+                            price_tix, image_url, image_url_back, language, condition, foil,
                             quantity, notes, added_by, chaos_key, color_order,
                             type_order, container_id
                         ) VALUES (
@@ -164,7 +171,7 @@ class _SchemaMixin:
                             :rarity, :colors, :color_identity, :mana_cost, :cmc,
                             :type_line, :oracle_text, :flavor_text, :power, :toughness,
                             :loyalty, :keywords, :legalities, :price_usd, :price_eur,
-                            :price_tix, :image_url, :language, :condition, :foil,
+                            :price_tix, :image_url, :image_url_back, :language, :condition, :foil,
                             1, :notes, :added_by, :chaos_key, :color_order,
                             :type_order, :container_id
                         )

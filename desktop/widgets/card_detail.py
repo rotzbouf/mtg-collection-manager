@@ -14,7 +14,7 @@ from PyQt6.QtGui import QPixmap, QPainter
 from PyQt6.QtSvg import QSvgRenderer
 from qasync import asyncSlot
 
-from desktop.utils import display_name, lang_flag, format_price, scale_pixmap, async_pixmap
+from desktop.utils import display_name, lang_flag, format_price, scale_pixmap, async_pixmap, async_pixmap_back
 
 _PLACEHOLDER_STYLE = "background: #1e1e2e; border-radius: 8px; color: #555; font-size: 12px;"
 
@@ -117,6 +117,7 @@ class CardDetailPanel(QWidget):
         super().__init__(parent)
         self._current_card: Optional[dict] = None
         self._show_buttons = show_buttons
+        self._is_back = False  # whether the back face is currently shown
         self._build_ui()
         self.clear()
 
@@ -130,6 +131,7 @@ class CardDetailPanel(QWidget):
 
     def clear(self):
         self._current_card = None
+        self._is_back = False
         self._img_label.setText("Select a card\nto view details")
         self._img_label.setPixmap(QPixmap())
         for lbl in (
@@ -140,6 +142,7 @@ class CardDetailPanel(QWidget):
         ):
             lbl.setText("")
         self._mana_widget.clear_mana()
+        self._flip_btn.setVisible(False)
         self._price_history_btn.setEnabled(False)
         if self._show_buttons:
             self._edit_btn.setEnabled(False)
@@ -160,6 +163,14 @@ class CardDetailPanel(QWidget):
         self._img_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._img_label.setStyleSheet(_PLACEHOLDER_STYLE)
         root.addWidget(self._img_label, alignment=Qt.AlignmentFlag.AlignHCenter)
+
+        # Flip button — only visible for double-faced cards
+        self._flip_btn = QPushButton("↩ Flip")
+        self._flip_btn.setToolTip("Show the other face of this double-faced card")
+        self._flip_btn.setStyleSheet("font-size: 11px; padding: 3px 10px;")
+        self._flip_btn.setVisible(False)
+        self._flip_btn.clicked.connect(self._on_flip)
+        root.addWidget(self._flip_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
 
         # Scrollable info area
         scroll = QScrollArea()
@@ -232,6 +243,9 @@ class CardDetailPanel(QWidget):
     # ------------------------------------------------------------------ #
 
     def _load_card(self, card: dict):
+        self._is_back = False
+        self._flip_btn.setVisible(bool(card.get("image_url_back")))
+        self._flip_btn.setText("↩ Flip")
         self._lbl_name.setText(f"<b>{display_name(card)}</b>")
         self._lbl_set.setText(
             f"{card.get('set_name', '')} "
@@ -275,8 +289,10 @@ class CardDetailPanel(QWidget):
     @asyncSlot()
     async def _load_image(self, card: dict):
         scryfall_id = card.get("scryfall_id")
-        image_url = card.get("image_url")
-        pixmap = await async_pixmap(scryfall_id, image_url)
+        if self._is_back:
+            pixmap = await async_pixmap_back(scryfall_id, card.get("image_url_back"))
+        else:
+            pixmap = await async_pixmap(scryfall_id, card.get("image_url"))
         # Make sure the card hasn't changed while we were loading
         if self._current_card and self._current_card.get("id") == card.get("id"):
             if pixmap:
@@ -284,6 +300,15 @@ class CardDetailPanel(QWidget):
                 self._img_label.setText("")
             else:
                 self._img_label.setText("No image\navailable")
+
+    def _on_flip(self):
+        if not self._current_card:
+            return
+        self._is_back = not self._is_back
+        self._flip_btn.setText("↩ Front" if self._is_back else "↩ Flip")
+        self._img_label.setText("Loading…")
+        self._img_label.setPixmap(QPixmap())
+        self._load_image(self._current_card)
 
     def _on_price_history(self):
         if self._current_card:

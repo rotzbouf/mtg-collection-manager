@@ -47,7 +47,7 @@ class _CardsMixin:
                 rarity, colors, color_identity, mana_cost, cmc,
                 type_line, oracle_text, flavor_text, power, toughness, loyalty,
                 keywords, legalities, price_usd, price_eur, price_tix,
-                image_url, language, condition, foil, quantity, notes,
+                image_url, image_url_back, language, condition, foil, quantity, notes,
                 added_by, chaos_key, color_order, type_order, container_id
             ) VALUES (
                 :scryfall_id, :oracle_id, :cardmarket_id, :name_en, :name_de, :printed_name,
@@ -55,7 +55,7 @@ class _CardsMixin:
                 :rarity, :colors, :color_identity, :mana_cost, :cmc,
                 :type_line, :oracle_text, :flavor_text, :power, :toughness, :loyalty,
                 :keywords, :legalities, :price_usd, :price_eur, :price_tix,
-                :image_url, :language, :condition, :foil, :quantity, :notes,
+                :image_url, :image_url_back, :language, :condition, :foil, :quantity, :notes,
                 :added_by, :chaos_key, :color_order, :type_order, :container_id
             )
             """,
@@ -87,6 +87,7 @@ class _CardsMixin:
                 "price_eur":        card.get("price_eur"),
                 "price_tix":        card.get("price_tix"),
                 "image_url":        card.get("image_url"),
+                "image_url_back":   card.get("image_url_back"),
                 "language":         card.get("language", "en"),
                 "condition":        card.get("condition", "NM"),
                 "foil":             1 if card.get("foil") else 0,
@@ -192,6 +193,7 @@ class _CardsMixin:
                 price_usd      = COALESCE(:price_usd, price_usd),
                 price_eur      = COALESCE(:price_eur, price_eur),
                 image_url      = :image_url,
+                image_url_back = COALESCE(:image_url_back, image_url_back),
                 cardmarket_id  = COALESCE(:cardmarket_id, cardmarket_id),
                 chaos_key      = :chaos_key,
                 color_order    = :color_order,
@@ -221,6 +223,7 @@ class _CardsMixin:
                 "price_usd":      card.get("price_usd"),
                 "price_eur":      card.get("price_eur"),
                 "image_url":      card.get("image_url"),
+                "image_url_back": card.get("image_url_back"),
                 "cardmarket_id":  card.get("cardmarket_id"),
                 "chaos_key":      chaos_key,
                 "color_order":    c_order,
@@ -321,6 +324,19 @@ class _CardsMixin:
             WHERE language IS NOT NULL
               AND language != 'en'
               AND (printed_name IS NULL OR printed_name = '' OR printed_name = name_en)
+            """
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+    async def get_cards_needing_dfc_fix(self) -> list[dict]:
+        """Double-faced cards missing mana_cost or back-face image URL."""
+        async with self._db.execute(
+            """
+            SELECT DISTINCT scryfall_id, name_en
+            FROM collection
+            WHERE name_en LIKE '% // %'
+              AND scryfall_id IS NOT NULL
+              AND (mana_cost IS NULL OR image_url_back IS NULL)
             """
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
