@@ -551,6 +551,7 @@ class DeckWidget(QWidget):
             )
 
         # ── Iterative refinement ────────────────────────────────────────
+        _meta_for_refine = meta_scores or None
         if self._refine_cb.isChecked():
             self._stats_label.setText(
                 self._render_stats(result, fmt) + "  |  Refining…"
@@ -559,7 +560,8 @@ class DeckWidget(QWidget):
             loop = asyncio.get_event_loop()
             try:
                 result = await loop.run_in_executor(
-                    None, lambda: iterative_refine(result, pool, max_iterations=max_iter)
+                    None, lambda: iterative_refine(result, pool, max_iterations=max_iter,
+                                                    meta_scores=_meta_for_refine)
                 )
             except Exception as exc:
                 self._stats_label.setText(f"Refinement error: {exc}")
@@ -573,7 +575,8 @@ class DeckWidget(QWidget):
                     try:
                         rv = await loop.run_in_executor(
                             None,
-                            lambda _v=v: iterative_refine(_v, pool, max_iterations=max_iter),
+                            lambda _v=v: iterative_refine(_v, pool, max_iterations=max_iter,
+                                                           meta_scores=_meta_for_refine),
                         )
                         refined_variants.append(rv)
                     except Exception:
@@ -633,15 +636,26 @@ class DeckWidget(QWidget):
             if role_str:
                 parts.append(role_str)
 
+        total     = result.get("total_cards") or result.get("collection_count", 0)
         col_count = result.get("collection_count", 0)
         padding   = result.get("padding_basics", 0)
         missing   = result.get("basics_missing") or {}
-        base_str  = f"{col_count} from collection"
+        missing_n = sum(missing.values()) if missing else 0
+
+        # Always show the full deck size first (60/100), then what comes from collection
+        if missing_n:
+            sourced_note = f"{col_count} from collection + {missing_n} basics to source"
+        elif col_count < total:
+            sourced_note = f"{col_count} from collection"
+        else:
+            sourced_note = f"{col_count} from collection"
+
+        base_str = f"{total} cards  ({sourced_note})"
         if padding:
-            base_str += f"  (⚑ +{padding} basic{'s' if padding != 1 else ''} added as filler)"
+            base_str += f"  ⚑ +{padding} land{'s' if padding != 1 else ''} added as filler"
         if missing:
             missing_str = ", ".join(f"{n}× {land}" for land, n in sorted(missing.items()))
-            parts.append(f"{base_str}  ⚠ Basics missing: {missing_str}")
+            parts.append(f"{base_str}  ⚠ Need: {missing_str}")
         else:
             parts.append(base_str)
 

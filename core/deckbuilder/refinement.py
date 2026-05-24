@@ -1,5 +1,8 @@
 """Iterative hill-climbing refinement for built decks."""
+from __future__ import annotations
+
 from collections import Counter
+from typing import Optional
 
 from ._cards import _is_pool_eligible, is_legal, color_identity, curve_analysis
 from ._roles import tag_card_roles
@@ -13,6 +16,7 @@ def iterative_refine(
     pool: list[dict],
     max_iterations: int = 5,
     weak_fraction: float = 0.15,
+    meta_scores: Optional[dict[str, float]] = None,
 ) -> dict:
     """Hill-climb a deck result by repeatedly swapping low-fit cards for better ones.
 
@@ -21,6 +25,10 @@ def iterative_refine(
     unused pool candidates, then swap each weak card for the best available
     improvement (minimum +3 fit points). Stops when no swaps are made or
     *max_iterations* is reached.
+
+    meta_scores: optional {card_name_lower: 0–100} from the competitive meta;
+                 incorporated in card_deck_fit_score so meta-favoured cards
+                 are preferred over borderline ones during swaps.
 
     Returns a shallow-copied result with updated deck, land base, stats, and:
       - refinement_iterations: int
@@ -92,7 +100,8 @@ def iterative_refine(
 
         def _fit(c: dict) -> float:
             return card_deck_fit_score(c, deck, archetype, commander, ana_fmt,
-                                       role_gaps, _deck_curve=deck_curve)
+                                       role_gaps, _deck_curve=deck_curve,
+                                       meta_scores=meta_scores)
 
         scored = sorted([(c, _fit(c)) for c in deck], key=lambda x: x[1])
 
@@ -176,11 +185,14 @@ def iterative_refine(
                 role_summary[r] += 1
         result["curve"] = curve_analysis(new_deck)
         result["synergy_score"] = deck_synergy_score([c for c, _ in new_deck[:30]])
-        result["collection_count"] = (
+        col_count = (
             sum(n for _, n in new_deck)
             + len(result.get("nonbasic_lands", []))
             + len(result.get("basics_from_collection", []))
         )
+        missing_n = sum((result.get("basics_missing") or {}).values())
+        result["collection_count"] = col_count
+        result["total_cards"] = col_count + missing_n
         result["value_eur"] = round(
             sum((c.get("price_eur") or 0) * n for c, n in new_deck)
             + sum(c.get("price_eur") or 0 for c in result.get("nonbasic_lands", [])),
@@ -213,7 +225,11 @@ def iterative_refine(
         result["curve"] = curve_analysis([(c, 1) for c in deck])
         result["synergy_score"] = deck_synergy_score(deck[:40])
         all_cards = deck + result["nonbasic_lands"] + result["basics_from_collection"]
-        result["collection_count"] = len(all_cards)
+        col_count = len(all_cards)
+        missing_n = sum((result.get("basics_missing") or {}).values())
+        result["collection_count"] = col_count
+        # +1 for the commander itself
+        result["total_cards"] = 1 + col_count + missing_n
         result["value_eur"] = round(sum(c.get("price_eur") or 0 for c in all_cards), 2)
 
     result["role_summary"] = dict(role_summary)

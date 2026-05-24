@@ -460,11 +460,12 @@ def card_deck_fit_score(
     fmt: str = "commander",
     role_gaps: dict[str, int] | None = None,
     _deck_curve: dict[int, int] | None = None,
+    meta_scores: "dict[str, float] | None" = None,
 ) -> float:
-    """Composite fit score for a card in the context of a specific deck (0–150).
+    """Composite fit score for a card in the context of a specific deck (0–160).
 
     Combines base power, archetype theme alignment, commander synergy,
-    role-gap fill bonus, and mana-curve position bonus.
+    role-gap fill bonus, mana-curve position bonus, and optional meta bonus.
 
     Pass _deck_curve (pre-computed) to avoid re-computing per card in tight loops.
     """
@@ -506,7 +507,12 @@ def card_deck_fit_score(
     if actual_frac < ideal_frac:
         base += (ideal_frac - actual_frac) * 25.0
 
-    return round(min(base, 150.0), 2)
+    # Competitive meta bonus
+    if meta_scores:
+        name = (card.get("name_en") or "").lower()
+        base += meta_scores.get(name, 0.0) * 0.20
+
+    return round(min(base, 160.0), 2)
 
 
 def select_for_curve(
@@ -514,12 +520,20 @@ def select_for_curve(
     archetype: str,
     target_count: int,
     fmt: str = "commander",
+    meta_scores: "dict[str, float] | None" = None,
 ) -> list[dict]:
     """Pick *target_count* cards from *candidates* to best fit the archetype's ideal curve.
 
-    Within each CMC bucket, cards are sorted by score_card() descending.
+    Within each CMC bucket, cards are sorted by composite score descending
+    (score_card + meta bonus when meta_scores are provided).
     Surplus capacity from empty buckets spills into adjacent filled ones.
     """
+    meta = meta_scores or {}
+
+    def _combined_score(c: dict) -> float:
+        name = (c.get("name_en") or "").lower()
+        return score_card(c, fmt) + meta.get(name, 0.0) * 0.20
+
     ideal = ideal_curve(archetype, fmt)
 
     # Target per bucket (integer allocation from fractions)
@@ -535,13 +549,13 @@ def select_for_curve(
         peak_bucket = max(ideal, key=lambda k: ideal[k])
         targets[peak_bucket] += diff
 
-    # Group candidates by CMC bucket, ranked by card score
+    # Group candidates by CMC bucket, ranked by combined score
     by_bucket: dict[int, list[dict]] = defaultdict(list)
     for card in candidates:
         b = min(int(card.get("cmc") or 0), 6)
         by_bucket[b].append(card)
     for b in by_bucket:
-        by_bucket[b].sort(key=lambda c: score_card(c, fmt), reverse=True)
+        by_bucket[b].sort(key=_combined_score, reverse=True)
 
     selected: list[dict] = []
     overflow: list[dict] = []
@@ -553,10 +567,33 @@ def select_for_curve(
 
     remaining = target_count - len(selected)
     if remaining > 0:
-        overflow.sort(key=lambda c: score_card(c, fmt), reverse=True)
+        overflow.sort(key=_combined_score, reverse=True)
         selected.extend(overflow[:remaining])
 
     return selected[:target_count]
+
+
+def meta_preferred_archetype(
+    meta_scores: "dict[str, float]",
+    pool: list[dict],
+    min_score: float = 35.0,
+    min_cards: int = 10,
+) -> "str | None":
+    """Detect which archetype the meta data favors given our available pool.
+
+    Looks at pool cards with high meta scores and runs archetype detection on
+    them.  Returns the top archetype name, or None if not enough meta-relevant
+    cards are found.
+    """
+    top_meta = [
+        c for c in pool
+        if meta_scores.get((c.get("name_en") or "").lower(), 0.0) >= min_score
+        and "Land" not in (c.get("type_line") or "")
+    ]
+    if len(top_meta) < min_cards:
+        return None
+    detected = detect_archetypes(top_meta)
+    return detected[0][0] if detected else None
 
 
 # ── Deck rating ────────────────────────────────────────────────────────────────

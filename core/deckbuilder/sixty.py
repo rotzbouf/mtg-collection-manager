@@ -13,7 +13,7 @@ from ._constants import _60_ROLE_TARGETS, _THEME_TO_ARCH, _ARCH_TO_THEME
 
 
 _AFFINITY_WEIGHT = 12.0  # bonus per deck the card appears in
-_META_WEIGHT     = 0.08  # meta score is 0–100; score 100 → +8 pts, score 50 → +4 pts
+_META_WEIGHT     = 0.20  # meta score 0–100; score 100 → +20 pts, score 50 → +10 pts
 
 
 def _build_60_core(
@@ -80,7 +80,8 @@ def _build_60_core(
     candidates = themed + others
 
     remaining_target = max(1, target_nonland - len(role_cards))
-    theme_cards = select_for_curve(candidates, archetype, remaining_target, fmt="60")
+    theme_cards = select_for_curve(candidates, archetype, remaining_target, fmt="60",
+                                   meta_scores=meta_scores)
 
     selected_unique = list(role_cards)
     sel_names: set[str] = {(c.get("name_en") or "").lower() for c in selected_unique}
@@ -133,6 +134,9 @@ def _build_60_core(
         + len(nonbasic_lands)
         + len(basics_from_collection)
     )
+    missing_basics_count = sum(basics_missing.values()) if basics_missing else 0
+    total_cards = collection_count + missing_basics_count   # always 60
+
     value = round(
         sum((c.get("price_eur") or 0) * n for c, n in deck_cards)
         + sum(c.get("price_eur") or 0 for c in nonbasic_lands),
@@ -149,6 +153,7 @@ def _build_60_core(
         "strategy":               (theme_key or "").replace("tribal_", "").title() or archetype,
         "format":                 fmt,
         "collection_count":       collection_count,
+        "total_cards":            total_cards,
         "value_eur":              value,
         "curve":                  curve_analysis(deck_cards),
         "archetype":              archetype,
@@ -176,7 +181,7 @@ def build_60_deck(
     meta_scores: optional {card_name_lower: 0–100} from the competitive meta
                  DB; higher-scoring cards get a modest scoring bonus.
     """
-    from core.analysis import detect_archetypes
+    from core.analysis import detect_archetypes, meta_preferred_archetype
 
     legal_nonland = [
         c for c in pool
@@ -188,11 +193,19 @@ def build_60_deck(
     if forced_strategy:
         forced_arch = _THEME_TO_ARCH.get(forced_strategy, forced_strategy.replace("tribal_", "").title())
         # Put forced archetype first, then detected ones as alternatives.
-        detected_arches = {a for a, _ in detected}
         alts = [(a, c) for a, c in detected if a != forced_arch]
         archetypes = [(forced_arch, 1.0)] + alts[:2]
     else:
         archetypes = detected or [("Midrange", 1.0)]
+        # If meta data is available, nudge the primary archetype toward what the
+        # competitive meta favours (only when the collection doesn't already
+        # strongly point to one archetype).
+        if meta_scores and (not detected or detected[0][1] < 0.70):
+            meta_arch = meta_preferred_archetype(meta_scores, legal_nonland)
+            if meta_arch and meta_arch != archetypes[0][0]:
+                # Insert meta-preferred as primary, original primary as 2nd
+                existing = [(a, c) for a, c in archetypes if a != meta_arch]
+                archetypes = [(meta_arch, 1.0)] + existing[:2]
 
     variants: list[dict] = []
     for arch, conf in archetypes[:3]:

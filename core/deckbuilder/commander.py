@@ -37,7 +37,7 @@ def rank_commanders(pool: list[dict]) -> list[tuple[dict, int]]:
 
 
 _AFFINITY_WEIGHT = 12.0
-_META_WEIGHT     = 0.08  # meta score is 0–100; score 100 → +8 pts
+_META_WEIGHT     = 0.20  # meta score 0–100; score 100 → +20 pts, score 50 → +10 pts
 
 
 def _build_commander_for_archetype(
@@ -91,7 +91,8 @@ def _build_commander_for_archetype(
 
     remaining_pool = [c for c in unique_eligible if (c.get("name_en") or "").lower() not in chosen_names]
     remaining_target = max(1, target_nonland - len(role_cards))
-    theme_cards = select_for_curve(remaining_pool[:90], archetype, remaining_target, fmt="commander")
+    theme_cards = select_for_curve(remaining_pool[:90], archetype, remaining_target,
+                                   fmt="commander", meta_scores=meta_scores)
 
     deck = list(role_cards)
     deck_names: set[str] = {(c.get("name_en") or "").lower() for c in deck}
@@ -103,20 +104,27 @@ def _build_commander_for_archetype(
 
     deck = _enforce_diversity(deck, archetype, unique_eligible, target_nonland, "commander")
 
-    land_base = _build_land_base(pool, ci, deck, target_lands, "commander")
+    # If the pool didn't fill all nonland slots, pad with extra basics so the
+    # total always reaches 100 (99 + commander).
+    actual_nonland    = len(deck)
+    nonland_shortfall = max(0, target_nonland - actual_nonland)
+    adjusted_lands    = target_lands + nonland_shortfall
+
+    land_base = _build_land_base(pool, ci, deck, adjusted_lands, "commander")
     nonbasic_lands         = land_base["nonbasic_lands"]
     basics_from_collection = land_base["basics_from_collection"]
     basics_missing         = land_base["basics_missing"]
 
-    # Trim to exactly 99 (commander + nonland + lands)
+    # Trim to exactly 100 (commander + nonland + lands) when pool is large enough.
+    # With padding: 1 + actual_nonland + adjusted_lands = 1 + target_nonland + target_lands = 100
     total_lands = (
         len(nonbasic_lands)
         + len(basics_from_collection)
         + sum(basics_missing.values())
     )
     total = 1 + len(deck) + total_lands
-    if total > 99:
-        over = total - 99
+    if total > 100:
+        over = total - 100
         deck_scored = sorted(deck, key=_score)
         cut_names = {(c.get("name_en") or "").lower() for c in deck_scored[:over]}
         deck = [c for c in deck if (c.get("name_en") or "").lower() not in cut_names]
@@ -138,6 +146,10 @@ def _build_commander_for_archetype(
 
     synergy = deck_synergy_score(deck[:40])
     all_cards = deck + nonbasic_lands + basics_from_collection
+    collection_count     = len(all_cards)
+    missing_basics_count = sum(basics_missing.values()) if basics_missing else 0
+    # +1 for the commander itself
+    total_cards = 1 + collection_count + missing_basics_count   # always 100
 
     return {
         "commander":              commander,
@@ -145,9 +157,11 @@ def _build_commander_for_archetype(
         "nonbasic_lands":         nonbasic_lands,
         "basics_from_collection": basics_from_collection,
         "basics_missing":         basics_missing,
+        "padding_basics":         nonland_shortfall,
         "groups":                 groups,
         "themes":                 top_themes,
-        "collection_count":       len(all_cards),
+        "collection_count":       collection_count,
+        "total_cards":            total_cards,
         "value_eur":              round(sum(c.get("price_eur") or 0 for c in all_cards), 2),
         "curve":                  curve_analysis([(c, 1) for c in deck]),
         "archetype":              archetype,
@@ -171,7 +185,7 @@ def build_commander_deck(
     meta_scores: optional {card_name_lower: 0–100} from the competitive meta
                  DB; higher-scoring cards get a modest scoring bonus.
     """
-    from core.analysis import detect_archetypes
+    from core.analysis import detect_archetypes, meta_preferred_archetype
 
     ci = color_identity(commander)
     sample = [
@@ -181,6 +195,14 @@ def build_commander_deck(
         and is_legal(c, "commander")
     ]
     archetypes = detect_archetypes([commander] + sample)
+
+    # When meta data is available and the collection doesn't strongly signal an
+    # archetype, nudge toward what the competitive meta favours.
+    if meta_scores and (not archetypes or archetypes[0][1] < 0.70):
+        meta_arch = meta_preferred_archetype(meta_scores, sample)
+        if meta_arch and (not archetypes or meta_arch != archetypes[0][0]):
+            existing = [(a, c) for a, c in archetypes if a != meta_arch]
+            archetypes = [(meta_arch, 1.0)] + existing[:2]
 
     variants: list[dict] = []
     for arch, conf in archetypes[:3]:
