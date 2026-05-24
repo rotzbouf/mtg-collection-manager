@@ -42,6 +42,7 @@
 
   {% if not preview %}
   <form method="post" action="/import" enctype="multipart/form-data" style="max-width:30rem">
+    <input type="hidden" name="_csrf_token" value="{{ csrf_token(request) }}">
     <label>
       File
       <input type="file" name="file" accept=".csv,.json" required>
@@ -65,7 +66,8 @@
     </div>
     <p>Format: <strong>{{ fmt }}</strong> — {{ preview_total }} rows total.</p>
     <form method="post" action="/import/confirm">
-      <input type="hidden" name="parsed_json" value="{{ parsed_json | e }}">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token(request) }}">
+      <input type="hidden" name="import_token" value="{{ import_token | e }}">
       <input type="hidden" name="fmt" value="{{ fmt }}">
       <div style="display:flex;gap:1rem">
         <button type="submit">Confirm import ({{ preview_total }} cards)</button>
@@ -95,6 +97,7 @@
 
       {% if not backup_restore_preview %}
       <form method="post" action="/backup/restore" enctype="multipart/form-data">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token(request) }}">
         <label>
           Backup file
           <input type="file" name="file" accept=".db,.gz,.xz" required>
@@ -111,6 +114,7 @@
         </p>
         <p>All data added <em>after</em> this backup was created will be lost.</p>
         <form method="post" action="/backup/restore/confirm">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token(request) }}">
           <input type="hidden" name="token" value="{{ backup_restore_token }}">
           <div style="display:flex;gap:1rem">
             <button type="submit" style="background:var(--pico-color-red-550)">Restore database</button>

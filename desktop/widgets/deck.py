@@ -636,7 +636,7 @@ class DeckWidget(QWidget):
                 self._render_stats(result, fmt) + "  |  Refining…"
             )
             max_iter = self._refine_iter_sb.value()
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             try:
                 result = await loop.run_in_executor(
                     None, lambda: iterative_refine(result, pool, max_iterations=max_iter,
@@ -908,7 +908,9 @@ class DeckWidget(QWidget):
     async def _do_save_to_container(self, name: str, ctype: str, deck_format: str | None):
         from desktop.db import db
 
-        card_ids = self._collect_card_ids()
+        # Re-fetch pool from DB so the ID map is current at save time (L-6: stale pool fix)
+        fresh_pool = await db.get_all(exclude_container_types=["deck", "commander"])
+        card_ids = self._collect_card_ids(pool_override=fresh_pool)
         if not card_ids:
             QMessageBox.warning(self, "No cards", "No collection cards to move.")
             return
@@ -940,7 +942,7 @@ class DeckWidget(QWidget):
         except Exception as exc:
             QMessageBox.critical(self, "Error", str(exc))
 
-    def _collect_card_ids(self) -> list[int]:
+    def _collect_card_ids(self, pool_override: list[dict] | None = None) -> list[int]:
         result = self._result
         fmt = self._last_fmt
         if not result:
@@ -957,7 +959,7 @@ class DeckWidget(QWidget):
             ids += [c["id"] for c in result.get("basics_from_collection", []) if c.get("id")]
         else:
             name_to_ids: dict[str, list[int]] = {}
-            for c in self._pool:
+            for c in (pool_override if pool_override is not None else self._pool):
                 name = (c.get("name_en") or "").lower()
                 cid = c.get("id")
                 if cid:

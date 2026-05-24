@@ -611,11 +611,11 @@ class ScanWidget(QWidget):
         """Called by the desktop bridge to route a Discord scan through the desktop UI."""
         if self._discord_future and not self._discord_future.done():
             # Already handling one — reject
-            fut: asyncio.Future = asyncio.get_event_loop().create_future()
+            fut: asyncio.Future = asyncio.get_running_loop().create_future()
             fut.set_result({"status": "error", "message": "Scanner is busy"})
             return fut
 
-        self._discord_future = asyncio.get_event_loop().create_future()
+        self._discord_future = asyncio.get_running_loop().create_future()
         self._discord_banner.setText(
             f"📱 Discord scan from {discord_user} — confirm to add, Skip to decline"
         )

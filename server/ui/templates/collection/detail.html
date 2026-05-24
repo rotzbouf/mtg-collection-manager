@@ -58,6 +58,7 @@
 <hr>
 <h4>Edit entry</h4>
 <form method="post" action="/collection/{{ card.id }}/edit">
+  <input type="hidden" name="_csrf_token" value="{{ csrf_token(request) }}">
   <div class="grid">
     <label>
       Condition
@@ -97,6 +98,7 @@
 
 <hr>
 <form method="post" action="/collection/{{ card.id }}/delete" onsubmit="return confirm('Delete this card entry permanently?')">
+  <input type="hidden" name="_csrf_token" value="{{ csrf_token(request) }}">
   <button type="submit" class="outline contrast">Delete this entry</button>
 </form>
 {% endblock %}

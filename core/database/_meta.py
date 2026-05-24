@@ -91,58 +91,61 @@ class _MetaMixin:
         total_written = 0
 
         for fmt in fmts:
-            # Fetch all mainboard cards with their deck's placement
-            async with self._db.execute(
-                """
-                SELECT mdc.card_name, md.place, SUM(mdc.quantity) AS qty
-                FROM meta_deck_cards mdc
-                JOIN meta_decks md ON mdc.deck_db_id = md.id
-                WHERE md.format = ? AND mdc.section = 'main'
-                GROUP BY mdc.card_name, md.id
-                """,
-                (fmt,),
-            ) as cur:
-                rows = await cur.fetchall()
-
-            # Accumulate scores per card
-            scores: dict[str, float] = {}
-            appearances: dict[str, int] = {}
-            deck_sets: dict[str, set] = {}
-
-            for card_name, place, qty in rows:
-                # Parse placement: "1", "2-4", "5-8", etc.
-                try:
-                    rank = int(str(place or "").split("-")[0].strip())
-                    bonus = 1.0 / (math.sqrt(rank) + 0.5)
-                except (ValueError, AttributeError):
-                    bonus = 0.5
-
-                key = card_name.lower()
-                scores[key] = scores.get(key, 0.0) + bonus
-                appearances[key] = appearances.get(key, 0) + int(qty or 1)
-
-            # Normalize to 0–100 range
-            if scores:
-                max_score = max(scores.values())
-                if max_score > 0:
-                    scores = {k: round(v / max_score * 100, 4) for k, v in scores.items()}
-
-            # Count distinct decks per card
-            async with self._db.execute(
-                """
-                SELECT mdc.card_name, COUNT(DISTINCT mdc.deck_db_id) AS cnt
-                FROM meta_deck_cards mdc
-                JOIN meta_decks md ON mdc.deck_db_id = md.id
-                WHERE md.format = ? AND mdc.section = 'main'
-                GROUP BY mdc.card_name
-                """,
-                (fmt,),
-            ) as cur:
-                for card_name, cnt in await cur.fetchall():
-                    deck_sets[card_name.lower()] = cnt  # type: ignore[assignment]
-
+            # Hold the write lock for the entire read-compute-write cycle so two
+            # concurrent callers never interleave their DELETE + INSERT for the
+            # same format (TOCTOU race).
             async with self._write_lock:
-                # Clear old scores for this format
+                # Fetch all mainboard cards with their deck's placement
+                async with self._db.execute(
+                    """
+                    SELECT mdc.card_name, md.place, SUM(mdc.quantity) AS qty
+                    FROM meta_deck_cards mdc
+                    JOIN meta_decks md ON mdc.deck_db_id = md.id
+                    WHERE md.format = ? AND mdc.section = 'main'
+                    GROUP BY mdc.card_name, md.id
+                    """,
+                    (fmt,),
+                ) as cur:
+                    rows = await cur.fetchall()
+
+                # Accumulate scores per card
+                scores: dict[str, float] = {}
+                appearances: dict[str, int] = {}
+                deck_sets: dict[str, set] = {}
+
+                for card_name, place, qty in rows:
+                    # Parse placement: "1", "2-4", "5-8", etc.
+                    try:
+                        rank = int(str(place or "").split("-")[0].strip())
+                        bonus = 1.0 / (math.sqrt(rank) + 0.5)
+                    except (ValueError, AttributeError):
+                        bonus = 0.5
+
+                    key = card_name.lower()
+                    scores[key] = scores.get(key, 0.0) + bonus
+                    appearances[key] = appearances.get(key, 0) + int(qty or 1)
+
+                # Normalize to 0–100 range
+                if scores:
+                    max_score = max(scores.values())
+                    if max_score > 0:
+                        scores = {k: round(v / max_score * 100, 4) for k, v in scores.items()}
+
+                # Count distinct decks per card
+                async with self._db.execute(
+                    """
+                    SELECT mdc.card_name, COUNT(DISTINCT mdc.deck_db_id) AS cnt
+                    FROM meta_deck_cards mdc
+                    JOIN meta_decks md ON mdc.deck_db_id = md.id
+                    WHERE md.format = ? AND mdc.section = 'main'
+                    GROUP BY mdc.card_name
+                    """,
+                    (fmt,),
+                ) as cur:
+                    for card_name, cnt in await cur.fetchall():
+                        deck_sets[card_name.lower()] = cnt  # type: ignore[assignment]
+
+                # Clear old scores for this format and write new ones
                 await self._db.execute(
                     "DELETE FROM meta_card_scores WHERE format=?", (fmt,)
                 )

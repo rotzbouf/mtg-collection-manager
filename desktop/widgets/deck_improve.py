@@ -26,6 +26,17 @@ from desktop.utils import display_name
 
 logger = logging.getLogger(__name__)
 
+
+def _bg(coro):
+    """Schedule a coroutine as a fire-and-forget task with error logging."""
+    task = asyncio.ensure_future(coro)
+    task.add_done_callback(
+        lambda f: logger.error("Background task failed: %s", f.exception())
+        if not f.cancelled() and f.exception() else None
+    )
+    return task
+
+
 # ── Format mapping ─────────────────────────────────────────────────────────────
 
 _DECK_TO_META: dict[str, str] = {
@@ -183,7 +194,7 @@ class DeckImproveWidget(QWidget):
         QTimer.singleShot(0, self._load_decks)
 
     def refresh(self):
-        asyncio.ensure_future(self._async_load_decks())
+        _bg(self._async_load_decks())
 
     # ------------------------------------------------------------------ #
     # UI                                                                    #
@@ -294,7 +305,7 @@ class DeckImproveWidget(QWidget):
     # ------------------------------------------------------------------ #
 
     def _load_decks(self):
-        asyncio.ensure_future(self._async_load_decks())
+        _bg(self._async_load_decks())
 
     @asyncSlot()
     async def _async_load_decks(self):
@@ -335,10 +346,10 @@ class DeckImproveWidget(QWidget):
             self._on_deck_changed(self._deck_combo.currentIndex())
 
     def _on_deck_changed(self, _index: int):
-        asyncio.ensure_future(self._load_proposals())
+        _bg(self._load_proposals())
 
     def _on_refresh(self):
-        asyncio.ensure_future(self._load_proposals())
+        _bg(self._load_proposals())
 
     def _on_filter_changed(self, _state: int):
         self._populate_table()
@@ -525,7 +536,7 @@ class DeckImproveWidget(QWidget):
         if reply != QMessageBox.StandardButton.Yes:
             return
 
-        asyncio.ensure_future(self._do_swap(row, dc["id"], cand["id"]))
+        _bg(self._do_swap(row, dc["id"], cand["id"]))
 
     @asyncSlot()
     async def _do_swap(self, row: int, card_id_deck: int, card_id_cand: int):

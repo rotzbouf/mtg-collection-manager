@@ -210,8 +210,11 @@ class ScryfallClient:
         # Validate set_code to prevent query injection via Scryfall search syntax
         safe_set = set_code if (set_code and _SET_CODE_RE.match(set_code)) else None
         set_filter = f" set:{safe_set}" if safe_set else ""
-        # Escape quotes in name so user input cannot break out of the quoted term
-        safe_name = name.replace('"', '')
+        # Strip characters that carry special meaning in Scryfall search syntax so
+        # user-supplied card names cannot inject operators or break quoted terms.
+        safe_name = re.sub(r'["\(\):]', '', name)
+        # Remove boolean operator keywords to prevent Scryfall query injection
+        safe_name = re.sub(r'\b(OR|AND|NOT)\b', '', safe_name, flags=re.IGNORECASE).strip()
         # Try exact German printed name search
         data = await self._get(
             f"{BASE}/cards/search",

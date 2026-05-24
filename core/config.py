@@ -8,8 +8,11 @@ CI / systemd EnvironmentFile) always win over config.json values.
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def _config_dir() -> Path:
@@ -63,7 +66,7 @@ _DEFAULTS: dict = {
     "app": {
         "backup_dir":         "",
         "ui_port":            8080,
-        "ui_host":            "0.0.0.0",
+        "ui_host":            "127.0.0.1",
         "debug_scan_preview": False,
     },
     "container_types":          list(BUILTIN_TYPES),
@@ -123,8 +126,8 @@ def load() -> dict:
                     merged[key] = {**default_val, **data[key]}
                 else:
                     merged[key] = data[key]
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.error("Failed to load config.json: %s", exc)
 
     # Strip obsolete keys
     merged.get("app", {}).pop("price_source", None)

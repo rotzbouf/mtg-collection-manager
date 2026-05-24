@@ -199,12 +199,15 @@ class _ContainersMixin:
             conds.append(f"c.set_code IN ({ph})")
             params.extend(set_codes)
 
-        order = {
+        _ORDER_MAP = {
             "price_desc": "COALESCE(c.price_eur, 0) DESC, c.name_en",
             "price_asc":  "COALESCE(c.price_eur, 0) ASC,  c.name_en",
             "name":       "c.name_en ASC",
             "set":        "c.set_code ASC, CAST(c.collector_number AS INTEGER) ASC",
-        }.get(order_by, "COALESCE(c.price_eur, 0) DESC, c.name_en")
+        }
+        if order_by not in _ORDER_MAP:
+            raise ValueError(f"Invalid order_by: {order_by!r}")
+        order = _ORDER_MAP[order_by]
 
         params.append(limit)
         sql = f"""

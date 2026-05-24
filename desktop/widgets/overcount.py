@@ -2,7 +2,20 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Optional
+
+_log = logging.getLogger(__name__)
+
+
+def _bg(coro):
+    """Schedule a coroutine as a fire-and-forget task with error logging."""
+    task = asyncio.ensure_future(coro)
+    task.add_done_callback(
+        lambda f: _log.error("Background task failed: %s", f.exception())
+        if not f.cancelled() and f.exception() else None
+    )
+    return task
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
@@ -66,9 +79,9 @@ class OvercountWidget(QWidget):
 
     def _on_tab_changed(self, index: int):
         if index == 1:
-            asyncio.ensure_future(self._load_sell_candidates())
+            _bg(self._load_sell_candidates())
         elif index == 2:
-            asyncio.ensure_future(self._load_bundle_sets())
+            _bg(self._load_bundle_sets())
 
     # ================================================================== #
     # Tab 0 — Overcounted                                                  #
@@ -310,11 +323,11 @@ class OvercountWidget(QWidget):
         menu.addAction(f"↗ Move {noun} to container…",
                        lambda: self._on_move_to_container(ids))
         menu.addAction(f"✕ Remove {noun} from container",
-                       lambda: asyncio.ensure_future(self._do_move_cards(ids, None)))
+                       lambda: _bg(self._do_move_cards(ids, None)))
         menu.exec(self._tree.viewport().mapToGlobal(pos))
 
     def _on_move_to_container(self, card_ids: list[int]):
-        asyncio.ensure_future(self._do_open_move_dialog(card_ids))
+        _bg(self._do_open_move_dialog(card_ids))
 
     async def _do_open_move_dialog(self, card_ids: list[int]):
         from desktop.db import db
@@ -399,9 +412,9 @@ class OvercountWidget(QWidget):
         root.addLayout(bottom)
 
         self._sell_refresh_btn.clicked.connect(
-            lambda: asyncio.ensure_future(self._load_sell_candidates()))
+            lambda: _bg(self._load_sell_candidates()))
         self._sell_min.valueChanged.connect(
-            lambda _: asyncio.ensure_future(self._load_sell_candidates()))
+            lambda _: _bg(self._load_sell_candidates()))
         self._sell_table.currentCellChanged.connect(self._on_sell_row_changed)
         self._sell_table.itemSelectionChanged.connect(self._on_sell_selection_changed)
         self._sell_move_btn.clicked.connect(self._on_sell_move)
@@ -486,7 +499,7 @@ class OvercountWidget(QWidget):
         cards = self._sell_selected_cards()
         if not cards:
             return
-        asyncio.ensure_future(self._do_open_sell_move_dialog(cards))
+        _bg(self._do_open_sell_move_dialog(cards))
 
     async def _do_open_sell_move_dialog(self, cards: list[dict]):
         from desktop.db import db
@@ -535,7 +548,7 @@ class OvercountWidget(QWidget):
         ]:
             btn = QPushButton(label)
             btn.clicked.connect(
-                lambda _chk, r=rarities, n=count: asyncio.ensure_future(
+                lambda _chk, r=rarities, n=count: _bg(
                     self._preview_bundle(rarities=r, max_count=n, order="price_asc")
                 )
             )
@@ -546,7 +559,7 @@ class OvercountWidget(QWidget):
         row2 = QHBoxLayout()
         rares_btn = QPushButton("All Rares & Mythics")
         rares_btn.clicked.connect(
-            lambda: asyncio.ensure_future(
+            lambda: _bg(
                 self._preview_bundle(rarities=["rare", "mythic"], order="price_desc")
             )
         )
@@ -565,7 +578,7 @@ class OvercountWidget(QWidget):
         row2.addWidget(self._bundle_set_count)
         by_set_btn = QPushButton("Preview")
         by_set_btn.clicked.connect(
-            lambda: asyncio.ensure_future(self._preview_set_bundle())
+            lambda: _bg(self._preview_set_bundle())
         )
         row2.addWidget(by_set_btn)
         row2.addStretch()
@@ -618,7 +631,7 @@ class OvercountWidget(QWidget):
 
         self._bundle_tree.currentItemChanged.connect(self._on_bundle_item_selected)
         self._bundle_create_btn.clicked.connect(
-            lambda: asyncio.ensure_future(self._create_bundle())
+            lambda: _bg(self._create_bundle())
         )
         return w
 

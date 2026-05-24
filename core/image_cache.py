@@ -5,6 +5,7 @@ import asyncio
 import logging
 import os
 import pathlib
+import re
 from typing import Optional
 
 import aiohttp
@@ -14,6 +15,13 @@ logger = logging.getLogger(__name__)
 from core.config import DATA_DIR as _DATA_DIR
 CACHE_DIR = pathlib.Path(os.getenv("IMAGE_CACHE_DIR", str(_DATA_DIR / "images")))
 _EXTS = ("webp", "jpg", "png")
+_SAFE_KEY = re.compile(r'^[a-zA-Z0-9_\-]{1,80}$')
+
+
+def _validate_cache_key(key: str) -> None:
+    """Raise ValueError if *key* could escape the cache directory."""
+    if not _SAFE_KEY.match(key):
+        raise ValueError(f"Unsafe image cache key: {key!r}")
 _HEADERS = {"Accept": "image/webp,image/*,*/*;q=0.8"}
 _TIMEOUT = aiohttp.ClientTimeout(total=15, connect=5)
 _MAX_BYTES = 20 * 1024 * 1024  # 20 MB hard cap
@@ -21,6 +29,7 @@ _MAX_BYTES = 20 * 1024 * 1024  # 20 MB hard cap
 
 def get_cached_path(scryfall_id: str) -> Optional[pathlib.Path]:
     """Return local path if the image is already cached, else None."""
+    _validate_cache_key(scryfall_id)
     for ext in _EXTS:
         p = CACHE_DIR / f"{scryfall_id}.{ext}"
         if p.exists():
@@ -34,6 +43,7 @@ async def ensure_cached(
     session: Optional[aiohttp.ClientSession] = None,
 ) -> Optional[pathlib.Path]:
     """Return local path for scryfall_id, downloading from image_url if not yet cached."""
+    _validate_cache_key(scryfall_id)
     existing = get_cached_path(scryfall_id)
     if existing:
         return existing

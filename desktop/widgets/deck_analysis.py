@@ -2,8 +2,21 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from pathlib import Path
+
+_log = logging.getLogger(__name__)
+
+
+def _bg(coro):
+    """Schedule a coroutine as a fire-and-forget task with error logging."""
+    task = asyncio.ensure_future(coro)
+    task.add_done_callback(
+        lambda f: _log.error("Background task failed: %s", f.exception())
+        if not f.cancelled() and f.exception() else None
+    )
+    return task
 
 import matplotlib
 matplotlib.use("QtAgg")
@@ -95,7 +108,7 @@ class DeckAnalysisWidget(QWidget):
         QTimer.singleShot(0, self._load_decks)
 
     def refresh(self):
-        asyncio.ensure_future(self._async_load_decks())
+        _bg(self._async_load_decks())
 
     # ------------------------------------------------------------------ #
     # UI                                                                    #
@@ -275,7 +288,7 @@ class DeckAnalysisWidget(QWidget):
             self._update_stats()
             self._set_buttons_enabled(False)
             return
-        asyncio.ensure_future(self._load_deck_cards(container_id))
+        _bg(self._load_deck_cards(container_id))
 
     async def _load_deck_cards(self, container_id: int):
         from desktop.db import db
@@ -605,9 +618,9 @@ class DeckAnalysisWidget(QWidget):
 
         action = menu.exec(self._table.viewport().mapToGlobal(pos))
         if action == remove_act:
-            asyncio.ensure_future(self._remove_cards(cards))
+            _bg(self._remove_cards(cards))
         elif action == move_act:
-            asyncio.ensure_future(self._move_cards(cards))
+            _bg(self._move_cards(cards))
 
     # ------------------------------------------------------------------ #
     # Edit operations                                                       #

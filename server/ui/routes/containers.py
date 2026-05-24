@@ -9,6 +9,8 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 import server.ui.deps as deps
+from server.ui.routes.collection import SORT_OPTIONS
+from server.ui.csrf import verify_csrf
 
 _TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "templates")
 templates = Jinja2Templates(directory=_TEMPLATES_DIR)
@@ -58,6 +60,11 @@ async def container_detail(
     if not container:
         return HTMLResponse("<h2>Container not found</h2>", status_code=404)
 
+    # M-9: sanitise sort parameter
+    valid_sorts = {k for k, _ in SORT_OPTIONS}
+    if sort not in valid_sorts:
+        sort = "chaos"
+
     page = max(1, page)
     offset = (page - 1) * PAGE_SIZE
 
@@ -86,9 +93,12 @@ async def container_detail(
 
 @router.post("/containers/create")
 async def containers_create(
+    request: Request,
     name: str = Form(...),
     type: str = Form("binder"),
+    _csrf_token: str = Form(...),
 ):
+    verify_csrf(request, _csrf_token)
     if not name.strip():
         return RedirectResponse(url="/containers", status_code=303)
     await deps.db.create_container(name.strip(), type=type)
@@ -100,14 +110,21 @@ async def containers_rename(
     request: Request,
     container_id: int,
     name: str = Form(...),
+    _csrf_token: str = Form(...),
 ):
+    verify_csrf(request, _csrf_token)
     if name.strip():
         await deps.db.rename_container(container_id, name.strip())
     return RedirectResponse(url=request.url_for("container_detail", container_id=container_id), status_code=303)
 
 
 @router.post("/containers/{container_id}/delete")
-async def containers_delete(container_id: int):
+async def containers_delete(
+    request: Request,
+    container_id: int,
+    _csrf_token: str = Form(...),
+):
+    verify_csrf(request, _csrf_token)
     # Only delete if empty
     total = await deps.db.count_cards(container_id=container_id)
     if total == 0:

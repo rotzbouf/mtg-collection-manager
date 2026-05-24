@@ -17,6 +17,7 @@
 <details>
   <summary>Rename or Delete</summary>
   <form method="post" action="/containers/{{ container.id }}/rename" style="margin-bottom:1rem">
+    <input type="hidden" name="_csrf_token" value="{{ csrf_token(request) }}">
     <div class="grid">
       <input type="text" name="name" value="{{ container.name }}" required>
       <button type="submit">Rename</button>
@@ -24,6 +25,7 @@
   </form>
   {% if total == 0 %}
   <form method="post" action="/containers/{{ container.id }}/delete" onsubmit="return confirm('Delete empty container?')">
+    <input type="hidden" name="_csrf_token" value="{{ csrf_token(request) }}">
     <button type="submit" class="outline contrast">Delete Container</button>
   </form>
   {% else %}

@@ -30,6 +30,7 @@
       <td>
         {% if ct.card_count == 0 %}
         <form method="post" action="/containers/{{ ct.id }}/delete" style="display:inline" onsubmit="return confirm('Delete empty container?')">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token(request) }}">
           <button type="submit" class="outline secondary" style="padding:0.2rem 0.5rem;font-size:0.8rem">✕</button>
         </form>
         {% endif %}
@@ -45,6 +46,7 @@
 <hr>
 <h4>Create Container</h4>
 <form method="post" action="/containers/create">
+  <input type="hidden" name="_csrf_token" value="{{ csrf_token(request) }}">
   <div class="grid">
     <label>
       Name

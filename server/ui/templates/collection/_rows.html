@@ -42,6 +42,7 @@
       </td>
       <td>
         <form method="post" action="/collection/{{ card.id }}/delete" style="display:inline" onsubmit="return confirm('Delete this card entry?')">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token(request) }}">
           <button type="submit" class="outline secondary" style="padding:0.2rem 0.5rem;font-size:0.8rem">✕</button>
         </form>
       </td>

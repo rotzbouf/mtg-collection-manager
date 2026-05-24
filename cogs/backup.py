@@ -22,14 +22,23 @@ logger = logging.getLogger(__name__)
 from core.config import DATA_DIR as _DATA_DIR
 BACKUP_DIR = pathlib.Path(os.getenv("BACKUP_DIR", str(_DATA_DIR / "backups")))
 
+_MAX_UPLOAD_BYTES  = 64 * 1024 * 1024   # 64 MB raw upload
+_MAX_RESTORE_BYTES = 256 * 1024 * 1024  # 256 MB after decompression
+
 
 class RestoreConfirmView(discord.ui.View):
-    def __init__(self, data: bytes):
+    def __init__(self, data: bytes, original_user_id: int):
         super().__init__(timeout=60)
         self._data = data
+        self._original_user_id = original_user_id
 
     @discord.ui.button(label="Yes, restore", style=discord.ButtonStyle.danger)
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self._original_user_id:
+            await interaction.response.send_message(
+                "❌ Only the user who initiated the restore can confirm it.", ephemeral=True
+            )
+            return
         self.stop()
         await interaction.response.defer()
         if interaction.client.db._restore_lock.locked():
@@ -125,14 +134,23 @@ class BackupCog(commands.Cog):
         if not (file.filename.endswith(".db") or file.filename.endswith(".db.gz") or file.filename.endswith(".db.xz")):
             await interaction.followup.send("Please attach a `.db`, `.db.gz`, or `.db.xz` backup file.", ephemeral=True)
             return
+        if file.size > _MAX_UPLOAD_BYTES:
+            await interaction.followup.send("❌ Attachment too large (max 64 MB).", ephemeral=True)
+            return
         await interaction.edit_original_response(content="Reading backup file…")
         raw = await file.read()
         if file.filename.endswith(".xz"):
             await interaction.edit_original_response(content="Decompressing backup…")
             data = await asyncio.to_thread(lzma.decompress, raw)
+            if len(data) > _MAX_RESTORE_BYTES:
+                await interaction.followup.send("❌ Decompressed backup exceeds 256 MB limit.", ephemeral=True)
+                return
         elif file.filename.endswith(".gz"):
             await interaction.edit_original_response(content="Decompressing backup…")
             data = await asyncio.to_thread(gzip.decompress, raw)
+            if len(data) > _MAX_RESTORE_BYTES:
+                await interaction.followup.send("❌ Decompressed backup exceeds 256 MB limit.", ephemeral=True)
+                return
         else:
             data = raw
         await interaction.edit_original_response(content="Validating backup...")
@@ -154,7 +172,7 @@ class BackupCog(commands.Cog):
             ),
             color=0xFF4444,
         )
-        view = RestoreConfirmView(data)
+        view = RestoreConfirmView(data, interaction.user.id)
         await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
 

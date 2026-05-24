@@ -5,11 +5,12 @@ import json
 import os
 from typing import Optional
 
-from fastapi import APIRouter, Form, Request
+from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 import server.ui.deps as deps
+from server.ui.csrf import verify_csrf
 
 _TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "templates")
 templates = Jinja2Templates(directory=_TEMPLATES_DIR)
@@ -34,6 +35,10 @@ SORT_OPTIONS = [
 
 CONDITIONS = ["NM", "LP", "MP", "HP", "DMG"]
 LANGUAGES = list(LANG_FLAGS.keys())
+
+# M-6: valid values for edit validation
+_VALID_CONDITIONS = {"M", "NM", "LP", "MP", "HP", "DMG"}
+_VALID_LANGUAGES  = {"en", "de", "fr", "it", "es", "pt", "ja", "ko", "ru", "zhs", "zht", "he", "la", "grc", "ar", "sa", "ph"}
 
 
 def _display_name(card: dict) -> str:
@@ -150,7 +155,9 @@ async def collection_add_submit(
     color_identity: str = Form("[]"),
     keywords: str = Form("[]"),
     legalities: str = Form("{}"),
+    _csrf_token: str = Form(...),
 ):
+    verify_csrf(request, _csrf_token)
     containers_list = await deps.db.list_containers()
 
     def _add_ctx(card=None, error=None):
@@ -246,7 +253,18 @@ async def collection_edit(
     language: str = Form("en"),
     container_id: str = Form(""),
     notes: str = Form(""),
+    _csrf_token: str = Form(...),
 ):
+    verify_csrf(request, _csrf_token)
+    # M-6: validate condition and language
+    if condition and condition not in _VALID_CONDITIONS:
+        raise HTTPException(status_code=400, detail=f"Invalid condition: {condition}")
+    if language and language not in _VALID_LANGUAGES:
+        raise HTTPException(status_code=400, detail=f"Invalid language: {language}")
+
+    # L-7: cap notes length
+    notes = (notes or "")[:2000]
+
     updatable = {
         "condition": condition,
         "foil": 1 if foil else 0,
@@ -260,6 +278,11 @@ async def collection_edit(
 
 
 @router.post("/collection/{card_id}/delete")
-async def collection_delete(card_id: int):
+async def collection_delete(
+    request: Request,
+    card_id: int,
+    _csrf_token: str = Form(...),
+):
+    verify_csrf(request, _csrf_token)
     await deps.db.remove_card(card_id)
     return RedirectResponse(url="/collection", status_code=303)

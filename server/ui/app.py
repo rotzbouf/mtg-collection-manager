@@ -20,9 +20,11 @@ from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.middleware.sessions import SessionMiddleware
 
 import server.ui.deps as deps
 from server.ui.routes import collection, containers, stats, import_export, images
+from server.ui.csrf import csrf_token as _csrf_token_fn
 
 logging.basicConfig(
     level=logging.INFO,
@@ -34,6 +36,8 @@ _TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "templates")
 _STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
 templates = Jinja2Templates(directory=_TEMPLATES_DIR)
+# Make csrf_token() callable from every template: {{ csrf_token(request) }}
+templates.env.globals["csrf_token"] = _csrf_token_fn
 
 
 @asynccontextmanager
@@ -47,6 +51,16 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="MTG Collection Manager", lifespan=lifespan)
+
+# Session middleware required for CSRF token storage.
+# SECRET_KEY should be set via the UI_SECRET_KEY env var in production.
+_session_secret = os.getenv("UI_SECRET_KEY") or os.urandom(32).hex()
+if not os.getenv("UI_SECRET_KEY"):
+    logger.warning(
+        "UI_SECRET_KEY not set — using a random secret; sessions will not survive restarts. "
+        "Set UI_SECRET_KEY in your environment for persistent sessions."
+    )
+app.add_middleware(SessionMiddleware, secret_key=_session_secret, https_only=False, same_site="strict")
 
 app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
 
@@ -65,7 +79,7 @@ async def root():
 if __name__ == "__main__":
     import uvicorn
 
-    host = os.getenv("UI_HOST", "0.0.0.0")
+    host = os.getenv("UI_HOST", "127.0.0.1")
     port = int(os.getenv("UI_PORT", "8080"))
     uvicorn.run(
         "server.ui.app:app",

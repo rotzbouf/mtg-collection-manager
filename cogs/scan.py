@@ -31,7 +31,19 @@ _MAX_SCAN_BYTES = scanner.MAX_INPUT_BYTES
 _scan_limiter = RateLimiter(5, 60.0)  # 5 scans per 60 s per user
 
 # Per-user last-used container: user_id -> (container_id, container_name)
-_last_container: dict[int, tuple[int, str]] = {}
+# Bounded to prevent unbounded growth (I-3).
+_MAX_LAST_CONTAINER = 500
+
+
+class _LRUDict(dict):
+    """dict that evicts the oldest entry when it exceeds _MAX_LAST_CONTAINER items."""
+    def __setitem__(self, key, value):
+        if key not in self and len(self) >= _MAX_LAST_CONTAINER:
+            del self[next(iter(self))]
+        super().__setitem__(key, value)
+
+
+_last_container: _LRUDict = _LRUDict()
 
 
 class _ScanMatch(NamedTuple):
@@ -542,6 +554,15 @@ async def _post_bridge_result(
 
 
 async def _handle_scan_attachment(bot, message: discord.Message, attachment: discord.Attachment):
+    # Role check — only Collector or Admin may add cards via the scan channel (H-2).
+    _collector_role_id = int(os.getenv("DISCORD_COLLECTOR_ROLE", 0) or 0)
+    _admin_role_id     = int(os.getenv("DISCORD_ADMIN_ROLE",     0) or 0)
+    if _collector_role_id or _admin_role_id:
+        author_role_ids = {r.id for r in getattr(message.author, "roles", [])}
+        if _collector_role_id not in author_role_ids and _admin_role_id not in author_role_ids:
+            await message.add_reaction("🚫")
+            return
+
     allowed, retry_after = _scan_limiter.check(message.author.id)
     if not allowed:
         await message.channel.send(

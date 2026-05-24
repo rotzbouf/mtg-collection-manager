@@ -19,6 +19,7 @@
 {# Step 1: Search form #}
 <form method="post" action="/collection/add">
   <input type="hidden" name="action" value="lookup">
+  <input type="hidden" name="_csrf_token" value="{{ csrf_token(request) }}">
   <div class="grid">
     <label>
       Card name
@@ -54,6 +55,7 @@
 
 <form method="post" action="/collection/add">
   <input type="hidden" name="action" value="save">
+  <input type="hidden" name="_csrf_token" value="{{ csrf_token(request) }}">
   <input type="hidden" name="scryfall_id" value="{{ card.scryfall_id or '' }}">
   <input type="hidden" name="oracle_id" value="{{ card.oracle_id or '' }}">
   <input type="hidden" name="name_en" value="{{ card.name_en or '' }}">

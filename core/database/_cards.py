@@ -101,7 +101,6 @@ class _CardsMixin:
             },
         ) as cur:
             row_id = cur.lastrowid
-        await self._db.commit()
 
         scryfall_id = card.get("scryfall_id")
         price_eur   = card.get("price_eur")
@@ -170,7 +169,7 @@ class _CardsMixin:
         c_order   = color_sort_order(colors, type_line)
         t_order   = type_sort_order(type_line)
 
-        result = await self._db.execute(
+        await self._db.execute(
             """
             UPDATE collection SET
                 name_en        = :name_en,
@@ -230,7 +229,6 @@ class _CardsMixin:
                 "type_order":     t_order,
             },
         )
-        await self._db.commit()
 
         price_eur = card.get("price_eur")
         price_usd = card.get("price_usd")

@@ -47,7 +47,11 @@ class DesktopBridge:
         return self._server is not None
 
     def start(self) -> None:
-        asyncio.ensure_future(self._start_server())
+        task = asyncio.ensure_future(self._start_server())
+        task.add_done_callback(
+            lambda f: logger.error("Bridge startup failed: %s", f.exception())
+            if not f.cancelled() and f.exception() else None
+        )
 
     def stop(self) -> None:
         if self._server:
@@ -66,6 +70,7 @@ class DesktopBridge:
             pass
         try:
             self._server = await asyncio.start_unix_server(self._handle_client, SOCK_PATH)
+            os.chmod(SOCK_PATH, 0o600)  # restrict to owner only (L-1)
             logger.info("Desktop bridge listening at %s", SOCK_PATH)
         except Exception as exc:
             logger.error("Desktop bridge failed to start: %s", exc)
