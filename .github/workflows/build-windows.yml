@@ -1,0 +1,135 @@
+name: Build Windows Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write   # needed to upload release assets
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 120
+
+    steps:
+      # ── Checkout ────────────────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Python ──────────────────────────────────────────────────────────────
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # ── System tools ────────────────────────────────────────────────────────
+      - name: Install Tesseract
+        run: |
+          choco install tesseract --yes --no-progress
+          echo "C:\Program Files\Tesseract-OCR" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        shell: pwsh
+
+      # ── Python dependencies ─────────────────────────────────────────────────
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # PyTorch CPU-only — much smaller, scanner still works (GPU not available on runner)
+          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          pip install -r deps/requirements.txt
+          pip install nuitka ordered-set zstandard
+        shell: pwsh
+
+      # ── Seed config ─────────────────────────────────────────────────────────
+      - name: Seed config.json
+        run: Copy-Item config.json.example config.json
+        shell: pwsh
+
+      # ── Nuitka build ────────────────────────────────────────────────────────
+      - name: Build with Nuitka
+        run: |
+          $VERSION = git describe --tags --always
+          python -m nuitka `
+            --onefile `
+            --assume-yes-for-downloads `
+            --output-dir=dist `
+            --output-filename=mtg-collection-manager `
+            "--onefile-tempdir-spec={CACHE_DIR}/mtg-collection-manager/$VERSION" `
+            --enable-plugin=pyqt6 `
+            --include-qt-plugins=sensible `
+            --follow-import-to=core `
+            --follow-import-to=desktop `
+            --follow-import-to=server `
+            --follow-import-to=cogs `
+            --include-package=easyocr `
+            --include-package=cv2 `
+            --include-package=torch `
+            --include-package=PIL `
+            --include-package=discord `
+            --include-package=aiohttp `
+            --include-package=aiosqlite `
+            --include-package=qasync `
+            --include-package=matplotlib `
+            --include-package=fastapi `
+            --include-package=uvicorn `
+            --include-package=starlette `
+            --include-package=pytesseract `
+            --include-package=anyio `
+            --include-package=scipy `
+            --nofollow-import-to=torch.cuda `
+            --nofollow-import-to=torch.backends.cuda `
+            --nofollow-import-to=torch.backends.cudnn `
+            --nofollow-import-to=torch.utils.tensorboard `
+            --nofollow-import-to=torch.distributed `
+            --nofollow-import-to=torch.optim `
+            --nofollow-import-to=torch.ao `
+            --nofollow-import-to=torch.jit `
+            --nofollow-import-to=torch.onnx `
+            --nofollow-import-to=torch.export `
+            --nofollow-import-to=torchaudio `
+            --nofollow-import-to=torchvision.models `
+            --nofollow-import-to=triton `
+            --nofollow-import-to=tkinter `
+            --nofollow-import-to=_tkinter `
+            --nofollow-import-to=tornado `
+            --nofollow-import-to=wx `
+            --nofollow-import-to=gi `
+            --nofollow-import-to=IPython `
+            --nofollow-import-to=jupyter `
+            --nofollow-import-to=notebook `
+            --nofollow-import-to=pytest `
+            --nofollow-import-to=setuptools `
+            --nofollow-import-to=xmlrpc `
+            --nofollow-import-to=ftplib `
+            --nofollow-import-to=imaplib `
+            --nofollow-import-to=poplib `
+            --nofollow-import-to=smtplib `
+            "--include-data-dir=images/mana=images/mana" `
+            "--include-data-dir=server/ui/templates=server/ui/templates" `
+            "--include-data-dir=server/ui/static=server/ui/static" `
+            "--include-data-files=config.json=config.json" `
+            --standalone `
+            --lto=yes `
+            "--jobs=$env:NUMBER_OF_PROCESSORS" `
+            --no-progressbar `
+            --python-flag=no_site `
+            --windows-console-mode=disable `
+            desktop/app.py
+        shell: pwsh
+
+      # ── Rename with .exe suffix for clarity ─────────────────────────────────
+      - name: Rename binary
+        run: |
+          Move-Item dist\mtg-collection-manager.exe dist\mtg-collection-manager-windows.exe -ErrorAction SilentlyContinue
+          if (-not (Test-Path dist\mtg-collection-manager-windows.exe)) {
+            Rename-Item dist\mtg-collection-manager dist\mtg-collection-manager-windows.exe
+          }
+        shell: pwsh
+
+      # ── Upload to GitHub Release ─────────────────────────────────────────────
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/mtg-collection-manager-windows.exe
+          tag_name: ${{ github.ref_name }}
