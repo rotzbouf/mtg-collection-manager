@@ -135,14 +135,10 @@ class FormatBansWidget(QWidget):
                 reason_item.setForeground(QColor("#cba6f7"))
                 name_item.setForeground(QColor("#cba6f7"))
 
-            for item in (name_item, status_item, reason_item):
+            for col, item in enumerate((name_item, status_item, reason_item)):
                 item.setData(Qt.ItemDataRole.UserRole, name)
                 item.setData(Qt.ItemDataRole.UserRole + 1, is_over)
-                self._table.setItem(row_idx, [name_item, status_item, reason_item].index(item), item)
-
-            self._table.setItem(row_idx, 0, name_item)
-            self._table.setItem(row_idx, 1, status_item)
-            self._table.setItem(row_idx, 2, reason_item)
+                self._table.setItem(row_idx, col, item)
 
         banned_count     = sum(1 for e in bans if e.get("status") == "banned")
         restricted_count = sum(1 for e in bans if e.get("status") == "restricted")
