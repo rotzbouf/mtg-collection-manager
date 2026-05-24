@@ -253,7 +253,7 @@ class DeckImproveWidget(QWidget):
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._table.setAlternatingRowColors(False)
-        self._table.currentRowChanged.connect(self._on_row_changed)
+        self._table.itemSelectionChanged.connect(self._on_selection_changed)
         splitter.addWidget(self._table)
 
         # Card detail panel (shows the "swap in" candidate)
@@ -300,7 +300,7 @@ class DeckImproveWidget(QWidget):
     async def _async_load_decks(self):
         from desktop.db import db
         try:
-            containers = await db.get_all_containers()
+            containers = await db.list_containers()
         except Exception as exc:
             logger.error("DeckImprove: failed to load containers: %s", exc)
             return
@@ -492,7 +492,8 @@ class DeckImproveWidget(QWidget):
     # Actions                                                               #
     # ------------------------------------------------------------------ #
 
-    def _on_row_changed(self, row: int):
+    def _on_selection_changed(self):
+        row = self._table.currentRow()
         if 0 <= row < len(self._proposals):
             cand = self._proposals[row]["candidate"]
             self._detail.set_card(cand)
