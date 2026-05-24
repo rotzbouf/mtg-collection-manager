@@ -12,7 +12,9 @@ that adds a Discord bot and a browser-based web UI sharing the same database.
 |---|---|
 | **Card Scanner** | Webcam OCR (EasyOCR + OpenCV) — scan a physical card and it resolves via Scryfall automatically |
 | **Dual price sources** | Scryfall EUR/USD prices + Cardmarket Trend/Avg30 from the official CM price guide (~25 MB, cached locally) |
-| **Intelligent Deck Builder** | Builds Commander and 60-card decks from your collection; detects archetypes, scores synergy, learns from your existing decks |
+| **Intelligent Deck Builder** | Builds Commander and 60-card decks from your collection; detects archetypes, scores synergy, learns from your existing decks, and incorporates competitive meta data |
+| **Improve Deck** | Proposes data-backed card swaps for existing decks using competitive meta scores; physically swaps containers when accepted |
+| **Double-Faced Card support** | Front and back face images, mana costs, and stats correctly extracted and displayed — with a Flip button in the card detail panel |
 | **Deck Rating** | Composite S–F grade: synergy, mana-curve fit, role coverage (Ramp/Removal/Draw/Wipes/Win-cons), archetype coherence |
 | **Buylist Web Search** | Brave Search API discovers store buylist pages by keyword; matches against your collection; ranks stores by total payout and above-market offers |
 | **Format Legality** | Tracks bans across Standard, Pioneer, Modern, Legacy, Vintage, Commander — with Vintage restricted support |
@@ -62,6 +64,23 @@ The database (`db/mtg_collection.db`) is created automatically on first launch.
 
 > **First scan:** EasyOCR downloads its language models (~150 MB) on the very first card scan. This happens once and is cached automatically.
 
+### Pre-built binaries
+
+Download the latest release from the [Releases page](https://github.com/rotzbouf/mtg-collection-manager/releases):
+
+| Platform | File |
+|---|---|
+| Linux (x86-64) | `mtg-collection-manager-linux` — run directly, no install needed |
+| Windows | `mtg-collection-manager-windows.exe` |
+| macOS (Apple Silicon) | `mtg-collection-manager-macos` |
+
+> **macOS note:** macOS will block the binary on first launch because it is not code-signed with an Apple Developer certificate. To allow it, right-click the file → **Open** and confirm, or run once in Terminal:
+> ```bash
+> xattr -d com.apple.quarantine mtg-collection-manager-macos
+> chmod +x mtg-collection-manager-macos
+> ./mtg-collection-manager-macos
+> ```
+
 ### Requirements
 
 | | |
@@ -87,8 +106,8 @@ Launch with `bash start_desktop.sh`. Requires a display (X11 or Wayland).
 | Section | What it contains |
 |---|---|
 | **Add / Scan** | Add Card (name / set / collector number lookup) · Scanner (webcam OCR) |
-| **Collection** | Collection browser · Containers · Overcount |
-| **Decks** | Deck Builder · Deck Analysis |
+| **Collection** | Collection browser · Containers · Overcount · Format Bans |
+| **Decks** | Deck Builder · Deck Analysis · Improve Deck |
 | **Search** | Full-text + multi-filter search across all fields |
 | **Buylists** | Manual buylist matching · Brave web search across multiple stores |
 | **Statistics** | Totals, rarity & language breakdown, top-10 by value, collection value chart |
@@ -104,6 +123,7 @@ Paginated card list with text search and ID lookup. Multi-select rows for batch 
 - **Price (EUR)** — Scryfall market price
 - **CM Trend (EUR)** — Cardmarket 7-day trend from the locally cached CM price guide
 - **Price (USD)** — Scryfall USD price
+- **↩ Flip** button — appears for double-faced cards; switches between front and back face image
 - **Price History** button — opens a EUR line chart for that specific card over time
 
 ---
@@ -118,7 +138,7 @@ Organise cards into named binders, boxes, decks, trade piles, etc. Browse cards 
 
 Three sub-tabs:
 
-- **Overcounted** — cards exceeding a configurable copy threshold
+- **Overcounted** — cards exceeding a configurable copy threshold; filter by language with the language dropdown
 - **Sell Candidates** — cards in overcount containers above a price threshold, sorted by value
 - **Bundle Builder** — create preset bundles (commons, uncommons, rares/mythics, by set) automatically split by language into separate containers
 
@@ -131,13 +151,31 @@ Builds Commander (99+1) or 60-card decks (Standard, Pioneer, Modern, Legacy, Vin
 **What makes it smart:**
 
 - **Up to 3 archetype variants** — detects the top archetypes in your card pool (Aggro, Control, Midrange, Ramp, Tokens, Graveyard, Combo, Spellslinger, Voltron) and builds one deck per archetype, all selectable in the UI
-- **Learns from your existing decks** — cards already in your saved deck containers receive a score boost proportional to how many decks they appear in; the stats line shows "Learned from N decks"
+- **Competitive meta integration** — fetches top-8 decklists from MTGTop8 and scores cards by frequency; meta-favoured cards receive a scoring bonus and nudge the archetype selection toward proven strategies
+- **Learns from your existing decks** — cards already in your saved deck containers receive a score boost proportional to how many decks they appear in; anchor cards (appearing in ≥ 2 of your decks) are pre-selected before curve-filling; the stats line shows "Learned from N decks"
 - **Role-slot guarantees** — always includes enough Ramp, Removal, Draw, and Win-cons before curve-filling (12/10/10/4 for Commander; 4/6/4 for 60-card)
-- **Pip-weighted land base** — basics distributed by mana-symbol frequency; non-basics scored and pulled from your collection (Command Tower priority, fetch/shock bonuses)
+- **Pip-weighted land base** — basics distributed by mana-symbol frequency; non-basics scored and pulled from your collection (Command Tower priority, fetch/shock bonuses); land base never claims the same physical card as the main deck
+- **Language-aware output** — displays the localised printed card name with the English name as an alias; language is a soft preference rather than a hard filter so the pool is never artificially restricted
 - **Commander synergy scoring** — tribal matching, trigger-pattern enablers, name-reference bonus
 - **Iterative refinement** — optional hill-climbing loop swaps weakest cards for better candidates until no improvement ≥ 3 points is available
 - **Power level filter** — Casual (≤ €5/card), Focused (no filter), Optimized; optional per-card price cap
 - **Deck Rating** — after every build the grade (S/A/B/C/D/F, 0–100) is shown inline in the stats bar
+- **Guaranteed totals** — always produces exactly 60 or 100 cards; pads with extra basics when the pool is shallow
+
+---
+
+### Improve Deck
+
+The **Improve Deck** tab proposes targeted card swaps for an existing deck container, backed by competitive meta data.
+
+1. Select any deck from the dropdown
+2. The app loads every non-land card and scores it against the meta database for the deck's format
+3. Weakest deck cards are paired with the best same-type candidates from your binders and boxes (never other decks)
+4. Proposals are ranked by score delta and colour-coded: **TIER 1** (dark green) and **TIER 2** (blue)
+5. Click a row to preview the candidate card in the detail panel (image included)
+6. Click **Accept** — a confirmation dialog lists both cards, then physically swaps their containers in the database
+
+Color identity is respected: only candidates that fit within the deck's color identity are proposed.
 
 ---
 
@@ -161,6 +199,17 @@ Analyse any container flagged as a deck:
 | Coherence | 20 % | Archetype detection confidence |
 
 Grades: **S** ≥ 90 · **A** ≥ 75 · **B** ≥ 60 · **C** ≥ 45 · **D** ≥ 30 · **F** < 30
+
+---
+
+### Double-Faced Cards
+
+Double-faced and modal double-faced cards are fully supported:
+
+- Front-face `mana_cost`, `printed_name`, `power`, and `toughness` are extracted from Scryfall's `card_faces` data (not just the top-level object)
+- The back-face image URL is stored in the database (`image_url_back` column, auto-migrated on startup)
+- A **↩ Flip** button appears in the card detail panel for any DFC; clicking it loads the back-face image
+- **Settings → Fix DFC data** — repairs existing collection entries that were added before DFC support; re-fetches the affected cards from Scryfall in one click
 
 ---
 
@@ -209,7 +258,7 @@ Keywords and API key are configured in **Settings → Buylists → Brave Web Sea
 
 - **Format bans table** rebuilt from fresh Scryfall legality data on every daily sync
 - Covers Standard, Pioneer, Modern, Legacy, **Vintage** (restricted list), Commander
-- **Settings → Bans** tab — view and manage per-format ban overrides for cards that aren't correctly classified
+- **Collection → Bans** tab — view and manage per-format ban overrides for cards that aren't correctly classified
 
 ---
 
@@ -229,6 +278,7 @@ Keywords and API key are configured in **Settings → Buylists → Brave Web Sea
 |---|---|
 | **Add by name** | Resolves EN or DE card names via Scryfall; auto-detects language |
 | **Card Scanner** | Webcam isolation (OpenCV) + OCR (EasyOCR CPU / pytesseract fallback); full debug trace mode |
+| **Double-Faced Cards** | Front and back face images, mana costs, power/toughness; Flip button in detail panel; DFC repair tool in Settings |
 | **Dual prices** | Scryfall EUR/USD + Cardmarket Trend/Avg30 — shown side by side in card detail |
 | **CM price sync** | Daily bulk download of Cardmarket price guide, cached locally; backfill for existing cards |
 | **Full-text search** | SQLite FTS5 across name, type, oracle text, set, flavour text, notes |
@@ -236,8 +286,11 @@ Keywords and API key are configured in **Settings → Buylists → Brave Web Sea
 | **Price history (per card)** | Daily EUR snapshots; chart dialog from any card detail panel |
 | **Collection value chart** | Aggregate EUR value over time in Statistics |
 | **Format legality** | Ban tracking for 6 formats with Vintage restricted support |
-| **Deck Builder** | Archetype variants, synergy scoring, role slots, pip-weighted lands, iterative refinement |
-| **Deck learning** | Boosts cards already proven in your existing deck containers |
+| **Deck Builder** | Archetype variants, synergy scoring, role slots, pip-weighted lands, iterative refinement, guaranteed 60/100 totals |
+| **Meta crawler** | Fetches top-8 decklists from MTGTop8; scores cards by competitive frequency; boosts deckbuilder and Improve Deck |
+| **Deck learning** | Boosts cards already proven in your existing deck containers; pre-selects anchor cards |
+| **Language-aware deckbuilder** | Shows localised card names; language is a soft sort (pool never restricted) |
+| **Improve Deck** | Meta-backed swap proposals for existing decks; accepts → physically swaps containers; color identity aware |
 | **Deck Rating** | S–F composite grade: synergy · curve fit · role coverage · coherence |
 | **Deck Analysis** | Commander header with SVG mana icons, archetype badges, curve chart |
 | **Buylists — Manual** | URL fetch or paste; BL vs. market color coding; card image preview |
@@ -246,8 +299,8 @@ Keywords and API key are configured in **Settings → Buylists → Brave Web Sea
 | **Export** | Moxfield CSV (default), full CSV, JSON |
 | **Import** | Moxfield CSV, bot-export CSV, bot-export JSON |
 | **Backup & restore** | Save / restore `.db` or `.db.xz`; card and container count preview |
-| **Local image cache** | Card images downloaded from Scryfall and cached locally |
-| **Resync** | Re-fetches Scryfall data (text, prices, image) for one or all cards |
+| **Local image cache** | Card images downloaded from Scryfall and cached locally; back-face images cached separately |
+| **Resync** | Re-fetches Scryfall data (text, prices, image) for one or all cards; dedicated DFC repair mode |
 
 ---
 
@@ -286,9 +339,12 @@ core/               Shared service layer (used by all interfaces)
     sixty.py        60-card deck builder
     refinement.py   Iterative hill-climbing refinement loop
     _roles.py       Role tagging (ramp, removal, draw, board wipe, win-con)
-    _mana.py        Pip-weighted land base builder
+    _mana.py        Pip-weighted land base builder (exclude_ids safety)
+    _cards.py       Card helpers: legality, color identity, type grouping, dedup
+    _pool.py        Pool filtering, diversity enforcement
+  meta_crawler.py   MTGTop8 competitive meta fetcher and card scorer
   brave_search.py   Brave Search API client (buylist URL discovery)
-  image_cache.py    Local card image cache
+  image_cache.py    Local card image cache (front + back face)
   sorting.py        Chaos sort key computation
   exporter.py       Moxfield CSV, full CSV, JSON serialisation
   importer.py       Moxfield CSV, full CSV, JSON parsing
@@ -301,8 +357,9 @@ desktop/            Native desktop app (PyQt6 + qasync)
     buylists.py     Manual + Brave web search buylist matching
     deck.py         Deck Builder page
     deck_analysis.py Deck Analysis page with rating badge
-    card_detail.py  Reusable card detail panel (dual prices, mana icons)
-    settings.py     Settings with CM prices, buylist sources, Brave API
+    deck_improve.py  Improve Deck — meta-backed swap proposals and container swaps
+    card_detail.py  Reusable card detail panel (dual prices, mana icons, Flip button)
+    settings.py     Settings with CM prices, buylist sources, Brave API, DFC repair
   dialogs/          Card, container, price-history dialogs
 
 server/             Server-only code
@@ -314,12 +371,13 @@ server/             Server-only code
 
 | Table / View | Purpose |
 |---|---|
-| `collection` | One row per physical card |
+| `collection` | One row per physical card (includes `image_url_back` for DFCs) |
 | `containers` | Named storage locations (type, deck_format, color_identity) |
 | `card_prices` | Normalised Scryfall EUR/USD prices per `scryfall_id` |
 | `cm_prices` | Cardmarket price guide cache per `cm_id` (low, trend, avg7, avg30, foil variants) |
 | `price_history` | Daily EUR price snapshots per `scryfall_id` |
 | `format_bans` | Format legality overrides per card + format |
+| `meta_card_scores` | Competitive meta scores per card name and format (from MTGTop8 crawler) |
 | `collection_fts` | FTS5 virtual table, auto-synced via triggers |
 | `collection_with_prices` | View joining collection + card_prices + cm_prices |
 
