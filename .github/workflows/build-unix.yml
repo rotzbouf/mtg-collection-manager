@@ -1,0 +1,166 @@
+name: Build Linux & macOS Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write   # needed to upload release assets
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            artifact: mtg-collection-manager-linux
+            nuitka_cache: ~/.cache/Nuitka
+          - os: macos-latest
+            artifact: mtg-collection-manager-macos
+            nuitka_cache: ~/Library/Caches/Nuitka
+
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+
+    steps:
+      # ── Checkout ────────────────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Python ──────────────────────────────────────────────────────────────
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # ── Cache: pip packages ──────────────────────────────────────────────────
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/Library/Caches/pip
+          key: pip-${{ matrix.os }}-${{ hashFiles('deps/requirements.txt') }}-torch-cpu
+          restore-keys: |
+            pip-${{ matrix.os }}-${{ hashFiles('deps/requirements.txt') }}-
+            pip-${{ matrix.os }}-
+
+      # ── Cache: Nuitka compilation cache ─────────────────────────────────────
+      - name: Cache Nuitka
+        uses: actions/cache@v4
+        with:
+          path: ${{ matrix.nuitka_cache }}
+          key: nuitka-${{ matrix.os }}-py312-${{ hashFiles('core/**/*.py', 'desktop/**/*.py', 'server/**/*.py', 'cogs/**/*.py') }}
+          restore-keys: |
+            nuitka-${{ matrix.os }}-py312-
+
+      # ── System deps: Linux ───────────────────────────────────────────────────
+      - name: Install system dependencies (Linux)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            tesseract-ocr tesseract-ocr-deu \
+            libgl1 libglib2.0-0 \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 \
+            libxkbcommon-x11-0 \
+            patchelf ccache
+
+      # ── System deps: macOS ───────────────────────────────────────────────────
+      - name: Install system dependencies (macOS)
+        if: startsWith(matrix.os, 'macos')
+        run: |
+          brew install tesseract tesseract-lang ccache
+
+      # ── Python dependencies ─────────────────────────────────────────────────
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # PyTorch CPU-only — GPU not available on runners
+          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          pip install -r deps/requirements.txt
+          pip install nuitka ordered-set zstandard
+
+      # ── Seed config ─────────────────────────────────────────────────────────
+      - name: Seed config.json
+        run: cp config.json.example config.json
+
+      # ── Nuitka build ─────────────────────────────────────────────────────────
+      - name: Build with Nuitka
+        run: |
+          VERSION=$(git describe --tags --always)
+          python -m nuitka \
+            --onefile \
+            --assume-yes-for-downloads \
+            --output-dir=dist \
+            --output-filename=${{ matrix.artifact }} \
+            "--onefile-tempdir-spec={CACHE_DIR}/mtg-collection-manager/$VERSION" \
+            --enable-plugin=pyqt6 \
+            --include-qt-plugins=sensible \
+            --follow-import-to=core \
+            --follow-import-to=desktop \
+            --follow-import-to=server \
+            --follow-import-to=cogs \
+            --include-package=easyocr \
+            --include-package=cv2 \
+            --include-package=torch \
+            --include-package=PIL \
+            --include-package=discord \
+            --include-package=aiohttp \
+            --include-package=aiosqlite \
+            --include-package=qasync \
+            --include-package=matplotlib \
+            --include-package=fastapi \
+            --include-package=uvicorn \
+            --include-package=starlette \
+            --include-package=pytesseract \
+            --include-package=anyio \
+            --include-package=scipy \
+            --nofollow-import-to=torch.cuda \
+            --nofollow-import-to=torch.backends.cuda \
+            --nofollow-import-to=torch.backends.cudnn \
+            --nofollow-import-to=torch.utils.tensorboard \
+            --nofollow-import-to=torch.distributed \
+            --nofollow-import-to=torch.optim \
+            --nofollow-import-to=torch.ao \
+            --nofollow-import-to=torch.jit \
+            --nofollow-import-to=torch.onnx \
+            --nofollow-import-to=torch.export \
+            --nofollow-import-to=torchaudio \
+            --nofollow-import-to=torchvision.models \
+            --nofollow-import-to=triton \
+            --nofollow-import-to=tkinter \
+            --nofollow-import-to=_tkinter \
+            --nofollow-import-to=tornado \
+            --nofollow-import-to=wx \
+            --nofollow-import-to=gi \
+            --nofollow-import-to=IPython \
+            --nofollow-import-to=jupyter \
+            --nofollow-import-to=notebook \
+            --nofollow-import-to=pytest \
+            --nofollow-import-to=setuptools \
+            --nofollow-import-to=xmlrpc \
+            --nofollow-import-to=ftplib \
+            --nofollow-import-to=imaplib \
+            --nofollow-import-to=poplib \
+            --nofollow-import-to=smtplib \
+            "--include-data-dir=images/mana=images/mana" \
+            "--include-data-dir=server/ui/templates=server/ui/templates" \
+            "--include-data-dir=server/ui/static=server/ui/static" \
+            "--include-data-files=config.json=config.json" \
+            --standalone \
+            --lto=yes \
+            --jobs=$(nproc 2>/dev/null || sysctl -n hw.logicalcpu) \
+            --no-progressbar \
+            --python-flag=no_site \
+            desktop/app.py
+
+      # ── Upload to GitHub Release ─────────────────────────────────────────────
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/${{ matrix.artifact }}
+          tag_name: ${{ github.ref_name }}
