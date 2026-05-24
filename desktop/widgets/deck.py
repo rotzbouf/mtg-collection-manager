@@ -283,11 +283,11 @@ class DeckWidget(QWidget):
         self._max_price_sb.setFixedWidth(90)
         opts_row.addWidget(self._max_price_sb)
         opts_row.addSpacing(16)
-        opts_row.addWidget(QLabel("Language (overcount):"))
+        opts_row.addWidget(QLabel("Preferred language:"))
         self._lang_cb = QComboBox()
         self._lang_cb.setToolTip(
-            "Cards from overcount containers are only included if they match this language.\n"
-            "Cards in regular containers (binder, box, …) are always included."
+            "When a card is available in this language, that copy is used.\n"
+            "If a card only exists in another language, it is still included."
         )
         self._lang_cb.addItem("Any", None)
         self._lang_cb.setMinimumWidth(140)
@@ -538,16 +538,14 @@ class DeckWidget(QWidget):
             self._stats_label.setText("")
             return
 
-        # Language filter: cards from overcount containers are only included
-        # when they match the selected preferred language.
-        # Cards from all other container types (binder, box, …) are always kept.
+        # Preferred language: stable-sort the pool so copies in the user's
+        # preferred language come before other-language copies of the same card.
+        # This means the deckbuilder naturally picks preferred-language copies
+        # first (name_first, deck_physical) while still counting all copies
+        # toward availability — no card is ever excluded for language alone.
         pref_lang = self._lang_cb.currentData()
         if pref_lang:
-            pool = [
-                c for c in pool
-                if c.get("container_type") != "overcount"
-                or (c.get("language") or "en") == pref_lang
-            ]
+            pool.sort(key=lambda c: (c.get("language") or "en") != pref_lang)
 
         self._pool = pool
 
