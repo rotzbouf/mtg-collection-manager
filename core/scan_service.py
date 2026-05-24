@@ -114,6 +114,7 @@ async def _resolve_from_ocr_results(
     """
     # ── Collector match (exact set + number → Scryfall) ───────────────────
     collector_card: Optional[dict] = None
+    collector_lang_fallback = False
     if collector_info.get("set_code") and collector_info.get("collector_number"):
         clang = collector_info.get("language") or "en"
         collector_card = await scryfall.get_by_collector(
@@ -123,10 +124,13 @@ async def _resolve_from_ocr_results(
             collector_card = await scryfall.get_by_collector(
                 collector_info["set_code"], collector_info["collector_number"], "en"
             )
+            if collector_card:
+                collector_lang_fallback = True
 
     # ── OCR name match (only when collector lookup failed) ────────────────
     ocr_card: Optional[dict] = None
     ocr_lang = "unknown"
+    ocr_lang_fallback = False
     corrected_name: Optional[str] = None
     if extracted_name and not collector_card:
         set_hint = collector_info.get("set_code")
@@ -142,6 +146,10 @@ async def _resolve_from_ocr_results(
                 ocr_card, ocr_lang = await scryfall.resolve_card(
                     corrected_name, set_code=set_hint
                 )
+        # resolve_card always tries German first; if it returned "en" the
+        # German lookup failed and English was used as a fallback.
+        if ocr_card and ocr_lang == "en":
+            ocr_lang_fallback = True
 
     footer_lang = collector_info.get("language")
     method_parts: list[str] = []
@@ -152,6 +160,8 @@ async def _resolve_from_ocr_results(
             f'{collector_info["set_code"]} #{collector_info["collector_number"]}'
         )
         method_parts.append(f"collector [{set_info}]")
+        if collector_lang_fallback:
+            method_parts.append(f"lang fallback: {clang} → en")
         if extracted_name:
             en = collector_card.get("name_en", "")
             de = collector_card.get("name_de") or collector_card.get("printed_name", "")
@@ -181,6 +191,8 @@ async def _resolve_from_ocr_results(
             )
         else:
             method_parts.append(f'OCR [{ocr_lang}]: "{extracted_name}"')
+        if ocr_lang_fallback:
+            method_parts.append("lang fallback: de → en")
         if footer_lang:
             method_parts.append(f"lang: {footer_lang} (footer)")
         return ocr_card, detected_lang, method_parts, extracted_name, collector_info
