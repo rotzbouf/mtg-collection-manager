@@ -354,7 +354,7 @@ class _CardsMixin:
         if exclude_container_types:
             placeholders = ",".join("?" * len(exclude_container_types))
             sql = f"""
-                SELECT c.*, ct.name as container_name
+                SELECT c.*, ct.name as container_name, ct.type as container_type
                 FROM collection_with_prices c
                 LEFT JOIN containers ct ON c.container_id = ct.id
                 WHERE ct.type IS NULL OR ct.type NOT IN ({placeholders})
@@ -365,7 +365,7 @@ class _CardsMixin:
         else:
             async with self._db.execute(
                 """
-                SELECT c.*, ct.name as container_name
+                SELECT c.*, ct.name as container_name, ct.type as container_type
                 FROM collection_with_prices c
                 LEFT JOIN containers ct ON c.container_id = ct.id
                 ORDER BY c.chaos_key
@@ -373,3 +373,19 @@ class _CardsMixin:
             ) as cur:
                 rows = await cur.fetchall()
         return [_row_to_dict(r) for r in rows]
+
+    async def get_collection_languages(self) -> list[tuple[str, int]]:
+        """Return [(language_code, card_count), ...] sorted by count descending.
+
+        Only returns languages that actually appear in the collection.
+        """
+        async with self._db.execute(
+            """
+            SELECT language, COUNT(*) AS cnt
+            FROM collection
+            WHERE language IS NOT NULL AND language != ''
+            GROUP BY language
+            ORDER BY cnt DESC
+            """
+        ) as cur:
+            return [(row[0], row[1]) for row in await cur.fetchall()]

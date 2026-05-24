@@ -17,6 +17,29 @@ from desktop.utils import color_identity_icon
 from qasync import asyncSlot
 
 
+# ── Language code → display name ─────────────────────────────────────────────
+
+_LANG_NAMES: dict[str, str] = {
+    "en":      "English",
+    "de":      "German",
+    "fr":      "French",
+    "es":      "Spanish",
+    "it":      "Italian",
+    "pt":      "Portuguese",
+    "ja":      "Japanese",
+    "ko":      "Korean",
+    "ru":      "Russian",
+    "zh-Hans": "Chinese (Simplified)",
+    "zh-Hant": "Chinese (Traditional)",
+    "ar":      "Arabic",
+    "he":      "Hebrew",
+    "la":      "Latin",
+    "grc":     "Ancient Greek",
+    "sa":      "Sanskrit",
+    "ph":      "Phyrexian",
+}
+
+
 # ── HTML decklist renderer ────────────────────────────────────────────────────
 
 _TYPE_COLORS = {
@@ -260,6 +283,16 @@ class DeckWidget(QWidget):
         self._max_price_sb.setFixedWidth(90)
         opts_row.addWidget(self._max_price_sb)
         opts_row.addSpacing(16)
+        opts_row.addWidget(QLabel("Language (overcount):"))
+        self._lang_cb = QComboBox()
+        self._lang_cb.setToolTip(
+            "Cards from overcount containers are only included if they match this language.\n"
+            "Cards in regular containers (binder, box, …) are always included."
+        )
+        self._lang_cb.addItem("Any", None)
+        self._lang_cb.setMinimumWidth(140)
+        opts_row.addWidget(self._lang_cb)
+        opts_row.addSpacing(16)
         self._refine_cb = QCheckBox("Iterative Refinement")
         self._refine_cb.setToolTip(
             "After building, repeatedly swap low-fit cards for better ones until stable"
@@ -398,6 +431,26 @@ class DeckWidget(QWidget):
             self._strategy_cb.addItem(f"{display}  ({count} cards)", key)
         self._strategy_cb.blockSignals(False)
 
+        # Language dropdown — populate from the collection's distinct languages
+        try:
+            langs = await db.get_collection_languages()
+        except Exception:
+            langs = []
+        prev_lang = self._lang_cb.currentData()
+        self._lang_cb.blockSignals(True)
+        self._lang_cb.clear()
+        self._lang_cb.addItem("Any", None)
+        for code, cnt in langs:
+            label = f"{_LANG_NAMES.get(code, code.upper())}  ({cnt})"
+            self._lang_cb.addItem(label, code)
+        # Restore previous selection if still available
+        if prev_lang:
+            for i in range(self._lang_cb.count()):
+                if self._lang_cb.itemData(i) == prev_lang:
+                    self._lang_cb.setCurrentIndex(i)
+                    break
+        self._lang_cb.blockSignals(False)
+
     def _populate_cmd_combo(self, filter_text: str):
         filt = filter_text.strip().lower()
         prev_id = None
@@ -484,6 +537,17 @@ class DeckWidget(QWidget):
             self._build_btn.setEnabled(True)
             self._stats_label.setText("")
             return
+
+        # Language filter: cards from overcount containers are only included
+        # when they match the selected preferred language.
+        # Cards from all other container types (binder, box, …) are always kept.
+        pref_lang = self._lang_cb.currentData()
+        if pref_lang:
+            pool = [
+                c for c in pool
+                if c.get("container_type") != "overcount"
+                or (c.get("language") or "en") == pref_lang
+            ]
 
         self._pool = pool
 
