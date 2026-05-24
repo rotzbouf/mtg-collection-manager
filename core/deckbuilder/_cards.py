@@ -105,6 +105,22 @@ def curve_analysis(nonland_cards: list[tuple[dict, int]]) -> dict[int, int]:
     return buckets
 
 
+def _dedup_physical(cards: list[dict]) -> list[dict]:
+    """Remove entries with duplicate DB IDs, keeping the first occurrence.
+
+    Cards with no ``id`` (e.g. missing basics) are always kept.
+    """
+    seen: set = set()
+    result: list[dict] = []
+    for c in cards:
+        card_id = c.get("id")
+        if card_id is None or card_id not in seen:
+            result.append(c)
+            if card_id is not None:
+                seen.add(card_id)
+    return result
+
+
 def get_available_strategies(pool: list[dict]) -> list[tuple[str, str, int]]:
     """Return (key, display_label, card_count) triples for every theme present in pool."""
     theme_hits: Counter = Counter()

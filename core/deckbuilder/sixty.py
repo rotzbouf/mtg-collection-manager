@@ -4,7 +4,7 @@ from typing import Optional
 
 from ._cards import (
     _is_pool_eligible, _max_copies, color_identity,
-    get_card_themes, curve_analysis,
+    get_card_themes, curve_analysis, _dedup_physical,
 )
 from ._roles import tag_card_roles, _fill_role_slots
 from ._mana import _build_land_base
@@ -134,8 +134,13 @@ def _build_60_core(
     nonland_shortfall = max(0, target_nonland - actual_nonland)
     adjusted_lands  = target_lands + nonland_shortfall
 
+    deck_physical = _dedup_physical(deck_physical)
+
     nonland_for_pips = [c for c, _ in deck_cards]
-    land_base = _build_land_base(pool, ci, nonland_for_pips, adjusted_lands, fmt)
+    land_base = _build_land_base(
+        pool, ci, nonland_for_pips, adjusted_lands, fmt,
+        exclude_ids={c.get("id") for c in deck_physical if c.get("id")},
+    )
     nonbasic_lands         = land_base["nonbasic_lands"]
     basics_from_collection = land_base["basics_from_collection"]
     basics_missing         = land_base["basics_missing"]

@@ -1,4 +1,6 @@
 """Mana pip analysis and land base construction."""
+from typing import Optional
+
 from ._cards import _is_pool_eligible, color_identity
 from ._constants import COLOR_BASICS
 
@@ -42,16 +44,22 @@ def _pip_weighted_land_split(
 
 
 def _take_basics_from_pool(
-    pool: list[dict], needed: dict[str, int]
+    pool: list[dict],
+    needed: dict[str, int],
+    exclude_ids: Optional[set] = None,
 ) -> tuple[list[dict], dict[str, int]]:
+    _excl = exclude_ids or set()
     still_needed = {k: v for k, v in needed.items() if v > 0}
     taken: list[dict] = []
     for card in pool:
         if not still_needed:
             break
+        if card.get("id") in _excl:
+            continue
         name = card.get("name_en") or ""
         if name in still_needed:
             taken.append(card)
+            _excl.add(card.get("id"))  # mark as used
             still_needed[name] -= 1
             if still_needed[name] == 0:
                 del still_needed[name]
@@ -64,12 +72,20 @@ def _build_land_base(
     nonland_deck: list[dict],
     target_lands: int,
     fmt: str,
+    exclude_ids: Optional[set] = None,
 ) -> dict:
-    """Return nonbasic_lands, basics_from_collection, basics_missing."""
+    """Return nonbasic_lands, basics_from_collection, basics_missing.
+
+    exclude_ids: set of DB card IDs already used by the main deck so the land
+    base never claims the same physical card twice.
+    """
+    _excl = exclude_ids or set()
     max_nonbasics = 14 if fmt == "commander" else 8
 
     nonbasic_candidates: list[dict] = []
     for card in pool:
+        if card.get("id") in _excl:
+            continue
         tl = card.get("type_line") or ""
         if "Land" not in tl or "Basic" in tl:
             continue
@@ -120,7 +136,9 @@ def _build_land_base(
     elif basics_needed > 0:
         desired_basics["Wastes"] = basics_needed
 
-    basics_from_collection, basics_missing = _take_basics_from_pool(pool, desired_basics)
+    # Accumulate IDs used by selected nonbasics so basics never reuse the same card
+    used_land_ids: set = (_excl | {c.get("id") for c in selected_nonbasics if c.get("id")})
+    basics_from_collection, basics_missing = _take_basics_from_pool(pool, desired_basics, used_land_ids)
 
     return {
         "nonbasic_lands":         selected_nonbasics,

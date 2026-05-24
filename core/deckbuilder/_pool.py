@@ -56,9 +56,20 @@ def _enforce_diversity(
             key=lambda c: score_card(c, sfmt),
             reverse=True,
         )
-        for c in candidates[:needed]:
+        # Iterate the full candidates list rather than slicing up-front: the
+        # pool may contain multiple physical copies of the same card name that
+        # all passed the pre-filter snapshot.  We update deck_names inside the
+        # loop so duplicates are skipped as soon as the first copy is taken.
+        added_this_type = 0
+        for c in candidates:
+            if added_this_type >= needed:
+                break
+            name_c = (c.get("name_en") or "").lower()
+            if name_c in deck_names:
+                continue          # already have this name (or a dupe physical copy)
             additions.append(c)
-            deck_names.add((c.get("name_en") or "").lower())
+            deck_names.add(name_c)
+            added_this_type += 1
 
     if not additions:
         return deck

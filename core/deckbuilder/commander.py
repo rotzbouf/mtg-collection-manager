@@ -4,7 +4,7 @@ from typing import Optional
 
 from ._cards import (
     is_legal, color_identity, get_card_themes,
-    is_commander_eligible, _type_group, curve_analysis,
+    is_commander_eligible, _type_group, curve_analysis, _dedup_physical,
 )
 from ._roles import tag_card_roles, _fill_role_slots, _commander_synergy_score
 from ._mana import _build_land_base
@@ -127,7 +127,10 @@ def _build_commander_for_archetype(
     nonland_shortfall = max(0, target_nonland - actual_nonland)
     adjusted_lands    = target_lands + nonland_shortfall
 
-    land_base = _build_land_base(pool, ci, deck, adjusted_lands, "commander")
+    land_base = _build_land_base(
+        pool, ci, deck, adjusted_lands, "commander",
+        exclude_ids={c.get("id") for c in deck if c.get("id")},
+    )
     nonbasic_lands         = land_base["nonbasic_lands"]
     basics_from_collection = land_base["basics_from_collection"]
     basics_missing         = land_base["basics_missing"]

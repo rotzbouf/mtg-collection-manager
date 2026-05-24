@@ -4,7 +4,7 @@ from __future__ import annotations
 from collections import Counter
 from typing import Optional
 
-from ._cards import _is_pool_eligible, is_legal, color_identity, curve_analysis, _max_copies
+from ._cards import _is_pool_eligible, is_legal, color_identity, curve_analysis, _max_copies, _dedup_physical
 from ._roles import tag_card_roles
 from ._mana import _build_land_base
 from ._pool import _apply_power_level_filter
@@ -207,6 +207,7 @@ def iterative_refine(
                     deck_physical.extend(name_all_pool.get(nm, [c])[n:n + can_add])
                     total_nl += can_add
 
+        deck_physical = _dedup_physical(deck_physical)
         result["deck"]          = new_deck
         result["deck_physical"] = deck_physical
 
@@ -219,7 +220,8 @@ def iterative_refine(
         for c, _ in new_deck:
             ci_set |= set(color_identity(c))
         land_base = _build_land_base(
-            pool, frozenset(ci_set), [c for c, _ in new_deck], adjusted_lands, fmt_key
+            pool, frozenset(ci_set), [c for c, _ in new_deck], adjusted_lands, fmt_key,
+            exclude_ids={c.get("id") for c in deck_physical if c.get("id")},
         )
         result["nonbasic_lands"]         = land_base["nonbasic_lands"]
         result["basics_from_collection"] = land_base["basics_from_collection"]
@@ -267,7 +269,10 @@ def iterative_refine(
         nonland_shortfall  = max(0, target_nonland_cmd - len(deck))
         adjusted_lands_cmd = target_lands_cmd + nonland_shortfall
 
-        land_base = _build_land_base(pool, ci, deck, adjusted_lands_cmd, "commander")
+        land_base = _build_land_base(
+            pool, ci, deck, adjusted_lands_cmd, "commander",
+            exclude_ids={c.get("id") for c in deck if c.get("id")},
+        )
         result["nonbasic_lands"]         = land_base["nonbasic_lands"]
         result["basics_from_collection"] = land_base["basics_from_collection"]
         result["basics_missing"]         = land_base["basics_missing"]
