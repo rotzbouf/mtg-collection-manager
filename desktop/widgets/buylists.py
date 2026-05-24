@@ -11,8 +11,9 @@ from PyQt6.QtWidgets import (
     QTextEdit, QTableWidget, QTableWidgetItem,
     QHeaderView, QSplitter, QFrame, QComboBox,
     QTabWidget, QProgressBar, QSpinBox,
+    QMenu, QMessageBox,
 )
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, QPoint
 from PyQt6.QtGui import QColor, QFont
 from qasync import asyncSlot
 
@@ -257,6 +258,7 @@ class BuylistsWidget(QWidget):
         self._matches: list[dict] = []   # matched rows (manual tab)
         self._search_results: list[dict] = []  # per-store results (search tab)
         self._selected_store_matches: list[dict] = []  # shown in detail table
+        self._containers: list[dict] = []  # all containers for move dialog
         self._build_ui()
 
     # ── UI ────────────────────────────────────────────────────────────────────
@@ -371,6 +373,10 @@ class BuylistsWidget(QWidget):
         self._sources_combo.currentIndexChanged.connect(self._on_source_selected)
         self._refresh_sources_btn.clicked.connect(self._load_sources)
         self._table.itemSelectionChanged.connect(self._on_row_selected)
+        self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._table.customContextMenuRequested.connect(
+            lambda pos: self._on_context_menu(self._table, self._matches, pos)
+        )
 
         return tab
 
@@ -474,6 +480,10 @@ class BuylistsWidget(QWidget):
         self._search_btn.clicked.connect(self._on_search)
         self._store_table.itemSelectionChanged.connect(self._on_store_selected)
         self._detail_table.itemSelectionChanged.connect(self._on_detail_row_selected)
+        self._detail_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._detail_table.customContextMenuRequested.connect(
+            lambda pos: self._on_context_menu(self._detail_table, self._selected_store_matches, pos)
+        )
 
         self._load_search_keywords()
         return tab
@@ -484,10 +494,17 @@ class BuylistsWidget(QWidget):
         self._db_ready = True
         self._match_btn.setEnabled(True)
         self._load_search_keywords()
+        self._reload_containers()
 
     def refresh(self):
         self._load_sources()
         self._load_search_keywords()
+        self._reload_containers()
+
+    @asyncSlot()
+    async def _reload_containers(self):
+        from desktop.db import db
+        self._containers = await db.list_containers()
 
     # ── Source helpers ────────────────────────────────────────────────────────
 
@@ -855,6 +872,94 @@ class BuylistsWidget(QWidget):
         self._render_table()
         self._update_summary()
         self._match_btn.setEnabled(True)
+
+    # ── Context menu — move to container ─────────────────────────────────────
+
+    def _on_context_menu(
+        self,
+        table: QTableWidget,
+        matches: list[dict],
+        pos: QPoint,
+    ):
+        item = table.itemAt(pos)
+        if item is None:
+            return
+        row = table.row(item)
+        name_item = table.item(row, 0)
+        if name_item is None:
+            return
+        match_idx = name_item.data(Qt.ItemDataRole.UserRole)
+        if match_idx is None or match_idx >= len(matches):
+            return
+        match = matches[match_idx]
+        cards = match.get("_cards", [])
+        if not cards:
+            return
+
+        menu = QMenu(self)
+        move_act = menu.addAction(
+            f"📦 Move {len(cards)} card(s) to container…"
+        )
+        action = menu.exec(table.viewport().mapToGlobal(pos))
+        if action == move_act:
+            self._do_move_to_container(cards)
+
+    @asyncSlot()
+    async def _do_move_to_container(self, cards: list[dict]):
+        from desktop.db import db
+        from PyQt6.QtWidgets import QDialog, QDialogButtonBox, QFormLayout
+
+        if not self._containers:
+            self._containers = await db.list_containers()
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Move cards to container")
+        dlg.setMinimumWidth(340)
+        layout = QVBoxLayout(dlg)
+
+        names = "\n".join(
+            f"  • {c.get('name_en') or c.get('printed_name') or '?'}"
+            for c in cards[:8]
+        )
+        if len(cards) > 8:
+            names += f"\n  … and {len(cards) - 8} more"
+        info = QLabel(f"Moving {len(cards)} card(s):\n{names}")
+        info.setStyleSheet("font-size: 11px; color: #aaa;")
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        form = QFormLayout()
+        cb = QComboBox()
+        for c in self._containers:
+            cb.addItem(f"{c['name']}  ({c.get('type', '')})", c["id"])
+        form.addRow("Target container:", cb)
+        layout.addLayout(form)
+
+        btns = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        layout.addWidget(btns)
+
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        target_id = cb.currentData()
+        target_name = cb.currentText()
+        card_ids = [c["id"] for c in cards if c.get("id")]
+        if not card_ids:
+            return
+
+        try:
+            moved = await db.move_cards_to_container(card_ids, target_id)
+            QMessageBox.information(
+                self, "Moved",
+                f"{moved} card(s) moved to '{target_name}'."
+            )
+            self._containers = await db.list_containers()
+        except Exception as exc:
+            QMessageBox.critical(self, "Error", f"Could not move cards:\n{exc}")
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
