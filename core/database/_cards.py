@@ -355,6 +355,84 @@ class _CardsMixin:
         ) as cur:
             return {row[0] for row in await cur.fetchall()}
 
+    # ------------------------------------------------------------------ #
+    # Deck Improve                                                          #
+    # ------------------------------------------------------------------ #
+
+    async def get_deck_cards_for_improve(
+        self, container_id: int, meta_format: str
+    ) -> list[dict]:
+        """Non-land, non-commander deck cards with their competitive meta score."""
+        async with self._db.execute(
+            """
+            SELECT c.id, c.name_en, c.printed_name, c.name_de,
+                   c.type_line, c.cmc, c.color_identity,
+                   c.container_id, ct.name AS container_name,
+                   COALESCE(mcs.score, 0)       AS meta_score,
+                   COALESCE(mcs.appearances, 0) AS meta_appearances
+            FROM collection c
+            LEFT JOIN containers ct        ON c.container_id = ct.id
+            LEFT JOIN meta_card_scores mcs ON lower(c.name_en) = mcs.card_name
+                                          AND mcs.format = ?
+            WHERE c.container_id = ?
+              AND c.type_line NOT LIKE '%Land%'
+              AND c.is_commander = 0
+            ORDER BY meta_score ASC, c.cmc
+            """,
+            (meta_format, container_id),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+    async def get_binder_cards_for_improve(
+        self, meta_format: str, exclude_container_id: int
+    ) -> list[dict]:
+        """Cards from binder/box/unassigned containers with a competitive meta score.
+
+        Excludes the deck being improved, and any other deck/commander containers.
+        """
+        async with self._db.execute(
+            """
+            SELECT c.id, c.name_en, c.printed_name, c.name_de,
+                   c.type_line, c.cmc, c.color_identity,
+                   c.container_id, ct.name AS container_name,
+                   mcs.score       AS meta_score,
+                   mcs.appearances AS meta_appearances
+            FROM collection c
+            JOIN  meta_card_scores mcs ON lower(c.name_en) = mcs.card_name
+                                      AND mcs.format = ?
+            LEFT JOIN containers ct    ON c.container_id = ct.id
+            WHERE c.container_id != ?
+              AND (ct.type IS NULL OR ct.type NOT IN ('commander', 'deck'))
+              AND c.type_line NOT LIKE '%Land%'
+            ORDER BY mcs.score DESC
+            """,
+            (meta_format, exclude_container_id),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+    async def swap_card_containers(self, card_id_a: int, card_id_b: int) -> None:
+        """Atomically swap the container_id of two collection rows."""
+        async with self._write_lock:
+            async with self._db.execute(
+                "SELECT id, container_id FROM collection WHERE id IN (?, ?)",
+                (card_id_a, card_id_b),
+            ) as cur:
+                rows = {row["id"]: row["container_id"] for row in await cur.fetchall()}
+
+            cont_a = rows.get(card_id_a)
+            cont_b = rows.get(card_id_b)
+            now = datetime.now(timezone.utc).isoformat()
+
+            await self._db.execute(
+                "UPDATE collection SET container_id = ?, updated_at = ? WHERE id = ?",
+                (cont_b, now, card_id_a),
+            )
+            await self._db.execute(
+                "UPDATE collection SET container_id = ?, updated_at = ? WHERE id = ?",
+                (cont_a, now, card_id_b),
+            )
+            await self._db.commit()
+
     async def get_all_image_refs(self) -> list[tuple[str, str]]:
         """Return unique (scryfall_id, image_url) pairs for all collection entries that have both."""
         async with self._db.execute(
