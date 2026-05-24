@@ -60,6 +60,7 @@ body{font-family:'Courier New',Courier,monospace;font-size:10pt;margin:8px;}
 .sec{font-weight:bold;margin-top:10px;margin-bottom:2px;}
 .cnt{font-size:8pt;font-weight:normal;color:#999;margin-left:4px;}
 .ct{color:#aaa;font-size:8pt;margin-left:6px;}
+.en{color:#888;font-size:8pt;margin-left:4px;font-style:italic;}
 .cmd-line{color:#f57f17;font-weight:bold;}
 .miss{color:#c62828;font-style:italic;}
 p{margin:1px 0;}
@@ -72,10 +73,20 @@ def _he(s: str) -> str:
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def _card_html(n: int, name: str, container: str, extra_class: str = "") -> str:
+def _card_html(n: int, phys_name: str, en_name: str, container: str,
+               extra_class: str = "") -> str:
+    """Render one card line.
+
+    *phys_name* is the name as printed on the physical card (may be localised).
+    *en_name*   is the English card name shown in small italic when it differs.
+    """
     cls = f' class="{extra_class}"' if extra_class else ""
+    alias = (
+        f'<span class="en">[{_he(en_name)}]</span>'
+        if en_name and en_name != phys_name else ""
+    )
     return (
-        f'<p{cls}>{n} {_he(name)}'
+        f'<p{cls}>{n} {_he(phys_name)}{alias}'
         f'<span class="ct">&#128230; {_he(container)}</span></p>'
     )
 
@@ -90,13 +101,19 @@ def _section(label: str, count: int, color: str) -> str:
 def _decklist_html(result: dict, fmt: str) -> str:
     from core.deckbuilder._cards import _type_group
 
-    def _dname(card: dict) -> str:
-        en  = card.get("name_en") or "?"
-        loc = card.get("printed_name") or card.get("name_de") or en
-        return f"{loc}  //  {en}" if loc != en else en
+    def _phys(card: dict) -> str:
+        """Name as printed on the physical card (localised when available)."""
+        en = card.get("name_en") or "?"
+        return card.get("printed_name") or card.get("name_de") or en
+
+    def _en(card: dict) -> str:
+        return card.get("name_en") or "?"
 
     def _cont(card: dict) -> str:
         return card.get("container_name") or "—"
+
+    def _line(n: int, card: dict, extra_class: str = "") -> str:
+        return _card_html(n, _phys(card), _en(card), _cont(card), extra_class)
 
     parts = [f"<html><head>{_HTML_STYLE}</head><body>"]
 
@@ -109,13 +126,13 @@ def _decklist_html(result: dict, fmt: str) -> str:
             f'<p class="hdr">Commander · {_he(arch)} · {_he(pl)} · Synergy&nbsp;{synergy:.1f}</p>'
         )
         parts.append('<p class="sec" style="color:#f57f17;">Commander</p>')
-        parts.append(_card_html(1, _dname(cmd), _cont(cmd), "cmd-line"))
+        parts.append(_line(1, cmd, "cmd-line"))
 
         for group, cards in sorted(result.get("groups", {}).items()):
             color = _TYPE_COLORS.get(group, "#555")
             parts.append(_section(group, len(cards), color))
             for c in cards:
-                parts.append(_card_html(1, _dname(c), _cont(c)))
+                parts.append(_line(1, c))
 
         nonbasic = result.get("nonbasic_lands") or []
         basics   = result.get("basics_from_collection") or []
@@ -124,9 +141,9 @@ def _decklist_html(result: dict, fmt: str) -> str:
         if land_cnt:
             parts.append(_section("Lands", land_cnt, _TYPE_COLORS["Lands"]))
             for c in nonbasic:
-                parts.append(_card_html(1, _dname(c), _cont(c)))
+                parts.append(_line(1, c))
             for c in basics:
-                parts.append(_card_html(1, _dname(c), _cont(c)))
+                parts.append(_line(1, c))
             for land, n in sorted(missing.items()):
                 parts.append(
                     f'<p class="miss">{n} {_he(land)} — not in collection</p>'
@@ -149,7 +166,7 @@ def _decklist_html(result: dict, fmt: str) -> str:
             color = _TYPE_COLORS.get(group, "#555")
             parts.append(_section(group, total, color))
             for c, n in group_cards:
-                parts.append(_card_html(n, _dname(c), _cont(c)))
+                parts.append(_line(n, c))
 
         nonbasic = result.get("nonbasic_lands") or []
         basics   = result.get("basics_from_collection") or []
@@ -158,9 +175,9 @@ def _decklist_html(result: dict, fmt: str) -> str:
         if land_cnt:
             parts.append(_section("Lands", land_cnt, _TYPE_COLORS["Lands"]))
             for c in nonbasic:
-                parts.append(_card_html(1, _dname(c), _cont(c)))
+                parts.append(_line(1, c))
             for c in basics:
-                parts.append(_card_html(1, _dname(c), _cont(c)))
+                parts.append(_line(1, c))
             for land, n in sorted(missing.items()):
                 parts.append(
                     f'<p class="miss">{n} {_he(land)} — not in collection</p>'
