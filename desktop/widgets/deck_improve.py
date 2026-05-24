@@ -16,13 +16,13 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView,
     QCheckBox, QSplitter, QMessageBox, QAbstractItemView, QFrame,
+    QSizePolicy,
 )
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QColor, QFont
+from PyQt6.QtGui import QColor, QFont, QPixmap
 from qasync import asyncSlot
 
-from desktop.widgets.card_detail import CardDetailPanel
-from desktop.utils import display_name
+from desktop.utils import display_name, async_pixmap
 
 logger = logging.getLogger(__name__)
 
@@ -159,18 +159,131 @@ def _build_proposals(
     return proposals
 
 
+# ── Compact card preview panel ─────────────────────────────────────────────────
+
+_IMG_W, _IMG_H = 200, 279   # ~71 % of standard 280×390 — card art stays readable
+
+
+class _CompactCardPanel(QWidget):
+    """Minimal card panel: image + name + set/collector-number + location.
+
+    Designed for the swap view where the user needs a quick visual reference
+    and the collector number to physically locate the card.
+    """
+
+    _PLACEHOLDER = "color: #444; border: 1px solid #333; border-radius: 6px;"
+
+    def __init__(self, title: str, parent=None):
+        super().__init__(parent)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+        self._current_card: dict | None = None
+        self._build_ui(title)
+        self.clear()
+
+    def _build_ui(self, title: str):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(4, 4, 4, 4)
+        root.setSpacing(4)
+
+        # Section title
+        self._title_lbl = QLabel(title)
+        self._title_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._title_lbl.setStyleSheet("font-size: 11px; color: #888;")
+        root.addWidget(self._title_lbl)
+
+        # Card name
+        self._name_lbl = QLabel()
+        self._name_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._name_lbl.setWordWrap(True)
+        self._name_lbl.setStyleSheet("font-size: 12px; font-weight: bold; color: #e0e0e0;")
+        root.addWidget(self._name_lbl)
+
+        # Card image
+        self._img_lbl = QLabel()
+        self._img_lbl.setFixedSize(_IMG_W, _IMG_H)
+        self._img_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._img_lbl.setStyleSheet(self._PLACEHOLDER)
+        root.addWidget(self._img_lbl, alignment=Qt.AlignmentFlag.AlignHCenter)
+
+        # Set + collector number — most important reference line
+        self._set_lbl = QLabel()
+        self._set_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._set_lbl.setStyleSheet(
+            "font-size: 13px; font-weight: bold; color: #90caf9; letter-spacing: 1px;"
+        )
+        root.addWidget(self._set_lbl)
+
+        # Location / container
+        self._loc_lbl = QLabel()
+        self._loc_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._loc_lbl.setStyleSheet("font-size: 11px; color: #aaa;")
+        root.addWidget(self._loc_lbl)
+
+        root.addStretch()
+
+    # ------------------------------------------------------------------ #
+
+    def set_card(self, card: dict):
+        self._current_card = card
+        self._name_lbl.setText(display_name(card))
+
+        set_code = (card.get("set_code") or "").upper()
+        cnum     = card.get("collector_number") or "?"
+        set_name = card.get("set_name") or ""
+        self._set_lbl.setText(f"{set_code} #{cnum}")
+        self._set_lbl.setToolTip(set_name)
+
+        loc = card.get("container_name") or ""
+        self._loc_lbl.setText(f"📦 {loc}" if loc else "")
+
+        self._img_lbl.setText("…")
+        self._img_lbl.setPixmap(QPixmap())
+        _bg(self._load_image(card))
+
+    def clear(self):
+        self._current_card = None
+        self._name_lbl.setText("")
+        self._set_lbl.setText("")
+        self._loc_lbl.setText("")
+        self._img_lbl.setText("")
+        self._img_lbl.setPixmap(QPixmap())
+
+    async def _load_image(self, card: dict):
+        scryfall_id = card.get("scryfall_id")
+        if not scryfall_id:
+            self._img_lbl.setText("No image")
+            return
+        try:
+            pixmap = await async_pixmap(scryfall_id, card.get("image_url"))
+        except Exception:
+            self._img_lbl.setText("No image")
+            return
+        if pixmap and not pixmap.isNull():
+            scaled = pixmap.scaled(
+                _IMG_W, _IMG_H,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            self._img_lbl.setPixmap(scaled)
+            self._img_lbl.setText("")
+        else:
+            self._img_lbl.setText("No image")
+
+
 # ── Widget ─────────────────────────────────────────────────────────────────────
 
 _COL_REMOVE  = 0
-_COL_TYPE_R  = 1
-_COL_SCORE_R = 2
-_COL_ARROW   = 3
-_COL_ADD     = 4
-_COL_LOC     = 5
-_COL_SCORE_A = 6
-_COL_DELTA   = 7
-_COL_ACCEPT  = 8
-_N_COLS      = 9
+_COL_SET_R   = 1   # set + collector# of the card to remove
+_COL_TYPE_R  = 2
+_COL_SCORE_R = 3
+_COL_ARROW   = 4
+_COL_ADD     = 5
+_COL_SET_A   = 6   # set + collector# of the swap-in candidate
+_COL_LOC     = 7
+_COL_SCORE_A = 8
+_COL_DELTA   = 9
+_COL_ACCEPT  = 10
+_N_COLS      = 11
 
 _TIER1_BG = QColor("#1e3a1e")   # strong improvement – dark green
 _TIER2_BG = QColor("#1a1a2e")   # moderate – subtle blue-grey
@@ -239,23 +352,29 @@ class DeckImproveWidget(QWidget):
         self._status_lbl.setStyleSheet("color: #888; font-size: 12px;")
         root.addWidget(self._status_lbl)
 
-        # ── Main split: table (left) + card detail (right) ────────────── #
+        # ── Main split: removal panel | table | candidate panel ──────────── #
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
-        # Proposals table
+        # Left: compact panel for the card being removed
+        self._remove_panel = _CompactCardPanel("Remove from deck")
+        splitter.addWidget(self._remove_panel)
+
+        # Centre: proposals table
         self._table = QTableWidget(0, _N_COLS)
         self._table.setHorizontalHeaderLabels([
-            "Remove from deck", "Type", "Score",
+            "Remove from deck", "Set / #", "Type", "Score",
             "→",
-            "Swap in", "Location", "Score", "Δ Score",
+            "Swap in", "Set / #", "Location", "Score", "Δ Score",
             "",
         ])
         hh = self._table.horizontalHeader()
         hh.setSectionResizeMode(_COL_REMOVE,  QHeaderView.ResizeMode.Stretch)
+        hh.setSectionResizeMode(_COL_SET_R,   QHeaderView.ResizeMode.ResizeToContents)
         hh.setSectionResizeMode(_COL_TYPE_R,  QHeaderView.ResizeMode.ResizeToContents)
         hh.setSectionResizeMode(_COL_SCORE_R, QHeaderView.ResizeMode.ResizeToContents)
         hh.setSectionResizeMode(_COL_ARROW,   QHeaderView.ResizeMode.ResizeToContents)
         hh.setSectionResizeMode(_COL_ADD,     QHeaderView.ResizeMode.Stretch)
+        hh.setSectionResizeMode(_COL_SET_A,   QHeaderView.ResizeMode.ResizeToContents)
         hh.setSectionResizeMode(_COL_LOC,     QHeaderView.ResizeMode.ResizeToContents)
         hh.setSectionResizeMode(_COL_SCORE_A, QHeaderView.ResizeMode.ResizeToContents)
         hh.setSectionResizeMode(_COL_DELTA,   QHeaderView.ResizeMode.ResizeToContents)
@@ -267,23 +386,13 @@ class DeckImproveWidget(QWidget):
         self._table.itemSelectionChanged.connect(self._on_selection_changed)
         splitter.addWidget(self._table)
 
-        # Card detail panel (shows the "swap in" candidate)
-        right_frame = QFrame()
-        right_frame.setFrameShape(QFrame.Shape.NoFrame)
-        right_layout = QVBoxLayout(right_frame)
-        right_layout.setContentsMargins(4, 0, 0, 0)
-        right_layout.setSpacing(4)
+        # Right: compact panel for the swap-in candidate
+        self._candidate_panel = _CompactCardPanel("Swap in")
+        splitter.addWidget(self._candidate_panel)
 
-        detail_lbl = QLabel("Candidate card")
-        detail_lbl.setStyleSheet("font-size: 11px; color: #888;")
-        right_layout.addWidget(detail_lbl)
-
-        self._detail = CardDetailPanel(show_buttons=False)
-        right_layout.addWidget(self._detail)
-
-        splitter.addWidget(right_frame)
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 1)
+        splitter.setStretchFactor(0, 1)   # removal panel
+        splitter.setStretchFactor(1, 4)   # table
+        splitter.setStretchFactor(2, 1)   # candidate panel
 
         root.addWidget(splitter, stretch=1)
 
@@ -468,10 +577,16 @@ class DeckImproveWidget(QWidget):
 
             center = Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
 
+            def _set_ref(card: dict) -> str:
+                code = (card.get("set_code") or "").upper()
+                cnum = card.get("collector_number") or "?"
+                return f"{code} #{cnum}"
+
             # Remove col
             remove_item = _item(display_name(dc))
             remove_item.setFont(bold)
             self._table.setItem(row, _COL_REMOVE,  remove_item)
+            self._table.setItem(row, _COL_SET_R,   _item(_set_ref(dc), center))
             self._table.setItem(row, _COL_TYPE_R,  _item(_type_key(dc), center))
             self._table.setItem(row, _COL_SCORE_R, _item(f"{dc.get('meta_score', 0):.1f}", center))
             self._table.setItem(row, _COL_ARROW,   _item("→", center))
@@ -483,6 +598,7 @@ class DeckImproveWidget(QWidget):
             add_item.setFont(bold)
             add_item.setForeground(QColor("#81c784"))
             self._table.setItem(row, _COL_ADD,     add_item)
+            self._table.setItem(row, _COL_SET_A,   _item(_set_ref(cand), center))
             self._table.setItem(row, _COL_LOC,     _item(f"📦 {loc}", center))
             self._table.setItem(row, _COL_SCORE_A, _item(f"{cand.get('meta_score', 0):.1f}", center))
             self._table.setItem(row, _COL_DELTA,   _item(f"+{prop['delta']:.1f}", center))
@@ -497,7 +613,8 @@ class DeckImproveWidget(QWidget):
             self._table.setCellWidget(row, _COL_ACCEPT, accept_btn)
 
         self._table.blockSignals(False)
-        self._detail.clear()
+        self._remove_panel.clear()
+        self._candidate_panel.clear()
 
     # ------------------------------------------------------------------ #
     # Actions                                                               #
@@ -506,10 +623,12 @@ class DeckImproveWidget(QWidget):
     def _on_selection_changed(self):
         row = self._table.currentRow()
         if 0 <= row < len(self._proposals):
-            cand = self._proposals[row]["candidate"]
-            self._detail.set_card(cand)
+            prop = self._proposals[row]
+            self._remove_panel.set_card(prop["deck_card"])
+            self._candidate_panel.set_card(prop["candidate"])
         else:
-            self._detail.clear()
+            self._remove_panel.clear()
+            self._candidate_panel.clear()
 
     def _on_accept(self, row: int):
         if row >= len(self._proposals):
