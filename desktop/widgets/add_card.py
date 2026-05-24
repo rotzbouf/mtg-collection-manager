@@ -410,6 +410,18 @@ class AddCardWidget(QWidget):
                 self._log(f"✗ Exception: {exc}")
                 self._search_btn.setEnabled(True)
                 return
+            if card is None and effective_lang != "en":
+                # No print in this language — fall back to English edition
+                self._log(f"✗ Not found in '{effective_lang}' — retrying as English…")
+                try:
+                    card = await scryfall.get_by_collector(set_code.lower(), cn, "en")
+                except Exception as exc:
+                    self._log(f"✗ Fallback exception: {exc}")
+                    self._search_btn.setEnabled(True)
+                    return
+                if card is not None:
+                    card["language"] = effective_lang
+                    self._log(f"✓ Found via English fallback (language kept as '{effective_lang}').")
             self._search_btn.setEnabled(True)
             if card is None:
                 self._log("✗ Not found (404 or API error).")
