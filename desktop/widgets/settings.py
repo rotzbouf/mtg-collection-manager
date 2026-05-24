@@ -562,6 +562,73 @@ class SettingsWidget(QWidget):
         layout.addWidget(self._divider())
         layout.addSpacing(4)
 
+        # ── Competitive Meta Data ────────────────────────────────────────── #
+        layout.addWidget(self._section_header("Competitive Meta Data"))
+        layout.addWidget(QLabel(
+            "Crawl mtgtop8.com for competitive deck data.\n"
+            "Card scores derived from these decks improve deck builder suggestions."
+        ))
+
+        from PyQt6.QtWidgets import QSpinBox
+        meta_fmt_box = QGroupBox("Formats to crawl")
+        meta_fmt_layout = QHBoxLayout(meta_fmt_box)
+        meta_fmt_layout.setSpacing(6)
+        self._meta_format_cbs: dict[str, "QCheckBox"] = {}
+        for code, label in [
+            ("LE", "Legacy"), ("MO", "Modern"), ("ST", "Standard"),
+            ("VI", "Vintage"), ("PAU", "Pauper"), ("EDH", "Commander"), ("PI", "Pioneer"),
+        ]:
+            cb = QCheckBox(label)
+            cb.setChecked(code in ("LE", "MO", "ST", "PI"))
+            cb.setProperty("meta_code", code)
+            meta_fmt_layout.addWidget(cb)
+            self._meta_format_cbs[code] = cb
+        meta_fmt_layout.addStretch()
+        layout.addWidget(meta_fmt_box)
+
+        meta_opt_row = QHBoxLayout()
+        meta_opt_row.addWidget(QLabel("Max events per format:"))
+        self._meta_events_sb = QSpinBox()
+        self._meta_events_sb.setRange(1, 100)
+        self._meta_events_sb.setValue(15)
+        self._meta_events_sb.setFixedWidth(64)
+        meta_opt_row.addWidget(self._meta_events_sb)
+        meta_opt_row.addSpacing(16)
+        self._meta_mtgo_cb = QCheckBox("MTGO")
+        self._meta_mtgo_cb.setChecked(True)
+        self._meta_paper_cb = QCheckBox("Paper")
+        self._meta_paper_cb.setChecked(True)
+        meta_opt_row.addWidget(self._meta_mtgo_cb)
+        meta_opt_row.addWidget(self._meta_paper_cb)
+        meta_opt_row.addStretch()
+        layout.addLayout(meta_opt_row)
+
+        meta_btn_row = QHBoxLayout()
+        self._meta_crawl_btn  = QPushButton("🌐 Update meta")
+        self._meta_clear_btn  = QPushButton("🗑 Clear all meta data")
+        self._meta_clear_btn.setToolTip("Delete all crawled meta decks and scores from the database")
+        meta_btn_row.addWidget(self._meta_crawl_btn)
+        meta_btn_row.addWidget(self._meta_clear_btn)
+        meta_btn_row.addStretch()
+        layout.addLayout(meta_btn_row)
+
+        self._meta_progress = QProgressBar()
+        self._meta_progress.setTextVisible(False)
+        self._meta_progress.setFixedHeight(8)
+        self._meta_progress.setVisible(False)
+        layout.addWidget(self._meta_progress)
+
+        self._meta_status = QLabel("")
+        self._meta_status.setStyleSheet("color: #888; font-size: 12px;")
+        layout.addWidget(self._meta_status)
+
+        self._meta_crawl_btn.clicked.connect(self._on_meta_crawl)
+        self._meta_clear_btn.clicked.connect(self._on_meta_clear)
+
+        layout.addSpacing(4)
+        layout.addWidget(self._divider())
+        layout.addSpacing(4)
+
         # ── Export Collection ───────────────────────────────────────────── #
         layout.addWidget(self._section_header("Export Collection"))
         layout.addWidget(QLabel(
@@ -1443,6 +1510,111 @@ class SettingsWidget(QWidget):
             parts.append(f"{failed} errors")
         self._sync_status.setText("  ·  ".join(parts))
 
+    # ------------------------------------------------------------------ #
+    # Competitive Meta                                                      #
+    # ------------------------------------------------------------------ #
+
+    async def _load_meta_stats(self):
+        try:
+            from desktop.db import db
+            stats = await db.get_meta_stats()
+            total = stats.get("total_decks", 0)
+            last  = (stats.get("last_crawl") or "")[:10]
+            score_rows = stats.get("score_rows", 0)
+            fmt_parts = [f"{fmt}: {n}" for fmt, n in sorted(stats.get("deck_counts", {}).items())]
+            if total:
+                detail = "  |  ".join(fmt_parts) if fmt_parts else ""
+                self._meta_status.setText(
+                    f"{total} deck(s) stored  ·  {score_rows} card scores"
+                    + (f"  ·  last crawl: {last}" if last else "")
+                    + (f"\n{detail}" if detail else "")
+                )
+            else:
+                self._meta_status.setText("No meta data yet — click 'Update meta' to crawl.")
+        except Exception as exc:
+            self._meta_status.setText(f"Error loading meta stats: {exc}")
+
+    @asyncSlot()
+    async def _on_meta_crawl(self):
+        from desktop.db import db
+        from core.meta_crawler import crawl_formats
+
+        selected = [code for code, cb in self._meta_format_cbs.items() if cb.isChecked()]
+        if not selected:
+            QMessageBox.warning(self, "Meta crawl", "Select at least one format to crawl.")
+            return
+
+        self._meta_crawl_btn.setEnabled(False)
+        self._meta_clear_btn.setEnabled(False)
+        self._meta_progress.setVisible(True)
+        self._meta_progress.setRange(0, 0)  # indeterminate
+        max_events = self._meta_events_sb.value()
+        include_mtgo  = self._meta_mtgo_cb.isChecked()
+        include_paper = self._meta_paper_cb.isChecked()
+
+        if not include_mtgo and not include_paper:
+            QMessageBox.warning(self, "Meta crawl", "Select at least MTGO or Paper.")
+            self._meta_crawl_btn.setEnabled(True)
+            self._meta_clear_btn.setEnabled(True)
+            self._meta_progress.setVisible(False)
+            return
+
+        total_saved = 0
+
+        def _cb(msg: str, done: int, total: int):
+            self._meta_status.setText(msg)
+            if total > 0:
+                self._meta_progress.setRange(0, total)
+                self._meta_progress.setValue(done)
+
+        try:
+            self._meta_status.setText(f"Crawling {', '.join(selected)}…")
+            total_saved = await crawl_formats(
+                db, selected,
+                max_events=max_events,
+                include_mtgo=include_mtgo,
+                include_paper=include_paper,
+                progress_cb=_cb,
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "Meta crawl error", str(exc))
+            self._meta_status.setText(f"Error: {exc}")
+            return
+        finally:
+            self._meta_crawl_btn.setEnabled(True)
+            self._meta_clear_btn.setEnabled(True)
+            self._meta_progress.setVisible(False)
+
+        # Recompute scores after crawl
+        self._meta_status.setText("Recomputing card scores…")
+        try:
+            n_scores = await db.recompute_meta_scores()
+            self._meta_status.setText(
+                f"✓ {total_saved} new deck(s) stored  ·  {n_scores} card scores computed."
+            )
+        except Exception as exc:
+            self._meta_status.setText(f"✓ {total_saved} deck(s) saved  (score error: {exc})")
+
+        await self._load_meta_stats()
+
+    @asyncSlot()
+    async def _on_meta_clear(self):
+        reply = QMessageBox.question(
+            self, "Clear meta data",
+            "Delete ALL crawled meta decks and scores from the database?\n"
+            "This cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            from desktop.db import db
+            n = await db.clear_meta_data()
+            self._meta_status.setText(f"✓ Cleared {n} meta deck(s).")
+        except Exception as exc:
+            self._meta_status.setText(f"Error: {exc}")
+
     @asyncSlot()
     async def _on_record_prices(self):
         self._record_prices_btn.setEnabled(False)
@@ -1457,9 +1629,10 @@ class SettingsWidget(QWidget):
             self._record_prices_btn.setEnabled(True)
 
     def db_ready(self):
-        """Called when the database is ready — populate CM price status."""
+        """Called when the database is ready — populate CM price status and meta stats."""
         import asyncio
         asyncio.ensure_future(self._load_cm_meta())
+        asyncio.ensure_future(self._load_meta_stats())
 
     async def _load_cm_meta(self):
         try:

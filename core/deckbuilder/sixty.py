@@ -13,6 +13,7 @@ from ._constants import _60_ROLE_TARGETS, _THEME_TO_ARCH, _ARCH_TO_THEME
 
 
 _AFFINITY_WEIGHT = 12.0  # bonus per deck the card appears in
+_META_WEIGHT     = 0.08  # meta score is 0–100; score 100 → +8 pts, score 50 → +4 pts
 
 
 def _build_60_core(
@@ -23,15 +24,21 @@ def _build_60_core(
     power_level: str,
     max_price: Optional[float],
     deck_affinity: Optional[dict[str, float]] = None,
+    meta_scores: Optional[dict[str, float]] = None,
 ) -> dict:
     """Build a single 60-card deck for one archetype (no variants)."""
     from core.analysis import select_for_curve, deck_synergy_score, score_card, detect_archetypes
 
     affinity = deck_affinity or {}
+    meta     = meta_scores or {}
 
     def _score(c: dict) -> float:
         name = (c.get("name_en") or "").lower()
-        return score_card(c, fmt) + affinity.get(name, 0.0) * _AFFINITY_WEIGHT
+        return (
+            score_card(c, fmt)
+            + affinity.get(name, 0.0) * _AFFINITY_WEIGHT
+            + meta.get(name, 0.0) * _META_WEIGHT
+        )
 
     legal_nonland = _apply_power_level_filter(
         [c for c in pool if _is_pool_eligible(c, fmt) and "Land" not in (c.get("type_line") or "")],
@@ -159,11 +166,15 @@ def build_60_deck(
     power_level: str = "focused",
     max_price: Optional[float] = None,
     deck_affinity: Optional[dict[str, float]] = None,
+    meta_scores: Optional[dict[str, float]] = None,
 ) -> dict:
     """Build a 60-card deck for the given format.
 
     Supports standard, modern, legacy, vintage, and pauper.
     Always attempts to return up to 3 archetype variants (primary + alternatives).
+
+    meta_scores: optional {card_name_lower: 0–100} from the competitive meta
+                 DB; higher-scoring cards get a modest scoring bonus.
     """
     from core.analysis import detect_archetypes
 
@@ -188,12 +199,12 @@ def build_60_deck(
         if conf < 0.15 and variants:
             break
         theme = forced_strategy if (forced_strategy and not variants) else _ARCH_TO_THEME.get(arch)
-        result = _build_60_core(pool, fmt, arch, theme, power_level, max_price, deck_affinity)
+        result = _build_60_core(pool, fmt, arch, theme, power_level, max_price, deck_affinity, meta_scores)
         result["archetype_confidence"] = round(conf, 3)
         variants.append(result)
 
     if not variants:
-        fallback = _build_60_core(pool, fmt, "Midrange", None, power_level, max_price, deck_affinity)
+        fallback = _build_60_core(pool, fmt, "Midrange", None, power_level, max_price, deck_affinity, meta_scores)
         fallback["archetype_confidence"] = 1.0
         variants.append(fallback)
 

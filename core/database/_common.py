@@ -165,6 +165,40 @@ CREATE TABLE IF NOT EXISTS cm_prices (
     foil_avg30  REAL,
     updated_at  TEXT DEFAULT (datetime('now'))
 );
+
+-- ── Meta / competitive data ────────────────────────────────────────────────
+-- Decks scraped from online competitive databases (currently mtgtop8.com)
+CREATE TABLE IF NOT EXISTS meta_decks (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    source       TEXT NOT NULL DEFAULT 'mtgtop8',
+    format       TEXT NOT NULL,
+    event_id     TEXT NOT NULL,
+    deck_id      TEXT NOT NULL,
+    player       TEXT,
+    place        TEXT,
+    crawled_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (source, event_id, deck_id)
+);
+
+-- Individual cards within each meta deck (mainboard and sideboard)
+CREATE TABLE IF NOT EXISTS meta_deck_cards (
+    deck_db_id   INTEGER NOT NULL REFERENCES meta_decks(id) ON DELETE CASCADE,
+    card_name    TEXT NOT NULL,
+    quantity     INTEGER NOT NULL DEFAULT 1,
+    section      TEXT NOT NULL DEFAULT 'main',
+    PRIMARY KEY (deck_db_id, card_name, section)
+);
+
+-- Per-format card scores derived from meta_deck_cards (recomputed after each crawl)
+CREATE TABLE IF NOT EXISTS meta_card_scores (
+    card_name    TEXT NOT NULL,
+    format       TEXT NOT NULL,
+    score        REAL NOT NULL DEFAULT 0,
+    appearances  INTEGER NOT NULL DEFAULT 0,
+    deck_count   INTEGER NOT NULL DEFAULT 0,
+    updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (card_name, format)
+);
 """
 
 

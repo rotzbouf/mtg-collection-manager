@@ -156,6 +156,17 @@ FORMATS = [
     ("pauper",    "60-card — Pauper"),
 ]
 
+# Internal format name → mtgtop8 format code (for meta score lookup)
+_FMT_TO_META: dict[str, str] = {
+    "commander": "EDH",
+    "standard":  "ST",
+    "modern":    "MO",
+    "legacy":    "LE",
+    "vintage":   "VI",
+    "pauper":    "PAU",
+    "pioneer":   "PI",
+}
+
 
 class DeckWidget(QWidget):
     def __init__(self, parent=None):
@@ -483,6 +494,15 @@ class DeckWidget(QWidget):
         except Exception:
             deck_affinity, _affinity_n_decks = {}, 0
 
+        # Fetch competitive meta scores for this format (if any have been crawled)
+        meta_scores: dict[str, float] = {}
+        try:
+            meta_code = _FMT_TO_META.get(fmt)
+            if meta_code:
+                meta_scores = await db.get_meta_scores(meta_code)
+        except Exception:
+            meta_scores = {}
+
         if fmt == "commander":
             combo_card = self._cmd_combo.currentData()
             if combo_card is not None:
@@ -520,14 +540,14 @@ class DeckWidget(QWidget):
 
             result = build_commander_deck(
                 commander, pool, power_level=power_level, max_price=max_price,
-                deck_affinity=deck_affinity,
+                deck_affinity=deck_affinity, meta_scores=meta_scores or None,
             )
         else:
             forced = self._strategy_cb.currentData()
             result = build_60_deck(
                 pool, fmt, forced_strategy=forced,
                 power_level=power_level, max_price=max_price,
-                deck_affinity=deck_affinity,
+                deck_affinity=deck_affinity, meta_scores=meta_scores or None,
             )
 
         # ── Iterative refinement ────────────────────────────────────────
