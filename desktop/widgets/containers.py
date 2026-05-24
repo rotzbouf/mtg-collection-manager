@@ -82,7 +82,7 @@ class ContainersWidget(QWidget):
         action_row.addWidget(self._delete_btn)
         action_row.addStretch()
         self._check_deck_btn = QPushButton("⚖ Check deck")
-        self._check_deck_btn.setToolTip("Check deck legality (commander: singleton rule, 100 cards)")
+        self._check_deck_btn.setToolTip("Check deck legality for the selected format")
         self._check_deck_btn.setVisible(False)
         action_row.addWidget(self._check_deck_btn)
         self._export_deck_btn = QPushButton("↓ Export deck")
@@ -92,10 +92,16 @@ class ContainersWidget(QWidget):
         action_row.addWidget(QLabel("Format:"))
         self._format_combo = QComboBox()
         self._format_combo.addItem("— no format —", None)
-        self._format_combo.addItem("⚔ Commander", "commander")
-        self._format_combo.addItem("60-card Standard", "standard")
-        self._format_combo.addItem("60-card Timeless", "timeless")
-        self._format_combo.setMinimumWidth(140)
+        self._format_combo.addItem("⚔  Commander / EDH", "commander")
+        self._format_combo.addItem("Modern", "modern")
+        self._format_combo.addItem("Pioneer", "pioneer")
+        self._format_combo.addItem("Standard", "standard")
+        self._format_combo.addItem("Legacy", "legacy")
+        self._format_combo.addItem("Vintage", "vintage")
+        self._format_combo.addItem("Pauper", "pauper")
+        self._format_combo.addItem("Timeless", "timeless")
+        self._format_combo.addItem("Historic", "historic")
+        self._format_combo.setMinimumWidth(160)
         self._format_combo.setEnabled(False)
         action_row.addWidget(self._format_combo)
         action_row.addWidget(QLabel("Type:"))
@@ -416,7 +422,8 @@ class ContainersWidget(QWidget):
     def _on_check_deck(self):
         cards = getattr(self, "_container_cards", [])
         name = self._selected_container.get("name", "Deck") if self._selected_container else "Deck"
-        _show_commander_check(cards, name, parent=self)
+        deck_format = self._selected_container.get("deck_format") if self._selected_container else None
+        _show_deck_check(cards, name, deck_format=deck_format, parent=self)
 
     def _on_export_deck(self):
         from pathlib import Path
@@ -763,66 +770,55 @@ def _is_basic_land(card: dict) -> bool:
     return (card.get("type_line") or "").startswith("Basic Land")
 
 
-def _show_commander_check(cards: list[dict], deck_name: str, parent=None):
-    from collections import Counter
+# Formats that use commander/singleton rules (100 cards, 1-2 commanders)
+_COMMANDER_FORMATS = {"commander", "oathbreaker", "brawl"}
+# Formats that use 60-card rules (max 4 copies of non-basics)
+_SIXTY_FORMATS = {
+    "standard", "modern", "pioneer", "legacy",
+    "vintage", "pauper", "timeless", "historic",
+}
+# Vintage allows unlimited copies of restricted-list cards; we flag >4 as advisory
+_VINTAGE_NOTE = "Vintage: unlimited copies are legal only for cards on the restricted list."
+
+
+def _show_deck_check(cards: list[dict], deck_name: str,
+                     deck_format: str | None = None, parent=None):
+    """Dispatch to the format-appropriate deck check dialog."""
+    if deck_format in _COMMANDER_FORMATS:
+        _show_commander_check(cards, deck_name, parent=parent)
+    elif deck_format in _SIXTY_FORMATS:
+        _show_sixty_check(cards, deck_name, deck_format=deck_format, parent=parent)
+    else:
+        # No format set — show a generic card-count summary
+        _show_generic_check(cards, deck_name, parent=parent)
+
+
+def _deck_check_dialog(parent, deck_name: str, issues: list[str],
+                       stats_html: str, fmt_label: str = ""):
+    """Shared dialog builder for all check variants."""
     from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QScrollArea, QWidget, QDialogButtonBox
 
-    total = len(cards)
-    basics   = [c for c in cards if _is_basic_land(c)]
-    nonbasic = [c for c in cards if not _is_basic_land(c)]
-    commanders = [c for c in cards if c.get("is_commander")]
-
-    # Singleton check: count non-basic cards by English name
-    name_counts = Counter(c.get("name_en") or display_name(c) for c in nonbasic)
-    duplicates  = {name: cnt for name, cnt in name_counts.items() if cnt > 1}
-
-    issues: list[str] = []
-
-    if total != 100:
-        diff = total - 100
-        issues.append(
-            f"Kartenzahl: {total} / 100  "
-            f"({'%+d' % diff} Karte{'n' if abs(diff) != 1 else ''})"
-        )
-
-    if not commanders:
-        issues.append("Kein Commander markiert  (Rechtsklick → 👑 Mark as Commander)")
-    elif len(commanders) > 2:
-        issues.append(f"{len(commanders)} Commander markiert — maximal 2 erlaubt (Partner)")
-
-    for name, cnt in sorted(duplicates.items()):
-        issues.append(f'Duplikat: „{name}" kommt {cnt}× vor')
-
-    # ── Build dialog ──────────────────────────────────────────────────────
     dlg = QDialog(parent)
-    dlg.setWindowTitle(f"Deck-Check — {deck_name}")
-    dlg.setMinimumWidth(480)
+    title = f"Deck-Check — {deck_name}"
+    if fmt_label:
+        title += f"  [{fmt_label}]"
+    dlg.setWindowTitle(title)
+    dlg.setMinimumWidth(500)
     layout = QVBoxLayout(dlg)
     layout.setSpacing(10)
 
-    # Summary line
     if issues:
-        summary = QLabel(f"<b style='color:#e05c5c;'>❌ {len(issues)} Problem(e) gefunden</b>")
+        summary = QLabel(f"<b style='color:#e05c5c;'>❌ {len(issues)} issue(s) found</b>")
     else:
-        summary = QLabel("<b style='color:#7ec8a0;'>✅ Deck ist legal</b>")
+        summary = QLabel("<b style='color:#7ec8a0;'>✅ Deck is legal</b>")
     summary.setStyleSheet("font-size: 15px; padding: 4px 0;")
     layout.addWidget(summary)
 
-    # Stats
-    commander_names = "  ·  ".join(
-        display_name(c) for c in commanders
-    ) if commanders else "—"
-    stats = QLabel(
-        f"Karten gesamt: <b>{total}</b>  ·  "
-        f"Nicht-Länder: <b>{len(nonbasic)}</b>  ·  "
-        f"Standardländer: <b>{len(basics)}</b><br>"
-        f"Commander: <b>{commander_names}</b>"
-    )
+    stats = QLabel(stats_html)
     stats.setWordWrap(True)
     layout.addWidget(stats)
 
     if issues:
-        from PyQt6.QtWidgets import QFrame
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
         sep.setStyleSheet("color: #333;")
@@ -847,8 +843,93 @@ def _show_commander_check(cards: list[dict], deck_name: str, parent=None):
     btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
     btns.accepted.connect(dlg.accept)
     layout.addWidget(btns)
-
     dlg.exec()
+
+
+def _show_commander_check(cards: list[dict], deck_name: str, parent=None):
+    from collections import Counter
+
+    total      = len(cards)
+    basics     = [c for c in cards if _is_basic_land(c)]
+    nonbasic   = [c for c in cards if not _is_basic_land(c)]
+    commanders = [c for c in cards if c.get("is_commander")]
+
+    name_counts = Counter(c.get("name_en") or display_name(c) for c in nonbasic)
+    duplicates  = {name: cnt for name, cnt in name_counts.items() if cnt > 1}
+
+    issues: list[str] = []
+
+    if total != 100:
+        diff = total - 100
+        issues.append(
+            f"Card count: {total} / 100  "
+            f"({'%+d' % diff} card{'s' if abs(diff) != 1 else ''})"
+        )
+    if not commanders:
+        issues.append("No commander marked  (right-click → 👑 Mark as Commander)")
+    elif len(commanders) > 2:
+        issues.append(f"{len(commanders)} commanders marked — max 2 allowed (Partner)")
+    for name, cnt in sorted(duplicates.items()):
+        issues.append(f'Duplicate: "{name}" appears {cnt}×')
+
+    commander_names = "  ·  ".join(display_name(c) for c in commanders) if commanders else "—"
+    stats_html = (
+        f"Cards: <b>{total}</b>  ·  "
+        f"Non-lands: <b>{len(nonbasic)}</b>  ·  "
+        f"Basic lands: <b>{len(basics)}</b><br>"
+        f"Commander: <b>{commander_names}</b>"
+    )
+    _deck_check_dialog(parent, deck_name, issues, stats_html, fmt_label="Commander")
+
+
+def _show_sixty_check(cards: list[dict], deck_name: str,
+                      deck_format: str = "modern", parent=None):
+    from collections import Counter
+
+    total    = len(cards)
+    basics   = [c for c in cards if _is_basic_land(c)]
+    nonbasic = [c for c in cards if not _is_basic_land(c)]
+
+    # In 60-card formats, lands that aren't basic can still have max 4 copies
+    name_counts = Counter(c.get("name_en") or display_name(c) for c in nonbasic)
+    over_four   = {name: cnt for name, cnt in name_counts.items() if cnt > 4}
+
+    issues: list[str] = []
+
+    if total != 60:
+        diff = total - 60
+        issues.append(
+            f"Card count: {total} / 60  "
+            f"({'%+d' % diff} card{'s' if abs(diff) != 1 else ''})"
+        )
+    for name, cnt in sorted(over_four.items()):
+        note = " (check restricted list)" if deck_format == "vintage" else ""
+        issues.append(f'"{name}" has {cnt} copies (max 4{note})')
+
+    if deck_format == "vintage" and over_four:
+        issues.append("ℹ  " + _VINTAGE_NOTE)
+
+    fmt_label = deck_format.capitalize()
+    stats_html = (
+        f"Cards: <b>{total}</b>  ·  "
+        f"Non-basics: <b>{len(nonbasic)}</b>  ·  "
+        f"Basic lands: <b>{len(basics)}</b>"
+    )
+    _deck_check_dialog(parent, deck_name, issues, stats_html, fmt_label=fmt_label)
+
+
+def _show_generic_check(cards: list[dict], deck_name: str, parent=None):
+    """Shown when no format is set — just card count and basic stats."""
+    total  = len(cards)
+    basics = [c for c in cards if _is_basic_land(c)]
+    lands  = [c for c in cards if "Land" in (c.get("type_line") or "")]
+    stats_html = (
+        f"Cards: <b>{total}</b>  ·  "
+        f"Lands: <b>{len(lands)}</b>  ·  "
+        f"Basic lands: <b>{len(basics)}</b>"
+    )
+    issues = ["No format is set for this deck — select a format to enable full legality checks."]
+    _deck_check_dialog(parent, deck_name, issues, stats_html, fmt_label="No format")
 
 
 class _DeleteContainerDialog(QDialog):
