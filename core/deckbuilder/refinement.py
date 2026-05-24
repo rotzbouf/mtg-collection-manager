@@ -155,15 +155,21 @@ def iterative_refine(
 
     if is_60:
         avail: Counter = Counter()
+        name_all_pool: dict[str, list[dict]] = {}
         for c in pool:
             nm = (c.get("name_en") or "").lower()
             if _eligible(c):
                 avail[nm] += 1
+                name_all_pool.setdefault(nm, []).append(c)
         new_deck: list[tuple[dict, int]] = []
+        deck_physical: list[dict] = []
         for c in deck:
-            copies = min(avail.get((c.get("name_en") or "").lower(), 1), 4)
+            nm = (c.get("name_en") or "").lower()
+            copies = min(avail.get(nm, 1), 4)
             new_deck.append((c, copies))
+            deck_physical.extend(name_all_pool.get(nm, [c])[:copies])
         result["deck"] = new_deck
+        result["deck_physical"] = deck_physical
         role_summary: Counter = Counter()
         for c, _ in new_deck:
             for r in tag_card_roles(c):

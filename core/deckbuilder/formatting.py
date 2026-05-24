@@ -89,9 +89,17 @@ def format_location_manifest(result: dict, fmt: str = "commander") -> str:
             if c.get("id"):
                 entries.append((c, 1))
     else:
-        for card, count in result.get("deck") or []:
-            if card.get("id"):
-                entries.append((card, count))
+        # Prefer deck_physical: individual physical copies with correct per-copy
+        # container attribution (cards with count>1 may span multiple containers).
+        physical = result.get("deck_physical")
+        if physical:
+            for c in physical:
+                if c.get("id"):
+                    entries.append((c, 1))
+        else:
+            for card, count in result.get("deck") or []:
+                if card.get("id"):
+                    entries.append((card, count))
 
     for c in result.get("nonbasic_lands") or []:
         if c.get("id"):

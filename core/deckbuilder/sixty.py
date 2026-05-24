@@ -40,11 +40,13 @@ def _build_60_core(
 
     available: Counter = Counter()
     name_first: dict[str, dict] = {}
+    name_all: dict[str, list[dict]] = {}  # all physical copies, preserving container info
     for card in legal_nonland:
         name = (card.get("name_en") or "").lower()
         available[name] += 1
         if name not in name_first:
             name_first[name] = card
+        name_all.setdefault(name, []).append(card)
 
     unique_nonland = sorted(
         name_first.values(), key=_score, reverse=True
@@ -85,6 +87,7 @@ def _build_60_core(
     selected_unique = _enforce_diversity(selected_unique, archetype, all_unique, target_nonland, "60")
 
     deck_cards: list[tuple[dict, int]] = []
+    deck_physical: list[dict] = []  # individual physical copies with correct container attribution
     total = 0
     for card in selected_unique:
         if total >= target_nonland:
@@ -93,6 +96,7 @@ def _build_60_core(
         take = min(available[name], _max_copies(card, fmt), target_nonland - total)
         if take > 0:
             deck_cards.append((card, take))
+            deck_physical.extend(name_all[name][:take])
             total += take
 
     colors_used: set[str] = set()
@@ -124,6 +128,7 @@ def _build_60_core(
 
     return {
         "deck":                   deck_cards,
+        "deck_physical":          deck_physical,
         "nonbasic_lands":         nonbasic_lands,
         "basics_from_collection": basics_from_collection,
         "basics_missing":         basics_missing,
