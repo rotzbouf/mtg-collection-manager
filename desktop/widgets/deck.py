@@ -904,9 +904,12 @@ class _ManifestDialog(QDialog):
             QMessageBox.warning(self, "Unavailable", "Printing support is not installed.")
             return
         printer = QPrinter()
-        dlg = QPrintDialog(printer, self)
+        # QPrintDialog must be parented to None to avoid QTableWidget item
+        # ownership conflicts when the manifest dialog sits inside a tab widget.
+        dlg = QPrintDialog(printer, None)
         if dlg.exec() == QDialog.DialogCode.Accepted:
-            self._view.document().print_(printer)
+            doc = self._view.document()
+            doc.print(printer)  # PyQt6: method is 'print', not 'print_'
 
     def _on_save(self):
         from datetime import date
