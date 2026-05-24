@@ -986,6 +986,10 @@ class _NewDeckContainerDialog(QDialog):
         self._format_cb.addItem("⚔ Commander", "commander")
         self._format_cb.addItem("60-card Standard", "standard")
         self._format_cb.addItem("60-card Timeless", "timeless")
+        self._format_cb.addItem("60-card Modern", "modern")
+        self._format_cb.addItem("60-card Legacy", "legacy")
+        self._format_cb.addItem("60-card Vintage", "vintage")
+        self._format_cb.addItem("60-card Pauper", "pauper")
         idx = self._format_cb.findData(deck_format)
         if idx >= 0:
             self._format_cb.setCurrentIndex(idx)
