@@ -26,6 +26,8 @@ from desktop.widgets.format_bans import FormatBansWidget
 from desktop.widgets.buylists import BuylistsWidget
 from desktop.widgets.logs_page import LogsWidget, QtLogHandler
 
+from core.version import __version__
+
 logger = logging.getLogger(__name__)
 
 _SIDEBAR_WIDTH = 160
@@ -81,7 +83,7 @@ class _TabbedPage(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("MTG Collection Manager")
+        self.setWindowTitle(f"MTG Collection Manager v{__version__}")
         self.setMinimumSize(1100, 700)
         self._db_initialized = False
         self._log_handler = self._setup_log_handler()
@@ -163,6 +165,12 @@ class MainWindow(QMainWindow):
         db_lbl.setWordWrap(True)
         db_lbl.setStyleSheet("color: #555; font-size: 9px; padding: 4px 8px;")
         sidebar_layout.addWidget(db_lbl)
+
+        # Version label
+        ver_lbl = QLabel(f"v{__version__}")
+        ver_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        ver_lbl.setStyleSheet("color: #444; font-size: 9px; padding: 0 8px 6px;")
+        sidebar_layout.addWidget(ver_lbl)
 
         root.addWidget(sidebar)
 
