@@ -985,7 +985,6 @@ class _NewDeckContainerDialog(QDialog):
         self._format_cb.addItem("— no format —", None)
         self._format_cb.addItem("⚔ Commander", "commander")
         self._format_cb.addItem("60-card Standard", "standard")
-        self._format_cb.addItem("60-card Timeless", "timeless")
         self._format_cb.addItem("60-card Modern", "modern")
         self._format_cb.addItem("60-card Legacy", "legacy")
         self._format_cb.addItem("60-card Vintage", "vintage")
