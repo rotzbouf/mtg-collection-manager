@@ -24,6 +24,29 @@ jobs:
         with:
           python-version: '3.12'
 
+      # ── Cache: pip packages ──────────────────────────────────────────────────
+      # Keyed on requirements.txt + PyTorch CPU index so the full torch/easyocr
+      # download (~1.5 GB) is skipped on repeat builds with unchanged deps.
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\pip\Cache
+          key: pip-win-${{ hashFiles('deps/requirements.txt') }}-torch-cpu
+          restore-keys: |
+            pip-win-${{ hashFiles('deps/requirements.txt') }}-
+            pip-win-
+
+      # ── Cache: Nuitka compilation cache ─────────────────────────────────────
+      # Nuitka stores per-module C compilation results here. On rebuilds only
+      # modules whose Python source changed are recompiled — huge time saving.
+      - name: Cache Nuitka
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\Nuitka\Nuitka\Cache
+          key: nuitka-win-py312-${{ hashFiles('core/**/*.py', 'desktop/**/*.py', 'server/**/*.py', 'cogs/**/*.py') }}
+          restore-keys: |
+            nuitka-win-py312-
+
       # ── System tools ────────────────────────────────────────────────────────
       - name: Install Tesseract
         run: |
