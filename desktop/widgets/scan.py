@@ -223,6 +223,19 @@ class ScanWidget(QWidget):
         sep.setStyleSheet("color: #333;")
         left_layout.addWidget(sep)
 
+        # Language selector (auto-populated from scan; can be overridden)
+        lang_row = QHBoxLayout()
+        lang_row.addWidget(QLabel("Language:"))
+        self._lang_cb = QComboBox()
+        from desktop.widgets.add_card import _LANGUAGES
+        for code, label in _LANGUAGES:
+            self._lang_cb.addItem(label, code)
+        self._lang_cb.setToolTip(
+            "Auto-detected from scan — override if the detected language is wrong"
+        )
+        lang_row.addWidget(self._lang_cb, stretch=1)
+        left_layout.addLayout(lang_row)
+
         # Container selector
         cont_row = QHBoxLayout()
         cont_row.addWidget(QLabel("Container:"))
@@ -440,6 +453,7 @@ class ScanWidget(QWidget):
             return
 
         card["language"] = detected_lang or "en"
+        self._set_lang_cb(card["language"])
         method_str = "  •  ".join(method_parts)
         self._status_match.setText(f"✓ {method_str}")
         self._status_match.setStyleSheet(_MATCH_OK_STYLE)
@@ -477,6 +491,7 @@ class ScanWidget(QWidget):
             return
 
         card["language"] = detected_lang or "en"
+        self._set_lang_cb(card["language"])
         self._status_match.setText(f'✓ Found via manual search: "{name}"')
         self._status_match.setStyleSheet(_MATCH_OK_STYLE)
         self._show_result(card)
@@ -517,6 +532,12 @@ class ScanWidget(QWidget):
         self._last_container_id = container_id
         self._do_save(self._pending_card, foil, container_id)
 
+    def _set_lang_cb(self, lang: str) -> None:
+        """Set the language combobox to the given language code."""
+        idx = self._lang_cb.findData(lang)
+        if idx >= 0:
+            self._lang_cb.setCurrentIndex(idx)
+
     @asyncSlot()
     async def _do_save(self, card: dict, foil: bool, container_id: Optional[int]):
         from desktop.db import db
@@ -526,6 +547,10 @@ class ScanWidget(QWidget):
         card["condition"] = card.get("condition") or "NM"
         card["quantity"] = 1
         card["container_id"] = container_id
+        # Always use the (possibly user-corrected) language combobox value so
+        # the stored language matches what the user confirmed, even when the
+        # Scryfall lookup fell back from the detected language to English.
+        card["language"] = self._lang_cb.currentData() or card.get("language") or "en"
 
         self._add_btn.setEnabled(False)
         self._foil_btn.setEnabled(False)
