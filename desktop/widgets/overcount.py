@@ -23,7 +23,7 @@ from PyQt6.QtWidgets import (
     QTreeWidget, QTreeWidgetItem, QTableWidget, QTableWidgetItem,
     QHeaderView, QAbstractItemView, QMenu, QDialog,
     QDialogButtonBox, QFormLayout, QComboBox, QMessageBox,
-    QGroupBox, QTabWidget, QLineEdit, QProgressBar, QFrame,
+    QGroupBox, QTabWidget, QLineEdit, QProgressBar, QFrame, QCheckBox,
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor, QFont
@@ -536,8 +536,19 @@ class OvercountWidget(QWidget):
         root.setContentsMargins(8, 8, 8, 8)
 
         # ── Preset group ────────────────────────────────────────────────
-        box = QGroupBox("Preset Bundles  (cheapest cards from overcount containers first)")
+        box = QGroupBox("Preset Bundles  (from overcount containers)")
         box_layout = QVBoxLayout(box)
+
+        opt_row = QHBoxLayout()
+        self._unique_only_chk = QCheckBox("Unique card names only")
+        self._unique_only_chk.setChecked(True)
+        self._unique_only_chk.setToolTip(
+            "When checked, only one copy of each card name is included in the bundle.\n"
+            "The best copy is kept based on the current sort order."
+        )
+        opt_row.addWidget(self._unique_only_chk)
+        opt_row.addStretch()
+        box_layout.addLayout(opt_row)
 
         row1 = QHBoxLayout()
         for label, rarities, count in [
@@ -652,14 +663,40 @@ class OvercountWidget(QWidget):
         order: str = "price_asc",
     ):
         from desktop.db import db
+        unique_only = self._unique_only_chk.isChecked()
+
+        # Fetch a larger pool so deduplication still reaches max_count if possible.
+        # Without a max we fetch 5 000 at most; with a max we fetch 10× to leave
+        # plenty of headroom for duplicate removal.
+        fetch_limit = (max_count * 10 if max_count else 5000) if unique_only else (max_count or 2000)
+
         cards = await db.get_cards_in_overcount_containers(
             rarities=rarities,
             set_codes=set_codes,
             order_by=order,
-            limit=max_count or 2000,
+            limit=fetch_limit,
         )
+
+        duplicates_excluded = 0
+        if unique_only:
+            seen_names: set[str] = set()
+            unique_cards: list[dict] = []
+            for card in cards:
+                name = (card.get("name_en") or "").strip().lower()
+                if not name or name not in seen_names:
+                    unique_cards.append(card)
+                    if name:
+                        seen_names.add(name)
+                else:
+                    duplicates_excluded += 1
+            cards = unique_cards
+
+        # Apply max_count AFTER deduplication
+        if max_count and len(cards) > max_count:
+            cards = cards[:max_count]
+
         self._bundle_cards = cards
-        self._populate_bundle_preview(cards)
+        self._populate_bundle_preview(cards, duplicates_excluded=duplicates_excluded)
 
         # Auto-suggest a name
         if not self._bundle_name.text().strip():
@@ -685,7 +722,7 @@ class OvercountWidget(QWidget):
         if not self._bundle_name.text().strip():
             self._bundle_name.setText(f"{set_name} Bundle")
 
-    def _populate_bundle_preview(self, cards: list[dict]):
+    def _populate_bundle_preview(self, cards: list[dict], duplicates_excluded: int = 0):
         self._bundle_tree.clear()
         self._bundle_detail.clear()
         self._bundle_create_btn.setEnabled(False)
@@ -744,8 +781,13 @@ class OvercountWidget(QWidget):
 
             self._bundle_tree.addTopLevelItem(parent)
 
+        dup_note = (
+            f"  ·  {duplicates_excluded} duplicate name{'s' if duplicates_excluded != 1 else ''} excluded"
+            if duplicates_excluded else ""
+        )
         self._bundle_status.setText(
-            f"{added} card(s)  ·  {len(lang_groups)} language(s)  ·  total value: {format_price(total_val)}"
+            f"{added} card(s)  ·  {len(lang_groups)} language(s)  ·  "
+            f"total value: {format_price(total_val)}{dup_note}"
         )
         self._bundle_create_btn.setEnabled(True)
 
