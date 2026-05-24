@@ -591,6 +591,7 @@ class DeckWidget(QWidget):
         )
 
         result["_affinity_deck_count"] = _affinity_n_decks
+        result["_meta_card_count"]     = len(meta_scores)
 
         self._result = result
         self._last_fmt = fmt
@@ -685,8 +686,14 @@ class DeckWidget(QWidget):
             pass
 
         n_decks = result.get("_affinity_deck_count", 0)
+        meta_n  = result.get("_meta_card_count", 0)
+        learn_parts: list[str] = []
         if n_decks:
-            parts.append(f"Learned from {n_decks} deck{'s' if n_decks != 1 else ''}")
+            learn_parts.append(f"Learned from {n_decks} deck{'s' if n_decks != 1 else ''}")
+        if meta_n:
+            learn_parts.append(f"Meta: {meta_n} cards scored")
+        if learn_parts:
+            parts.append("  ·  ".join(learn_parts))
 
         swaps = result.get("refinement_swaps")
         if swaps is not None:

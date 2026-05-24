@@ -12,8 +12,10 @@ from ._pool import _apply_power_level_filter, _enforce_diversity
 from ._constants import _60_ROLE_TARGETS, _THEME_TO_ARCH, _ARCH_TO_THEME
 
 
-_AFFINITY_WEIGHT = 12.0  # bonus per deck the card appears in
-_META_WEIGHT     = 0.20  # meta score 0–100; score 100 → +20 pts, score 50 → +10 pts
+_AFFINITY_WEIGHT = 18.0  # bonus per deck the card appears in
+_META_WEIGHT     = 0.25  # meta score 0–100; score 100 → +25 pts, score 50 → +12.5 pts
+_ANCHOR_MIN_DECKS = 2   # cards in this many user decks are pre-selected as anchors
+_ANCHOR_MAX_SLOTS = 8   # at most this many anchor card slots
 
 
 def _build_60_core(
@@ -65,6 +67,20 @@ def _build_60_core(
     chosen_names: set[str] = set()
     role_cards, _ = _fill_role_slots(unique_nonland, dict(_60_ROLE_TARGETS), chosen_names)
 
+    # Anchor cards: consistently used across the user's existing decks of this format.
+    # These are pre-selected alongside role cards so the builder always includes them.
+    anchor_cards: list[dict] = []
+    if affinity:
+        for nm, aff_cnt in sorted(affinity.items(), key=lambda x: x[1], reverse=True):
+            if len(anchor_cards) >= _ANCHOR_MAX_SLOTS:
+                break
+            if aff_cnt < _ANCHOR_MIN_DECKS:
+                break
+            if nm in chosen_names or nm not in name_first:
+                continue
+            anchor_cards.append(name_first[nm])
+            chosen_names.add(nm)
+
     theme_keys = {theme_key} if theme_key else set()
     if not theme_keys:
         theme_hits: Counter = Counter()
@@ -79,11 +95,11 @@ def _build_60_core(
     others     = [c for c in remaining_unique if c not in themed]
     candidates = themed + others
 
-    remaining_target = max(1, target_nonland - len(role_cards))
+    remaining_target = max(1, target_nonland - len(role_cards) - len(anchor_cards))
     theme_cards = select_for_curve(candidates, archetype, remaining_target, fmt="60",
                                    meta_scores=meta_scores)
 
-    selected_unique = list(role_cards)
+    selected_unique = list(role_cards) + anchor_cards
     sel_names: set[str] = {(c.get("name_en") or "").lower() for c in selected_unique}
     for c in theme_cards:
         name = (c.get("name_en") or "").lower()

@@ -36,8 +36,10 @@ def rank_commanders(pool: list[dict]) -> list[tuple[dict, int]]:
     return [(cmd, syn) for cmd, syn, _ in results[:10]]
 
 
-_AFFINITY_WEIGHT = 12.0
-_META_WEIGHT     = 0.20  # meta score 0–100; score 100 → +20 pts, score 50 → +10 pts
+_AFFINITY_WEIGHT  = 18.0
+_META_WEIGHT      = 0.25  # meta score 0–100; score 100 → +25 pts, score 50 → +12.5 pts
+_ANCHOR_MIN_DECKS = 2    # cards in this many user commander decks are pre-selected
+_ANCHOR_MAX_SLOTS = 10   # at most this many anchor card slots in commander
 
 
 def _build_commander_for_archetype(
@@ -89,12 +91,27 @@ def _build_commander_for_archetype(
     chosen_names: set[str] = set()
     role_cards, _ = _fill_role_slots(unique_eligible, dict(_COMMANDER_ROLE_TARGETS), chosen_names)
 
+    # Anchor cards: consistently used in the user's existing commander decks.
+    # Pre-select them so they always appear in the built deck.
+    anchor_cards: list[dict] = []
+    if affinity:
+        by_name_lookup = {(c.get("name_en") or "").lower(): c for c in unique_eligible}
+        for nm, aff_cnt in sorted(affinity.items(), key=lambda x: x[1], reverse=True):
+            if len(anchor_cards) >= _ANCHOR_MAX_SLOTS:
+                break
+            if aff_cnt < _ANCHOR_MIN_DECKS:
+                break
+            if nm in chosen_names or nm not in by_name_lookup:
+                continue
+            anchor_cards.append(by_name_lookup[nm])
+            chosen_names.add(nm)
+
     remaining_pool = [c for c in unique_eligible if (c.get("name_en") or "").lower() not in chosen_names]
-    remaining_target = max(1, target_nonland - len(role_cards))
+    remaining_target = max(1, target_nonland - len(role_cards) - len(anchor_cards))
     theme_cards = select_for_curve(remaining_pool[:90], archetype, remaining_target,
                                    fmt="commander", meta_scores=meta_scores)
 
-    deck = list(role_cards)
+    deck = list(role_cards) + anchor_cards
     deck_names: set[str] = {(c.get("name_en") or "").lower() for c in deck}
     for c in theme_cards:
         name = (c.get("name_en") or "").lower()

@@ -4,7 +4,7 @@ from __future__ import annotations
 from collections import Counter
 from typing import Optional
 
-from ._cards import _is_pool_eligible, is_legal, color_identity, curve_analysis
+from ._cards import _is_pool_eligible, is_legal, color_identity, curve_analysis, _max_copies
 from ._roles import tag_card_roles
 from ._mana import _build_land_base
 from ._pool import _apply_power_level_filter
@@ -47,9 +47,14 @@ def iterative_refine(
     raw_deck = result.get("deck", [])
     if raw_deck and isinstance(raw_deck[0], (list, tuple)):
         deck = [card for card, _count in raw_deck]
+        # Preserve original copy counts so retained cards keep their quantities
+        orig_copies: dict[str, int] = {
+            (c.get("name_en") or "").lower(): n for c, n in raw_deck
+        }
         is_60 = True
     else:
         deck = list(raw_deck)
+        orig_copies = {}
         is_60 = False
 
     if is_commander:
@@ -163,6 +168,9 @@ def iterative_refine(
         return result
 
     if is_60:
+        target_nonland = 36
+        target_lands   = 24
+
         avail: Counter = Counter()
         name_all_pool: dict[str, list[dict]] = {}
         for c in pool:
@@ -170,29 +178,68 @@ def iterative_refine(
             if _eligible(c):
                 avail[nm] += 1
                 name_all_pool.setdefault(nm, []).append(c)
+
+        # Assign copies: retained cards keep their original quantities,
+        # newly swapped-in cards get min(available, max_copies).
         new_deck: list[tuple[dict, int]] = []
         deck_physical: list[dict] = []
+        total_nl = 0
         for c in deck:
-            nm = (c.get("name_en") or "").lower()
-            copies = min(avail.get(nm, 1), 4)
-            new_deck.append((c, copies))
-            deck_physical.extend(name_all_pool.get(nm, [c])[:copies])
-        result["deck"] = new_deck
+            nm    = (c.get("name_en") or "").lower()
+            want  = orig_copies.get(nm, min(avail.get(nm, 1), _max_copies(c, fmt_key)))
+            copies = min(want, avail.get(nm, want), _max_copies(c, fmt_key),
+                         target_nonland - total_nl)
+            if copies > 0:
+                new_deck.append((c, copies))
+                deck_physical.extend(name_all_pool.get(nm, [c])[:copies])
+                total_nl += copies
+
+        # If we're under target, try to top up using extra copies of existing cards
+        if total_nl < target_nonland:
+            for i, (c, n) in enumerate(new_deck):
+                if total_nl >= target_nonland:
+                    break
+                nm = (c.get("name_en") or "").lower()
+                can_add = min(avail.get(nm, n) - n, _max_copies(c, fmt_key) - n,
+                              target_nonland - total_nl)
+                if can_add > 0:
+                    new_deck[i] = (c, n + can_add)
+                    deck_physical.extend(name_all_pool.get(nm, [c])[n:n + can_add])
+                    total_nl += can_add
+
+        result["deck"]          = new_deck
         result["deck_physical"] = deck_physical
+
+        # Rebuild land base so total always reaches 60
+        actual_nonland    = sum(n for _, n in new_deck)
+        nonland_shortfall = max(0, target_nonland - actual_nonland)
+        adjusted_lands    = target_lands + nonland_shortfall
+
+        ci_set: set[str] = set()
+        for c, _ in new_deck:
+            ci_set |= set(color_identity(c))
+        land_base = _build_land_base(
+            pool, frozenset(ci_set), [c for c, _ in new_deck], adjusted_lands, fmt_key
+        )
+        result["nonbasic_lands"]         = land_base["nonbasic_lands"]
+        result["basics_from_collection"] = land_base["basics_from_collection"]
+        result["basics_missing"]         = land_base["basics_missing"]
+        result["padding_basics"]         = nonland_shortfall
+
         role_summary: Counter = Counter()
         for c, _ in new_deck:
             for r in tag_card_roles(c):
                 role_summary[r] += 1
-        result["curve"] = curve_analysis(new_deck)
+        result["curve"]        = curve_analysis(new_deck)
         result["synergy_score"] = deck_synergy_score([c for c, _ in new_deck[:30]])
         col_count = (
             sum(n for _, n in new_deck)
-            + len(result.get("nonbasic_lands", []))
-            + len(result.get("basics_from_collection", []))
+            + len(result["nonbasic_lands"])
+            + len(result["basics_from_collection"])
         )
         missing_n = sum((result.get("basics_missing") or {}).values())
         result["collection_count"] = col_count
-        result["total_cards"] = col_count + missing_n
+        result["total_cards"]      = col_count + missing_n
         result["value_eur"] = round(
             sum((c.get("price_eur") or 0) * n for c, n in new_deck)
             + sum(c.get("price_eur") or 0 for c in result.get("nonbasic_lands", [])),
@@ -209,14 +256,22 @@ def iterative_refine(
         if commander:
             ci = color_identity(commander)
         else:
-            ci_set: set[str] = set()
+            ci_set_cmd: set[str] = set()
             for c in deck:
-                ci_set |= set(color_identity(c))
-            ci = frozenset(ci_set)
-        land_base = _build_land_base(pool, ci, deck, 36, "commander")
+                ci_set_cmd |= set(color_identity(c))
+            ci = frozenset(ci_set_cmd)
+
+        # Pad lands so total always reaches 100 (1 commander + deck + lands = 100)
+        target_nonland_cmd = 63
+        target_lands_cmd   = 36
+        nonland_shortfall  = max(0, target_nonland_cmd - len(deck))
+        adjusted_lands_cmd = target_lands_cmd + nonland_shortfall
+
+        land_base = _build_land_base(pool, ci, deck, adjusted_lands_cmd, "commander")
         result["nonbasic_lands"]         = land_base["nonbasic_lands"]
         result["basics_from_collection"] = land_base["basics_from_collection"]
         result["basics_missing"]         = land_base["basics_missing"]
+        result["padding_basics"]         = nonland_shortfall
 
         role_summary = Counter()
         for c in deck:
