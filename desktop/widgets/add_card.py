@@ -437,10 +437,29 @@ class AddCardWidget(QWidget):
             return
 
         self._search_btn.setEnabled(True)
-        if not cards:
+        if not cards and lang and lang != "en":
+            # Language-filtered search returned nothing — fall back to English
+            # search so the card data can still be retrieved.  The user's chosen
+            # language is preserved: it is stamped onto the card when adding.
+            self._log(f"✗ No results in '{lang}' — retrying without language filter…")
+            try:
+                cards = await scryfall.search_cards(name=name, set_code=set_code, lang=None)
+            except Exception as exc:
+                self._log(f"✗ Fallback error: {exc}")
+                return
+            if cards:
+                # Mark each result with the user's chosen language so the
+                # preview and add-flow carry the right language value.
+                for c in cards:
+                    c["language"] = lang
+                self._log(f"✓ {len(cards)} result(s) via English fallback (language kept as '{lang}').")
+            else:
+                self._log("✗ No results found.")
+        elif not cards:
             self._log("✗ No results found.")
         else:
             self._log(f"✓ {len(cards)} result(s).")
+        if cards:
             self._populate_results(cards)
 
     def _on_result_selected(self, row: int):
