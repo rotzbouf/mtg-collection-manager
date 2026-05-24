@@ -80,7 +80,6 @@ cd "$SCRIPT_DIR"
     --include-package=starlette \
     --include-package=pytesseract \
     --include-package=anyio \
-    --include-package=httpx \
     --include-package=scipy \
     \
     --nofollow-import-to=torch.cuda \
