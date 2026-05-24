@@ -110,6 +110,8 @@ cd "$SCRIPT_DIR"
     --nofollow-import-to=imaplib \
     --nofollow-import-to=poplib \
     --nofollow-import-to=smtplib \
+    --nofollow-import-to=matplotlib.sphinxext \
+    --nofollow-import-to=matplotlib.testing \
     \
     --include-data-dir=images/mana=images/mana \
     --include-data-dir=server/ui/templates=server/ui/templates \
