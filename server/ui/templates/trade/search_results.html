@@ -25,6 +25,7 @@
           <span>💰 BL: €{{ "%.2f"|format(store.total_bl) }}</span>
           <span>📈 MKT: €{{ "%.2f"|format(store.total_mkt) }}</span>
           {% if store.above_market %}<span style="color:var(--pico-ins-color);">⬆️ {{ store.above_market }} above market</span>{% endif %}
+          {% if store.fx_rate %}<span style="color:var(--pico-secondary);">💱 USD→EUR @ {{ "%.4f"|format(store.fx_rate) }}</span>{% endif %}
         </span>
         {% elif store.status == "fetch_error" %}
         <span style="color:var(--pico-muted-color); font-size:0.875rem;">⚠️ Could not fetch</span>

@@ -139,6 +139,7 @@ def parse_cardkingdom_api(data: dict) -> list[dict]:
         entries.append({
             "name":        name,
             "price":       price,
+            "currency":    "USD",   # Card Kingdom pays in USD
             "set":         set_code,
             "scryfall_id": item.get("scryfall_id") or None,
             "foil":        foil,

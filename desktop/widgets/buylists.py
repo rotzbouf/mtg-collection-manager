@@ -807,6 +807,10 @@ class BuylistsWidget(QWidget):
                 })
                 continue
 
+            fx_rate = await self._apply_fx(entries)
+            if fx_rate:
+                title = f"{title}  (USD→EUR @ {fx_rate:.4f})"
+
             buylist_by_name = {e["name"].lower(): e for e in entries}
             card_names = list(buylist_by_name.keys())
             try:
@@ -1150,8 +1154,13 @@ class BuylistsWidget(QWidget):
             )
             # Place raw JSON in the paste area so parse_buylist_text can detect it
             self._paste_area.setPlainText(_json.dumps(data, separators=(",", ":")))
+
+            # Fetch exchange rate for the status message
+            from core.fx import get_usd_eur_rate
+            rate = await get_usd_eur_rate()
             self._status_lbl.setText(
-                f"Card Kingdom: {buying_count:,} cards actively being bought (prices in USD)"
+                f"Card Kingdom: {buying_count:,} cards being bought"
+                f" — prices in USD, will convert @ {rate:.4f} USD/EUR"
                 " — click 'Match collection'"
             )
         except Exception as exc:
@@ -1185,6 +1194,26 @@ class BuylistsWidget(QWidget):
             self._fetch_js_btn.setEnabled(JsRenderer.available())
             self._fetch_btn.setEnabled(True)
 
+    # ── FX conversion ─────────────────────────────────────────────────────────
+
+    @staticmethod
+    async def _apply_fx(entries: list[dict]) -> Optional[float]:
+        """Convert any USD-priced entries to EUR in-place.
+
+        Returns the exchange rate used, or None if no conversion was needed.
+        USD prices are rounded to 4 decimal places after conversion.
+        """
+        usd_entries = [e for e in entries if e.get("currency") == "USD"]
+        if not usd_entries:
+            return None
+        from core.fx import get_usd_eur_rate
+        rate = await get_usd_eur_rate()
+        for e in usd_entries:
+            if e.get("price") is not None:
+                e["price"]    = round(e["price"] * rate, 4)
+                e["currency"] = "EUR"
+        return rate
+
     @asyncSlot()
     async def _on_match(self):
         from desktop.db import db
@@ -1203,7 +1232,12 @@ class BuylistsWidget(QWidget):
             self._match_btn.setEnabled(True)
             return
 
-        self._status_lbl.setText(f"{len(self._entries)} entries parsed, searching collection…")
+        # Convert USD prices to EUR before matching
+        fx_rate = await self._apply_fx(self._entries)
+        fx_note = f"  (USD→EUR @ {fx_rate:.4f})" if fx_rate else ""
+        self._status_lbl.setText(
+            f"{len(self._entries)} entries parsed{fx_note}, searching collection…"
+        )
 
         # Build lookup: lower(name) → buylist entry
         buylist_by_name: dict[str, dict] = {}

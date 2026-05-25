@@ -11,7 +11,8 @@ from fastapi.templating import Jinja2Templates
 
 import server.ui.deps as deps
 from server.ui.csrf import verify_csrf
-from core.buylist_parser import parse_buylist_text
+from core.buylist_parser import parse_buylist_text, is_cardkingdom_url, CARDKINGDOM_API_URL
+from core.fx import get_usd_eur_rate, usd_to_eur
 
 logger = logging.getLogger(__name__)
 
@@ -40,9 +41,24 @@ def _resolve_key(card: dict, buylist: dict[str, dict]) -> Optional[str]:
 
 
 async def _fetch_url(url: str) -> tuple[Optional[str], Optional[str]]:
-    """Fetch a URL and return (html, error_message)."""
-    import aiohttp
+    """Fetch a URL and return (text, error_message).
+
+    Card Kingdom URLs are redirected to their public JSON API automatically.
+    """
+    import aiohttp, json as _json
     try:
+        # Card Kingdom: use public JSON API directly
+        if is_cardkingdom_url(url):
+            async with aiohttp.ClientSession(
+                headers={**_FETCH_HEADERS, "Accept": "application/json"},
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as session:
+                async with session.get(CARDKINGDOM_API_URL) as resp:
+                    if resp.status != 200:
+                        return None, f"Card Kingdom API: HTTP {resp.status}"
+                    data = await resp.json(content_type=None)
+            return _json.dumps(data, separators=(",", ":")), None
+
         jar = aiohttp.CookieJar(unsafe=True)
         timeout = aiohttp.ClientTimeout(total=20)
         async with aiohttp.ClientSession(
@@ -57,6 +73,19 @@ async def _fetch_url(url: str) -> tuple[Optional[str], Optional[str]]:
         return html, None
     except Exception as exc:
         return None, str(exc)
+
+
+async def _convert_entries(entries: list[dict]) -> Optional[float]:
+    """Convert USD-priced entries to EUR in-place.  Returns rate used or None."""
+    usd = [e for e in entries if e.get("currency") == "USD"]
+    if not usd:
+        return None
+    rate = await get_usd_eur_rate()
+    for e in usd:
+        if e.get("price") is not None:
+            e["price"]    = round(e["price"] * rate, 4)
+            e["currency"] = "EUR"
+    return rate
 
 
 async def _match_buylist(entries: list[dict]) -> list[dict]:
@@ -126,6 +155,7 @@ async def trade_page(request: Request):
         "entry_count": 0,
         "total_bl": 0.0,
         "total_mkt": 0.0,
+        "fx_rate": None,
         "has_brave": bool(brave_key),
     })
 
@@ -176,9 +206,11 @@ async def trade_match(
             "entry_count": 0,
             "total_bl": 0.0,
             "total_mkt": 0.0,
+            "fx_rate": None,
             "has_brave": bool(brave_key),
         })
 
+    fx_rate = await _convert_entries(entries)
     matches = await _match_buylist(entries)
     total_bl  = sum((m["bl_price"]  or 0.0) * m["count"] for m in matches)
     total_mkt = sum((m["mkt_price"] or 0.0) * m["count"] for m in matches)
@@ -191,6 +223,7 @@ async def trade_match(
         "entry_count": len(entries),
         "total_bl": total_bl,
         "total_mkt": total_mkt,
+        "fx_rate": fx_rate,
         "has_brave": bool(brave_key),
     })
 
@@ -256,9 +289,11 @@ async def trade_search_urls(
             store_results.append({
                 "title": title, "url": url, "status": "no_entries",
                 "matches": [], "total_bl": 0.0, "total_mkt": 0.0, "above_market": 0,
+                "fx_rate": None,
             })
             continue
 
+        fx_rate = await _convert_entries(entries)
         matches = await _match_buylist(entries)
         total_bl  = sum((m["bl_price"]  or 0.0) * m["count"] for m in matches)
         total_mkt = sum((m["mkt_price"] or 0.0) * m["count"] for m in matches)
@@ -268,6 +303,7 @@ async def trade_search_urls(
             "title": title, "url": url, "status": "ok",
             "matches": matches,
             "total_bl": total_bl, "total_mkt": total_mkt, "above_market": above,
+            "fx_rate": fx_rate,
         })
 
     # Sort by total buylist value descending

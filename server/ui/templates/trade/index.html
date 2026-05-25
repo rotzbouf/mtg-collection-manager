@@ -70,6 +70,9 @@
         <span>✅ Matches in collection: <strong>{{ matches|length }}</strong></span>
         <span>💰 Buylist value: <strong>€{{ "%.2f"|format(total_bl) }}</strong></span>
         <span>📈 Market value: <strong>€{{ "%.2f"|format(total_mkt) }}</strong></span>
+        {% if fx_rate %}
+        <span style="color: var(--pico-secondary);">💱 USD→EUR @ <strong>{{ "%.4f"|format(fx_rate) }}</strong></span>
+        {% endif %}
         {% set above = matches|selectattr("above_market")|list|length %}
         {% if above %}
         <span style="color: var(--pico-ins-color);">⬆️ Above/near market: <strong>{{ above }}</strong></span>
