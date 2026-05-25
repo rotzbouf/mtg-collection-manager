@@ -256,6 +256,17 @@ class BuylistsWidget(QWidget):
         self._fetch_btn = QPushButton("Fetch")
         self._fetch_btn.setFixedWidth(80)
         url_row.addWidget(self._fetch_btn)
+        from desktop.js_renderer import JsRenderer as _JsR
+        self._fetch_js_btn = QPushButton("Fetch (JS)")
+        self._fetch_js_btn.setFixedWidth(80)
+        self._fetch_js_btn.setEnabled(_JsR.available())
+        self._fetch_js_btn.setToolTip(
+            "Fetch the page using a full browser engine.\n"
+            "Use this for dynamic sites like Card Kingdom, Troll and Toad, etc."
+            if _JsR.available() else
+            "PyQt6-WebEngine not installed — run: pip install PyQt6-WebEngine"
+        )
+        url_row.addWidget(self._fetch_js_btn)
         root.addLayout(url_row)
 
         # ── Paste area ────────────────────────────────────────────────────────
@@ -319,6 +330,7 @@ class BuylistsWidget(QWidget):
 
         # ── Signals ───────────────────────────────────────────────────────────
         self._fetch_btn.clicked.connect(self._on_fetch)
+        self._fetch_js_btn.clicked.connect(self._on_fetch_js)
         self._match_btn.clicked.connect(self._on_match)
         self._paste_area.textChanged.connect(self._on_paste_changed)
         self._sources_combo.currentIndexChanged.connect(self._on_source_selected)
@@ -358,6 +370,36 @@ class BuylistsWidget(QWidget):
         self._search_btn.setEnabled(False)
         ctrl_row.addWidget(self._search_btn)
         root.addLayout(ctrl_row)
+
+        # ── JS-rendering option ───────────────────────────────────────────────
+        from desktop.js_renderer import JsRenderer
+        js_row = QHBoxLayout()
+        self._js_cb = QCheckBox("🌐 Use JS rendering (for dynamic / login-required sites)")
+        self._js_cb.setChecked(False)
+        self._js_cb.setEnabled(JsRenderer.available())
+        if not JsRenderer.available():
+            self._js_cb.setToolTip(
+                "PyQt6-WebEngine not installed.\n"
+                "Install with:  pip install PyQt6-WebEngine"
+            )
+        else:
+            self._js_cb.setToolTip(
+                "Loads pages with a full browser engine so JavaScript-rendered\n"
+                "buylists (Card Kingdom, Troll and Toad, …) are fetched correctly.\n"
+                "Slower (~3 s per page) but reaches many more stores."
+            )
+        js_row.addWidget(self._js_cb)
+
+        self._js_wait_sb = QSpinBox()
+        self._js_wait_sb.setRange(500, 10_000)
+        self._js_wait_sb.setValue(2500)
+        self._js_wait_sb.setSingleStep(500)
+        self._js_wait_sb.setSuffix(" ms wait")
+        self._js_wait_sb.setFixedWidth(115)
+        self._js_wait_sb.setToolTip("How long to wait after the page loads before extracting HTML.\nIncrease for slow stores.")
+        js_row.addWidget(self._js_wait_sb)
+        js_row.addStretch()
+        root.addLayout(js_row)
 
         # ── Progress ──────────────────────────────────────────────────────────
         self._search_progress = QProgressBar()
@@ -523,13 +565,24 @@ class BuylistsWidget(QWidget):
         return None
 
     async def _fetch_url_silent(
-        self, url: str
+        self, url: str, use_js: bool = False, js_wait_ms: int = 2500
     ) -> tuple[Optional[str], str, str]:
         """Fetch *url* and return ``(html, status, final_url)``.
 
         ``status`` is one of: ``"ok"``, ``"login_required"``, ``"fetch_error"``.
+
+        When *use_js* is True the page is rendered through QWebEnginePage so
+        JavaScript-heavy stores are fetched correctly.  Plain aiohttp is always
+        tried first; JS rendering is used as a fallback when the plain response
+        looks like a JS skeleton (< 2 KB) or a login wall.
         """
+        from desktop.js_renderer import JsRenderer
+
+        # ── Plain HTTP fetch (fast path) ──────────────────────────────────────
         import aiohttp
+        plain_html: Optional[str] = None
+        plain_status = "fetch_error"
+        plain_final  = url
         try:
             jar = aiohttp.CookieJar(unsafe=True)
             async with aiohttp.ClientSession(
@@ -537,17 +590,41 @@ class BuylistsWidget(QWidget):
                 timeout=aiohttp.ClientTimeout(total=15),
             ) as s:
                 async with s.get(url, allow_redirects=True) as resp:
-                    final_url  = str(resp.url)
-                    http_status = resp.status
-                    html = await resp.text(errors="replace")
-        except Exception:
-            return None, "fetch_error", url
+                    plain_final  = str(resp.url)
+                    http_status  = resp.status
+                    plain_html   = await resp.text(errors="replace")
 
-        if _detect_login_required(final_url, html, http_status):
-            return html, "login_required", final_url
-        if len(html) < 300:
-            return None, "fetch_error", url
-        return html, "ok", final_url
+            if _detect_login_required(plain_final, plain_html or "", http_status):
+                plain_status = "login_required"
+            elif plain_html and len(plain_html) >= 300:
+                plain_status = "ok"
+            # else stays "fetch_error"
+        except Exception:
+            pass
+
+        # Return plain result if it succeeded and JS mode is not requested
+        if plain_status == "ok" and not use_js:
+            return plain_html, "ok", plain_final
+
+        # ── JS rendering ──────────────────────────────────────────────────────
+        # Use JS when explicitly requested OR when plain fetch got a short/login result
+        should_use_js = use_js or plain_status in ("login_required", "fetch_error") or (
+            plain_html is not None and len(plain_html) < 2_000
+        )
+
+        if should_use_js and JsRenderer.available():
+            js_html = await JsRenderer.instance().render(url, wait_ms=js_wait_ms)
+            if js_html and len(js_html) >= 300:
+                if _detect_login_required(url, js_html, 200):
+                    return js_html, "login_required", url
+                return js_html, "ok", url
+
+        # Fall back to plain result (even if it's login_required / short)
+        if plain_status == "ok" and plain_html:
+            return plain_html, "ok", plain_final
+        if plain_status == "login_required":
+            return plain_html, "login_required", plain_final
+        return None, "fetch_error", url
 
     async def _attempt_login(self, buylist_url: str, creds: dict) -> Optional[str]:
         """Try to log in using stored credentials and return the buylist HTML, or None."""
@@ -624,7 +701,9 @@ class BuylistsWidget(QWidget):
             self._search_status.setText("Enter a search keyword.")
             return
 
-        max_res = self._search_max_sb.value()
+        max_res    = self._search_max_sb.value()
+        use_js     = self._js_cb.isChecked()
+        js_wait_ms = self._js_wait_sb.value()
         self._search_btn.setEnabled(False)
         self._search_status.setText("Searching…")
         self._search_progress.setVisible(True)
@@ -658,7 +737,9 @@ class BuylistsWidget(QWidget):
             self._search_status.setText(f"Fetching {i+1}/{len(urls)}: {title[:60]}…")
             self._search_progress.setValue(i)
 
-            html, fetch_status, final_url = await self._fetch_url_silent(url)
+            html, fetch_status, final_url = await self._fetch_url_silent(
+                url, use_js=use_js, js_wait_ms=js_wait_ms
+            )
 
             # ── Login wall detected ───────────────────────────────────────────
             if fetch_status == "login_required":
@@ -1018,6 +1099,30 @@ class BuylistsWidget(QWidget):
         except Exception as exc:
             self._status_lbl.setText(f"Fetch error: {exc} — paste manually instead")
         finally:
+            self._fetch_btn.setEnabled(True)
+
+    @asyncSlot()
+    async def _on_fetch_js(self):
+        """Fetch the URL using the JS renderer (for dynamic sites)."""
+        from desktop.js_renderer import JsRenderer
+        url = self._url_edit.text().strip()
+        if not url:
+            return
+        self._fetch_js_btn.setEnabled(False)
+        self._fetch_btn.setEnabled(False)
+        wait_ms = 2500
+        self._status_lbl.setText(f"Rendering with browser engine (wait {wait_ms//1000}s+)…")
+        try:
+            html = await JsRenderer.instance().render(url, wait_ms=wait_ms, timeout=40.0)
+            if not html:
+                self._status_lbl.setText("JS render failed — site may block headless browsers. Try pasting manually.")
+                return
+            self._paste_area.setPlainText(html)
+            self._status_lbl.setText(f"JS-rendered {len(html):,} bytes — click 'Match collection'")
+        except Exception as exc:
+            self._status_lbl.setText(f"JS render error: {exc}")
+        finally:
+            self._fetch_js_btn.setEnabled(JsRenderer.available())
             self._fetch_btn.setEnabled(True)
 
     @asyncSlot()

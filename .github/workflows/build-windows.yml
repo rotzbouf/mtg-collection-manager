@@ -62,6 +62,8 @@ jobs:
           pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
           pip install -r deps/requirements.txt
           pip install nuitka ordered-set zstandard
+          # WebEngine needs extra Qt libs not pulled in by PyQt6 alone
+          pip install PyQt6-WebEngine || true
         shell: pwsh
 
       # ── Seed config ─────────────────────────────────────────────────────────
@@ -89,6 +91,8 @@ jobs:
             --include-package=cv2 `
             --include-package=torch `
             --include-package=PIL `
+            --include-package=PyQt6.QtWebEngineCore `
+            --include-package=PyQt6.QtWebEngineWidgets `
             --include-package=discord `
             --include-package=aiohttp `
             --include-package=aiosqlite `

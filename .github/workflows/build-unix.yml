@@ -85,6 +85,8 @@ jobs:
           pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
           pip install -r deps/requirements.txt
           pip install "nuitka${{ matrix.nuitka_pin }}" ordered-set zstandard
+          # WebEngine needs extra Qt libs not pulled in by PyQt6 alone
+          pip install PyQt6-WebEngine || true
 
       # ── Patch Nuitka: allow PyQt6 on macOS (downgrade fatal → warning) ───────
       # Nuitka added support_info: 'error' for PyQt6+macOS in its package config.
@@ -136,6 +138,8 @@ jobs:
             --include-package=cv2 \
             --include-package=torch \
             --include-package=PIL \
+            --include-package=PyQt6.QtWebEngineCore \
+            --include-package=PyQt6.QtWebEngineWidgets \
             --include-package=discord \
             --include-package=aiohttp \
             --include-package=aiosqlite \
