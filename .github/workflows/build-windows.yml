@@ -71,6 +71,21 @@ jobs:
         run: Copy-Item config.json.example config.json
         shell: pwsh
 
+      # ── Raise link.exe stack before Nuitka ─────────────────────────────────
+      # With 3000+ object files, MSVC link.exe overflows its own 1 MB default
+      # stack during whole-program optimisation (STATUS_STACK_OVERFLOW / exit
+      # code 3221225725).  editbin raises the stack on the linker binary itself.
+      - name: Raise MSVC linker stack
+        run: |
+          $linkPath = (where.exe link 2>$null | Select-Object -First 1)
+          if ($linkPath) {
+            Write-Host "Patching $linkPath"
+            & editbin /STACK:67108864 $linkPath
+          } else {
+            Write-Host "link.exe not found on PATH, skipping editbin"
+          }
+        shell: pwsh
+
       # ── Nuitka build ────────────────────────────────────────────────────────
       - name: Build with Nuitka
         run: |
@@ -173,7 +188,7 @@ jobs:
             "--include-data-dir=server/ui/static=server/ui/static" `
             "--include-data-files=config.json=config.json" `
             --standalone `
-            --lto=yes `
+            --lto=no `
             "--jobs=$env:NUMBER_OF_PROCESSORS" `
             --no-progressbar `
             --python-flag=no_site `
