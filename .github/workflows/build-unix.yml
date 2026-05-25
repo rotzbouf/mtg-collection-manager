@@ -17,12 +17,14 @@ jobs:
           - os: ubuntu-22.04
             artifact: mtg-collection-manager-linux
             nuitka_cache: ~/.cache/Nuitka
+            nuitka_pin: ""          # latest (4.x) works fine on Linux
           - os: macos-latest
             artifact: mtg-collection-manager-macos
             nuitka_cache: ~/Library/Caches/Nuitka
+            nuitka_pin: "==2.8.10"  # Nuitka 4.x added a fatal error for PyQt6 on macOS
 
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 120
+    timeout-minutes: 180
 
     steps:
       # ── Checkout ────────────────────────────────────────────────────────────
@@ -82,7 +84,8 @@ jobs:
           # PyTorch CPU-only — GPU not available on runners
           pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
           pip install -r deps/requirements.txt
-          pip install nuitka ordered-set zstandard
+          # macOS: pin Nuitka 2.8.x — 4.x added a fatal PyQt6-on-macOS check
+          pip install "nuitka${{ matrix.nuitka_pin }}" ordered-set zstandard
 
       # ── Seed config ─────────────────────────────────────────────────────────
       - name: Seed config.json
@@ -149,6 +152,40 @@ jobs:
             --nofollow-import-to=smtplib \
             --nofollow-import-to=matplotlib.sphinxext \
             --nofollow-import-to=matplotlib.testing \
+            --nofollow-import-to=sympy \
+            --nofollow-import-to=scipy._lib.tests \
+            --nofollow-import-to=scipy.cluster.tests \
+            --nofollow-import-to=scipy.constants.tests \
+            --nofollow-import-to=scipy.datasets.tests \
+            --nofollow-import-to=scipy.differentiate.tests \
+            --nofollow-import-to=scipy.fft._pocketfft.tests \
+            --nofollow-import-to=scipy.fft.tests \
+            --nofollow-import-to=scipy.fftpack.tests \
+            --nofollow-import-to=scipy.integrate._ivp.tests \
+            --nofollow-import-to=scipy.integrate.tests \
+            --nofollow-import-to=scipy.interpolate.tests \
+            --nofollow-import-to=scipy.io._harwell_boeing.tests \
+            --nofollow-import-to=scipy.io.arff.tests \
+            --nofollow-import-to=scipy.io.matlab.tests \
+            --nofollow-import-to=scipy.io.tests \
+            --nofollow-import-to=scipy.linalg.tests \
+            --nofollow-import-to=scipy.ndimage.tests \
+            --nofollow-import-to=scipy.odr.tests \
+            --nofollow-import-to=scipy.optimize._trustregion_constr.tests \
+            --nofollow-import-to=scipy.optimize.tests \
+            --nofollow-import-to=scipy.signal.tests \
+            --nofollow-import-to=scipy.sparse.csgraph.tests \
+            --nofollow-import-to=scipy.sparse.linalg._dsolve.tests \
+            --nofollow-import-to=scipy.sparse.linalg._eigen.arpack.tests \
+            --nofollow-import-to=scipy.sparse.linalg._eigen.lobpcg.tests \
+            --nofollow-import-to=scipy.sparse.linalg._eigen.tests \
+            --nofollow-import-to=scipy.sparse.linalg._isolve.tests \
+            --nofollow-import-to=scipy.sparse.linalg.tests \
+            --nofollow-import-to=scipy.sparse.tests \
+            --nofollow-import-to=scipy.spatial.tests \
+            --nofollow-import-to=scipy.spatial.transform.tests \
+            --nofollow-import-to=scipy.special.tests \
+            --nofollow-import-to=scipy.stats.tests \
             "--include-data-dir=images/mana=images/mana" \
             "--include-data-dir=server/ui/templates=server/ui/templates" \
             "--include-data-dir=server/ui/static=server/ui/static" \
