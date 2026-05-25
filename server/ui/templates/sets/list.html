@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Set Completion — MTG Collection{% endblock %}
+
+{% block content %}
+<hgroup>
+  <h1>📦 Set Completion Tracker</h1>
+  <p>Sets present in your collection, sorted by set code. Click a set to see owned cards and completion status.</p>
+</hgroup>
+
+{% if sets %}
+<article>
+  <div class="overflow-auto">
+    <table>
+      <thead>
+        <tr>
+          <th>Set code</th>
+          <th>Set name</th>
+          <th style="text-align:right;">Copies</th>
+          <th style="text-align:right;">Distinct cards</th>
+          <th style="text-align:right;">Total value €</th>
+          <th style="text-align:right;">Max card €</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in sets %}
+        <tr>
+          <td><a href="/sets/{{ s.set_code }}"><code>{{ s.set_code }}</code></a></td>
+          <td><a href="/sets/{{ s.set_code }}">{{ s.set_name or s.set_code }}</a></td>
+          <td style="text-align:right;">{{ s.card_count }}</td>
+          <td style="text-align:right;">{{ s.distinct_names }}</td>
+          <td style="text-align:right;">
+            {% if s.total_value_eur %}€{{ "%.2f"|format(s.total_value_eur) }}{% else %}—{% endif %}
+          </td>
+          <td style="text-align:right;">
+            {% if s.max_card_eur %}€{{ "%.2f"|format(s.max_card_eur) }}{% else %}—{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</article>
+{% else %}
+<article>
+  <p>No cards with set information found in your collection.</p>
+</article>
+{% endif %}
+{% endblock %}

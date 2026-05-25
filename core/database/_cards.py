@@ -468,6 +468,50 @@ class _CardsMixin:
                 rows = await cur.fetchall()
         return [_row_to_dict(r) for r in rows]
 
+    async def get_sets_summary(self) -> list[dict]:
+        """Return one row per set present in the collection.
+
+        Columns: set_code, set_name, card_count (total copies), distinct_names,
+                 total_value_eur, max_card_eur.
+        Ordered by set_code ascending.
+        """
+        async with self._db.execute(
+            """
+            SELECT
+                c.set_code,
+                c.set_name,
+                COUNT(c.id)                                                  AS card_count,
+                COUNT(DISTINCT c.name_en)                                    AS distinct_names,
+                ROUND(SUM(COALESCE(cp.price_eur, c.price_eur, 0)), 2)        AS total_value_eur,
+                MAX(COALESCE(cp.price_eur, c.price_eur, 0))                  AS max_card_eur
+            FROM collection c
+            LEFT JOIN card_prices cp ON c.scryfall_id = cp.scryfall_id
+            WHERE c.set_code IS NOT NULL AND c.set_code != ''
+            GROUP BY c.set_code, c.set_name
+            ORDER BY c.set_code ASC
+            """
+        ) as cur:
+            rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+
+    async def get_collection_by_set(self, set_code: str) -> list[dict]:
+        """Return all collection cards for a given set, sorted by collector number.
+
+        Each dict includes price, container name, and all standard card fields.
+        """
+        async with self._db.execute(
+            """
+            SELECT c.*, ct.name AS container_name
+            FROM collection_with_prices c
+            LEFT JOIN containers ct ON c.container_id = ct.id
+            WHERE LOWER(c.set_code) = LOWER(?)
+            ORDER BY CAST(c.collector_number AS INTEGER), c.collector_number
+            """,
+            (set_code,),
+        ) as cur:
+            rows = await cur.fetchall()
+        return [_row_to_dict(r) for r in rows]
+
     async def get_collection_languages(self) -> list[tuple[str, int]]:
         """Return [(language_code, card_count), ...] sorted by count descending.
 

@@ -23,7 +23,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
 import server.ui.deps as deps
-from server.ui.routes import collection, containers, stats, import_export, images
+from server.ui.routes import collection, containers, stats, import_export, images, trade, sets
 from server.ui.csrf import csrf_token as _csrf_token_fn
 from core.version import __version__ as _app_version
 
@@ -71,6 +71,8 @@ app.include_router(containers.router)
 app.include_router(stats.router)
 app.include_router(import_export.router)
 app.include_router(images.router)
+app.include_router(trade.router)
+app.include_router(sets.router)
 
 
 @app.get("/", include_in_schema=False)
