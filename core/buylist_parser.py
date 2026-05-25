@@ -1,9 +1,18 @@
 """Pure-Python buylist text parsing — no Qt dependencies.
 
 Shared between the desktop Buylists widget and the web UI trade assistant.
+
+Supported input formats
+-----------------------
+- Card Kingdom JSON  — raw response from https://api.cardkingdom.com/api/pricelist
+- HTML               — ``<table>`` elements from a fetched page
+- TSV                — browser table copy (name \\t price, or name \\t set \\t price)
+- CSV                — comma-separated equivalent
+- Plain text         — one card name per line, optionally with a trailing price
 """
 from __future__ import annotations
 
+import json as _json
 import re
 from html.parser import HTMLParser
 from typing import Optional
@@ -71,6 +80,73 @@ def _is_header_row(row: list[str]) -> bool:
     return any(kw in first for kw in ("name", "karte", "card", "edition", "set", "preis", "price"))
 
 
+# ── Card Kingdom JSON API ──────────────────────────────────────────────────────
+
+#: Public Card Kingdom pricelist endpoint — no auth required.
+CARDKINGDOM_API_URL = "https://api.cardkingdom.com/api/pricelist"
+
+#: Hostnames recognised as Card Kingdom.
+CARDKINGDOM_HOSTS: frozenset[str] = frozenset({
+    "cardkingdom.com",
+    "www.cardkingdom.com",
+})
+
+
+def is_cardkingdom_url(url: str) -> bool:
+    """Return True if *url* points to a Card Kingdom domain."""
+    try:
+        from urllib.parse import urlparse
+        host = urlparse(url).hostname or ""
+        return host.lower().lstrip("www.") in {h.lstrip("www.") for h in CARDKINGDOM_HOSTS}
+    except Exception:
+        return False
+
+
+def parse_cardkingdom_api(data: dict) -> list[dict]:
+    """Parse a Card Kingdom pricelist API response dict.
+
+    Only cards with ``qty_buying > 0`` are included (i.e. those the store
+    is actively buying).  Prices are in **USD**.
+
+    Each returned dict has keys:
+    ``name``, ``price`` (float | None, USD), ``set`` (str | None, set code),
+    ``scryfall_id`` (str | None), ``foil`` (bool), ``qty_buying`` (int).
+    """
+    entries: list[dict] = []
+    for item in data.get("data", []):
+        try:
+            qty_buying = int(item.get("qty_buying") or 0)
+        except (TypeError, ValueError):
+            qty_buying = 0
+        if qty_buying == 0:
+            continue
+
+        name = (item.get("name") or "").strip()
+        if not name:
+            continue
+
+        try:
+            price: Optional[float] = float(item.get("price_buy") or 0) or None
+        except (TypeError, ValueError):
+            price = None
+
+        # SKU format: "4ED-117" → set code "4ED"
+        sku = item.get("sku") or ""
+        set_code: Optional[str] = sku.split("-")[0] if "-" in sku else None
+
+        foil = str(item.get("is_foil", "false")).lower() == "true"
+
+        entries.append({
+            "name":        name,
+            "price":       price,
+            "set":         set_code,
+            "scryfall_id": item.get("scryfall_id") or None,
+            "foil":        foil,
+            "qty_buying":  qty_buying,
+        })
+    return entries
+
+
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 def parse_buylist_text(text: str) -> list[dict]:
@@ -87,6 +163,15 @@ def parse_buylist_text(text: str) -> list[dict]:
     text = text.strip()
     if not text:
         return []
+
+    # Card Kingdom JSON API response  ("{...\"price_buy\"...")
+    if text.startswith("{") and '"price_buy"' in text:
+        try:
+            data = _json.loads(text)
+            if isinstance(data.get("data"), list):
+                return parse_cardkingdom_api(data)
+        except Exception:
+            pass
 
     # HTML path
     if text.lstrip().startswith("<"):

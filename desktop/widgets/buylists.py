@@ -18,7 +18,11 @@ from PyQt6.QtCore import Qt, QTimer, QPoint
 from PyQt6.QtGui import QColor, QFont
 from qasync import asyncSlot
 
-from core.buylist_parser import parse_buylist_text  # noqa: E402 — after Qt imports
+from core.buylist_parser import (  # noqa: E402 — after Qt imports
+    parse_buylist_text,
+    is_cardkingdom_url,
+    CARDKINGDOM_API_URL,
+)
 
 _DEFAULT_URL = "https://mtgkartenankauf.de/buylist.html"
 
@@ -578,6 +582,23 @@ class BuylistsWidget(QWidget):
         """
         from desktop.js_renderer import JsRenderer
 
+        # ── Card Kingdom: use public JSON API directly ────────────────────────
+        if is_cardkingdom_url(url):
+            import aiohttp as _aiohttp
+            try:
+                async with _aiohttp.ClientSession(
+                    headers={**_FETCH_HEADERS, "Accept": "application/json"},
+                    timeout=_aiohttp.ClientTimeout(total=30),
+                ) as _s:
+                    async with _s.get(CARDKINGDOM_API_URL) as _r:
+                        if _r.status == 200:
+                            import json as _json
+                            _data = await _r.json(content_type=None)
+                            return _json.dumps(_data, separators=(",", ":")), "ok", CARDKINGDOM_API_URL
+            except Exception:
+                pass
+            return None, "fetch_error", url
+
         # ── Plain HTTP fetch (fast path) ──────────────────────────────────────
         import aiohttp
         plain_html: Optional[str] = None
@@ -1071,11 +1092,16 @@ class BuylistsWidget(QWidget):
 
     @asyncSlot()
     async def _on_fetch(self):
-        import aiohttp
         url = self._url_edit.text().strip()
         if not url:
             return
 
+        # Card Kingdom has a public JSON API — skip the HTML path entirely
+        if is_cardkingdom_url(url):
+            await self._fetch_cardkingdom()
+            return
+
+        import aiohttp
         self._fetch_btn.setEnabled(False)
         self._status_lbl.setText("Fetching…")
 
@@ -1100,6 +1126,40 @@ class BuylistsWidget(QWidget):
             self._status_lbl.setText(f"Fetch error: {exc} — paste manually instead")
         finally:
             self._fetch_btn.setEnabled(True)
+
+    async def _fetch_cardkingdom(self) -> None:
+        """Fetch Card Kingdom buylist via their public JSON API (no JS rendering needed)."""
+        import aiohttp, json as _json
+        self._fetch_btn.setEnabled(False)
+        self._fetch_js_btn.setEnabled(False)
+        self._status_lbl.setText("Fetching Card Kingdom buylist via API…")
+        try:
+            async with aiohttp.ClientSession(
+                headers={**_FETCH_HEADERS, "Accept": "application/json"},
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as session:
+                async with session.get(CARDKINGDOM_API_URL) as resp:
+                    if resp.status != 200:
+                        self._status_lbl.setText(f"Card Kingdom API error: HTTP {resp.status}")
+                        return
+                    data = await resp.json(content_type=None)
+
+            buying_count = sum(
+                1 for e in data.get("data", [])
+                if int(e.get("qty_buying") or 0) > 0
+            )
+            # Place raw JSON in the paste area so parse_buylist_text can detect it
+            self._paste_area.setPlainText(_json.dumps(data, separators=(",", ":")))
+            self._status_lbl.setText(
+                f"Card Kingdom: {buying_count:,} cards actively being bought (prices in USD)"
+                " — click 'Match collection'"
+            )
+        except Exception as exc:
+            self._status_lbl.setText(f"Card Kingdom API error: {exc}")
+        finally:
+            self._fetch_btn.setEnabled(True)
+            from desktop.js_renderer import JsRenderer
+            self._fetch_js_btn.setEnabled(JsRenderer.available())
 
     @asyncSlot()
     async def _on_fetch_js(self):
