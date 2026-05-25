@@ -25,6 +25,7 @@ from starlette.middleware.sessions import SessionMiddleware
 import server.ui.deps as deps
 from server.ui.routes import collection, containers, stats, import_export, images
 from server.ui.csrf import csrf_token as _csrf_token_fn
+from core.version import __version__ as _app_version
 
 logging.basicConfig(
     level=logging.INFO,
@@ -36,8 +37,9 @@ _TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "templates")
 _STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
 templates = Jinja2Templates(directory=_TEMPLATES_DIR)
-# Make csrf_token() callable from every template: {{ csrf_token(request) }}
+# Globals available in every template
 templates.env.globals["csrf_token"] = _csrf_token_fn
+templates.env.globals["app_version"] = _app_version
 
 
 @asynccontextmanager

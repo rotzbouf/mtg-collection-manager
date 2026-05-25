@@ -11,39 +11,74 @@
 
 <hgroup>
   <h2>{{ container.name }}</h2>
-  <p>{{ container.type | capitalize }} — {{ total }} cards</p>
+  <p>
+    {{ container.type | capitalize }}
+    {% if container._format_label %}
+    · <span class="format-badge format-{{ container.deck_format }}">{{ container._format_label }}</span>
+    {% endif %}
+    · {{ total }} card{{ 's' if total != 1 }}
+    {% if container.total_value_eur %}· €{{ "%.2f"|format(container.total_value_eur) }}{% endif %}
+  </p>
 </hgroup>
 
 <details>
-  <summary>Rename or Delete</summary>
-  <form method="post" action="/containers/{{ container.id }}/rename" style="margin-bottom:1rem">
-    <input type="hidden" name="_csrf_token" value="{{ csrf_token(request) }}">
-    <div class="grid">
-      <input type="text" name="name" value="{{ container.name }}" required>
-      <button type="submit">Rename</button>
+  <summary>Edit container</summary>
+
+  <div class="grid" style="margin-top:0.75rem">
+    {# ── Rename ── #}
+    <div>
+      <h6>Rename</h6>
+      <form method="post" action="/containers/{{ container.id }}/rename">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token(request) }}">
+        <div style="display:flex;gap:0.5rem;align-items:flex-end">
+          <input type="text" name="name" value="{{ container.name }}" required style="margin:0">
+          <button type="submit" style="white-space:nowrap">Rename</button>
+        </div>
+      </form>
     </div>
-  </form>
+
+    {# ── Format (deck/commander only) ── #}
+    {% if is_deck %}
+    <div>
+      <h6>Format</h6>
+      <form method="post" action="/containers/{{ container.id }}/set-format">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token(request) }}">
+        <div style="display:flex;gap:0.5rem;align-items:flex-end">
+          <select name="deck_format" style="margin:0">
+            {% for code, label in deck_formats %}
+            <option value="{{ code }}" {% if container.deck_format == code %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+          <button type="submit" style="white-space:nowrap">Set</button>
+        </div>
+      </form>
+    </div>
+    {% endif %}
+  </div>
+
   {% if total == 0 %}
-  <form method="post" action="/containers/{{ container.id }}/delete" onsubmit="return confirm('Delete empty container?')">
+  <hr>
+  <form method="post" action="/containers/{{ container.id }}/delete"
+        onsubmit="return confirm('Delete empty container {{ container.name | e }}?')">
     <input type="hidden" name="_csrf_token" value="{{ csrf_token(request) }}">
-    <button type="submit" class="outline contrast">Delete Container</button>
+    <button type="submit" class="outline contrast" style="width:auto">Delete container</button>
   </form>
   {% else %}
-  <p><small>Container cannot be deleted while it has cards.</small></p>
+  <p style="margin-top:0.75rem"><small>Container cannot be deleted while it has cards.</small></p>
   {% endif %}
 </details>
 
 <hr>
 
 {% if cards %}
-<table>
+<table class="overflow-auto">
   <thead>
     <tr>
       <th></th>
       <th>Name</th>
-      <th>Set</th>
+      <th>Set / #</th>
       <th>Lang</th>
-      <th>Condition</th>
+      <th>Cond</th>
       <th>Foil</th>
       <th>Price (EUR)</th>
     </tr>
@@ -56,14 +91,18 @@
         <img src="/images/{{ card.scryfall_id }}" alt="" style="width:36px;height:50px;object-fit:cover;border-radius:3px" loading="lazy" onerror="this.style.display='none'">
         {% endif %}
       </td>
-      <td><a href="/collection/{{ card.id }}">{{ card._display_name }}</a></td>
-      <td><small>{{ card.set_code | upper if card.set_code }}</small></td>
+      <td>
+        <a href="/collection/{{ card.id }}">{{ card._display_name }}</a>
+        {% if card.rarity == 'mythic' %}<span class="rarity mythic">M</span>
+        {% elif card.rarity == 'rare' %}<span class="rarity rare">R</span>
+        {% elif card.rarity == 'uncommon' %}<span class="rarity uncommon">U</span>
+        {% else %}<span class="rarity common">C</span>{% endif %}
+      </td>
+      <td><small>{{ card.set_code | upper if card.set_code }}{% if card.collector_number %} #{{ card.collector_number }}{% endif %}</small></td>
       <td>{{ card._flag }}</td>
       <td><small>{{ card.condition or 'NM' }}</small></td>
       <td>{% if card.foil %}✨{% endif %}</td>
-      <td>
-        {% if card.price_eur is not none %}<small>€{{ "%.2f"|format(card.price_eur) }}</small>{% else %}<small>—</small>{% endif %}
-      </td>
+      <td>{% if card.price_eur is not none %}<small>€{{ "%.2f"|format(card.price_eur) }}</small>{% else %}<small>—</small>{% endif %}</td>
     </tr>
     {% endfor %}
   </tbody>

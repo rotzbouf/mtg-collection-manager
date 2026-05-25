@@ -1,12 +1,37 @@
 /* MTG Collection Manager — UI overrides on top of Pico CSS */
 
-/* Nav brand */
-header nav a.contrast {
+/* ── Brand / Nav ──────────────────────────────────────────────────────────── */
+header nav a.brand {
   font-weight: bold;
   text-decoration: none;
 }
 
-/* Rarity badges */
+a[aria-current="page"] {
+  font-weight: bold;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.theme-btn {
+  font-size: 1rem;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+/* ── Version tag ──────────────────────────────────────────────────────────── */
+.version-tag {
+  opacity: 0.6;
+  font-family: monospace;
+}
+
+/* ── Large stat numbers ───────────────────────────────────────────────────── */
+.stat-big {
+  font-size: 2rem;
+  margin: 0;
+  font-weight: bold;
+}
+
+/* ── Rarity badges ────────────────────────────────────────────────────────── */
 .rarity {
   display: inline-block;
   width: 1.1rem;
@@ -22,16 +47,36 @@ header nav a.contrast {
 .rarity.mythic   { background: #e06b1a; color: #fff; }
 .rarity.rare     { background: #c5a028; color: #fff; }
 .rarity.uncommon { background: #607d8b; color: #fff; }
-.rarity.common   { background: #555; color: #fff; }
+.rarity.common   { background: #555;    color: #fff; }
 
-/* Error articles */
+/* ── Format badges ────────────────────────────────────────────────────────── */
+.format-badge {
+  display: inline-block;
+  padding: 0.1rem 0.45rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.format-commander { background: #3d2b6b; color: #d6bcfa; }
+.format-modern    { background: #1a3a6b; color: #90caf9; }
+.format-pioneer   { background: #1e3a1e; color: #a5d6a7; }
+.format-standard  { background: #6b1a1a; color: #ef9a9a; }
+.format-legacy    { background: #3a2d1a; color: #ffcc80; }
+.format-vintage   { background: #4a1a4a; color: #ce93d8; }
+.format-pauper    { background: #1a3a3a; color: #80deea; }
+.format-timeless  { background: #2a2a1a; color: #fff59d; }
+.format-historic  { background: #1a2a3a; color: #80cbc4; }
+
+/* ── Error articles ───────────────────────────────────────────────────────── */
 article.error {
   border-left: 4px solid var(--pico-del-color, #c0392b);
   background: rgba(192, 57, 43, 0.08);
   padding: 0.75rem 1rem;
 }
 
-/* Card placeholder */
+/* ── Card image placeholder ───────────────────────────────────────────────── */
 .card-placeholder {
   width: 100%;
   aspect-ratio: 5/7;
@@ -45,15 +90,13 @@ article.error {
   border: 1px dashed var(--pico-border-color);
 }
 
-/* Tighter table on small screens */
+/* ── Tables ───────────────────────────────────────────────────────────────── */
 @media (max-width: 768px) {
   table { font-size: 0.85rem; }
 }
-
-/* Overflow scroll for wide tables */
 .overflow-auto { overflow-x: auto; display: block; }
 
-/* Footer */
+/* ── Footer ───────────────────────────────────────────────────────────────── */
 footer {
   margin-top: 2rem;
   padding: 1rem 0;

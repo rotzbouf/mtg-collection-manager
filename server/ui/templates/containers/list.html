@@ -8,11 +8,12 @@
 </hgroup>
 
 {% if containers %}
-<table>
+<table class="overflow-auto">
   <thead>
     <tr>
       <th>Name</th>
       <th>Type</th>
+      <th>Format</th>
       <th>Cards</th>
       <th>Value (EUR)</th>
       <th></th>
@@ -23,13 +24,17 @@
     <tr>
       <td><a href="/containers/{{ ct.id }}">{{ ct.name }}</a></td>
       <td><small>{{ ct.type }}</small></td>
-      <td>{{ ct.card_count }}</td>
       <td>
-        {% if ct.total_value_eur %}€{{ "%.2f"|format(ct.total_value_eur) }}{% else %}—{% endif %}
+        {% if ct._format_label %}
+        <span class="format-badge format-{{ ct.deck_format }}">{{ ct._format_label }}</span>
+        {% else %}—{% endif %}
       </td>
+      <td>{{ ct.card_count }}</td>
+      <td>{% if ct.total_value_eur %}€{{ "%.2f"|format(ct.total_value_eur) }}{% else %}—{% endif %}</td>
       <td>
         {% if ct.card_count == 0 %}
-        <form method="post" action="/containers/{{ ct.id }}/delete" style="display:inline" onsubmit="return confirm('Delete empty container?')">
+        <form method="post" action="/containers/{{ ct.id }}/delete" style="display:inline"
+              onsubmit="return confirm('Delete empty container {{ ct.name | e }}?')">
           <input type="hidden" name="_csrf_token" value="{{ csrf_token(request) }}">
           <button type="submit" class="outline secondary" style="padding:0.2rem 0.5rem;font-size:0.8rem">✕</button>
         </form>
@@ -54,13 +59,34 @@
     </label>
     <label>
       Type
-      <select name="type">
+      <select name="type" id="new-container-type">
         {% for t in container_types %}
         <option value="{{ t }}">{{ t | capitalize }}</option>
         {% endfor %}
       </select>
     </label>
+    <div id="deck-format-group" style="display:none">
+      <label>
+        Format
+        <select name="deck_format">
+          {% for code, label in deck_formats %}
+          <option value="{{ code }}">{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
   </div>
   <button type="submit">Create</button>
 </form>
+
+<script>
+  var _deckTypes = {{ deck_types | tojson }};
+  var typeSelect = document.getElementById('new-container-type');
+  var fmtGroup   = document.getElementById('deck-format-group');
+  function syncFmtGroup() {
+    fmtGroup.style.display = _deckTypes.includes(typeSelect.value) ? '' : 'none';
+  }
+  typeSelect.addEventListener('change', syncFmtGroup);
+  syncFmtGroup();
+</script>
 {% endblock %}

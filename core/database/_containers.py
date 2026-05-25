@@ -27,13 +27,14 @@ class _ContainersMixin:
                 ct.id,
                 ct.name,
                 ct.type,
+                ct.deck_format,
                 COUNT(c.id)                                                            AS card_count,
                 ROUND(SUM(COALESCE(cp.price_eur, c.price_eur, 0)), 2)                 AS total_value_eur,
                 MAX(COALESCE(cp.price_eur, c.price_eur, 0))                           AS max_card_eur
             FROM containers ct
             LEFT JOIN collection c ON c.container_id = ct.id
             LEFT JOIN card_prices cp ON c.scryfall_id = cp.scryfall_id
-            GROUP BY ct.id, ct.name, ct.type
+            GROUP BY ct.id, ct.name, ct.type, ct.deck_format
             ORDER BY total_value_eur DESC
             """
         ) as cur:

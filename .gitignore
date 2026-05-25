@@ -25,6 +25,7 @@ Thumbs.db
 # Build output — ignore contents but keep the spec file
 build/*
 !build/*.spec
+dist/
 
 # Logs
 *.log
