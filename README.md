@@ -442,9 +442,9 @@ sudo bash server/mtg-webui_service_install.sh
 |---|---|
 | View Channel | See channels and incoming messages |
 | Send Messages | Post scan status, command responses, error messages |
-| Embed Links | Send card confirmations, search results, stats, showcase |
-| Attach Files | Send deck `.txt`, export CSV/JSON, backup `.db.xz`, charts |
-| Read Message History | Required for showcase channel welcome embed |
+| Embed Links | Send scan confirmations, export summaries |
+| Attach Files | Send export CSV/JSON, backup `.db.xz` |
+| Read Message History | Read image attachments from users in scan channel |
 
 Two **privileged gateway intents** must be enabled in the Discord Developer Portal:
 - **Message Content Intent** — read image attachments in the scan channel
@@ -458,35 +458,16 @@ Admin  ≥  Collector  ≥  Guest
 
 | Role | Permissions |
 |---|---|
-| Guest | `/list`, `/search`, `/stats`, `/showcase`, `/export`, `/browse`, `/deck propose` |
-| Collector | `/add`, Browse → Edit / Move / Resync + all Guest |
-| Admin | Browse → Delete, Rename container, `/resync`, `/backup` + all Collector |
+| Guest | `/export`, `/import` |
+| Admin | `/resync`, `/backup` + all Guest |
 
 ### Discord Commands
 
-**Adding cards**
+**Scanning**
 
 | Command | Description |
 |---|---|
-| `/add name: [set_code:] [condition:] [foil:] [quantity:]` | Add a card by name |
 | Drop image in scan channel | Auto-scan via OCR; container picker on first scan |
-
-**Viewing**
-
-| Command | Description |
-|---|---|
-| `/list [sort:] [language:]` | Browse collection (paginated, 10 per page) |
-| `/search query:` | Full-text search across all fields |
-| `/browse` | Interactive container and card browser |
-| `/stats` | Totals, rarity breakdown, top-5 by value, per-container overview |
-| `/showcase` | 5 most valuable cards with image, price, and price-history chart |
-
-**Containers**
-
-| Command | Description |
-|---|---|
-| `/container list` | All containers with card count and EUR value |
-| `/container move source: destination:` | Move all cards between containers |
 
 **Import / Export / Backup**
 
@@ -497,14 +478,10 @@ Admin  ≥  Collector  ≥  Guest
 | `/backup create` | Save server copy + send `.db.xz` attachment |
 | `/backup restore` | Attach `.db` / `.db.gz` / `.db.xz` to restore |
 
-**Deckbuilder**
-
-| Command | Description |
-|---|---|
-| `/deck propose [format:] [commander:]` | Commander (100-card) or 60-card deck from your collection |
-
-**Resync**
+**Admin**
 
 | Command | Description |
 |---|---|
 | `/resync [id:]` | Re-fetch Scryfall data; omit `id` to resync all cards |
+
+> **Note:** Browse, search, stats, deck building, and collection management are available via the **web UI** (`/` on the configured port) and the **desktop app**. Discord commands cover scanning, import/export, and backup only.

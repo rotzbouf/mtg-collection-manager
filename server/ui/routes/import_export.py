@@ -8,13 +8,12 @@ import lzma
 import os
 import tempfile
 import time as _time
-import uuid
 import uuid as _uuid
 from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, File, Form, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
 import server.ui.deps as deps
@@ -258,7 +257,7 @@ async def backup_restore_upload(
         return _render(request, ctx)
 
     # Save to temp file so we don't need to pass raw bytes through the form
-    token = uuid.uuid4().hex
+    token = _uuid.uuid4().hex
     tmp_path = os.path.join(tempfile.gettempdir(), f"mtg_restore_{token}.db")
     await asyncio.to_thread(_write_tmp, tmp_path, data)  # H-4: proper file handle
     _RESTORE_TMP[token] = (tmp_path, _time.monotonic())  # M-3: store with timestamp

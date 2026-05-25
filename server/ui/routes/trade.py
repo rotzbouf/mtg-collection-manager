@@ -12,7 +12,7 @@ from fastapi.templating import Jinja2Templates
 import server.ui.deps as deps
 from server.ui.csrf import verify_csrf
 from core.buylist_parser import parse_buylist_text, is_cardkingdom_url, CARDKINGDOM_API_URL
-from core.fx import get_usd_eur_rate, usd_to_eur
+from core.fx import get_usd_eur_rate
 
 logger = logging.getLogger(__name__)
 
