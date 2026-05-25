@@ -256,8 +256,8 @@ class BuylistsWidget(QWidget):
 
         ctrl_row.addWidget(QLabel("Max results:"))
         self._search_max_sb = QSpinBox()
-        self._search_max_sb.setRange(1, 20)
-        self._search_max_sb.setValue(10)
+        self._search_max_sb.setRange(1, 30)
+        self._search_max_sb.setValue(15)
         self._search_max_sb.setFixedWidth(55)
         ctrl_row.addWidget(self._search_max_sb)
 
@@ -332,7 +332,8 @@ class BuylistsWidget(QWidget):
         h_splitter.addWidget(right)
         h_splitter.setStretchFactor(0, 1)
         h_splitter.setStretchFactor(1, 2)
-        root.addWidget(h_splitter)
+        h_splitter.setMinimumHeight(420)
+        root.addWidget(h_splitter, stretch=1)
 
         # ── Signals ───────────────────────────────────────────────────────────
         self._search_btn.clicked.connect(self._on_search)
@@ -390,7 +391,7 @@ class BuylistsWidget(QWidget):
         brave = _cfg.load().get("brave", {})
         api_key = brave.get("api_key", "")
         keywords = brave.get("keywords", [])
-        max_res = brave.get("max_results", 10)
+        max_res = brave.get("max_results", 15)
         self._search_kw_combo.blockSignals(True)
         current = self._search_kw_combo.currentText()
         self._search_kw_combo.clear()
