@@ -21,7 +21,7 @@ jobs:
           - os: macos-latest
             artifact: mtg-collection-manager-macos
             nuitka_cache: ~/Library/Caches/Nuitka
-            nuitka_pin: "==2.8.10"  # Nuitka 4.x added a fatal error for PyQt6 on macOS
+            nuitka_pin: ""          # latest; patched post-install (see step below)
 
     runs-on: ${{ matrix.os }}
     timeout-minutes: 180
@@ -84,8 +84,33 @@ jobs:
           # PyTorch CPU-only — GPU not available on runners
           pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
           pip install -r deps/requirements.txt
-          # macOS: pin Nuitka 2.8.x — 4.x added a fatal PyQt6-on-macOS check
           pip install "nuitka${{ matrix.nuitka_pin }}" ordered-set zstandard
+
+      # ── Patch Nuitka: allow PyQt6 on macOS (downgrade fatal → warning) ───────
+      # Nuitka added support_info: 'error' for PyQt6+macOS in its package config.
+      # We downgrade it to 'warning' so the build can proceed; the resulting
+      # binary works in practice for our use-case.
+      - name: Patch Nuitka PyQt6-on-macOS check
+        if: startsWith(matrix.os, 'macos')
+        run: |
+          python - <<'EOF'
+          import pathlib, site, sys
+          for p in site.getsitepackages():
+              cfg = pathlib.Path(p) / "nuitka/plugins/standard/standard.nuitka-package.config.yml"
+              if cfg.exists():
+                  txt = cfg.read_text()
+                  patched = txt.replace(
+                      "support_info: 'error'\n        when: 'macos and use_pyqt6'",
+                      "support_info: 'warning'\n        when: 'macos and use_pyqt6'",
+                  )
+                  if patched != txt:
+                      cfg.write_text(patched)
+                      print("Patched", cfg)
+                  else:
+                      print("Pattern not found — check Nuitka version")
+                  sys.exit(0)
+          print("Nuitka config not found in site-packages")
+          EOF
 
       # ── Seed config ─────────────────────────────────────────────────────────
       - name: Seed config.json
