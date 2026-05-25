@@ -337,6 +337,8 @@ class BuylistsWidget(QWidget):
         # ── Signals ───────────────────────────────────────────────────────────
         self._search_btn.clicked.connect(self._on_search)
         self._store_table.itemSelectionChanged.connect(self._on_store_selected)
+        self._store_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._store_table.customContextMenuRequested.connect(self._on_store_context_menu)
         self._detail_table.itemSelectionChanged.connect(self._on_detail_row_selected)
         self._detail_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._detail_table.customContextMenuRequested.connect(
@@ -592,6 +594,71 @@ class BuylistsWidget(QWidget):
 
         self._store_table.setSortingEnabled(True)
         self._store_table.blockSignals(False)
+
+    # ── Store context menu — save to config ───────────────────────────────────
+
+    def _on_store_context_menu(self, pos: QPoint):
+        import core.config as _cfg
+
+        item = self._store_table.itemAt(pos)
+        if item is None:
+            return
+        row = self._store_table.row(item)
+        name_item = self._store_table.item(row, 0)
+        if name_item is None:
+            return
+        store_idx = name_item.data(Qt.ItemDataRole.UserRole)
+        if store_idx is None or store_idx >= len(self._search_results):
+            return
+
+        store = self._search_results[store_idx]
+        url   = store.get("url", "")
+        title = store.get("title") or url
+
+        # Check if already saved
+        config  = _cfg.load()
+        sources = config.get("buylist_sources", [])
+        already = any(s.get("url", "").rstrip("/") == url.rstrip("/") for s in sources)
+
+        menu = QMenu(self)
+        if already:
+            saved_act = menu.addAction(f"✅ Already saved: {title[:50]}")
+            saved_act.setEnabled(False)
+        else:
+            save_act = menu.addAction(f"💾 Save source: {title[:50]}")
+            menu.addSeparator()
+
+        open_act = menu.addAction("🌐 Open URL in browser")
+
+        action = menu.exec(self._store_table.viewport().mapToGlobal(pos))
+        if not action:
+            return
+
+        if action == open_act:
+            import webbrowser
+            webbrowser.open(url)
+            return
+
+        if already or action.text().startswith("✅"):
+            return
+
+        # Save the new source
+        sources.append({"name": title, "url": url})
+        config["buylist_sources"] = sources
+        try:
+            _cfg.save(config)
+            self._search_status.setText(f"✅ Saved '{title[:40]}' to sources.")
+            QTimer.singleShot(4000, lambda: self._search_status.setText(""))
+            self._load_sources()          # refresh the Manual tab combo
+            self._sources_combo.blockSignals(True)
+            # Select the newly added entry in the sources combo
+            for i in range(self._sources_combo.count()):
+                if self._sources_combo.itemData(i) == url:
+                    self._sources_combo.setCurrentIndex(i)
+                    break
+            self._sources_combo.blockSignals(False)
+        except Exception as exc:
+            self._search_status.setText(f"Error saving: {exc}")
 
     def _on_store_selected(self):
         row = self._store_table.currentRow()
