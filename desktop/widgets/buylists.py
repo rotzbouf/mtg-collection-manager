@@ -812,6 +812,7 @@ class BuylistsWidget(QWidget):
                 title = f"{title}  (USD→EUR @ {fx_rate:.4f})"
 
             buylist_by_name = {e["name"].lower(): e for e in entries}
+            buylist_by_sid  = {e["scryfall_id"]: e for e in entries if e.get("scryfall_id")}
             card_names = list(buylist_by_name.keys())
             try:
                 collection_cards = await db.get_cards_by_names(
@@ -822,14 +823,15 @@ class BuylistsWidget(QWidget):
 
             grouped: dict[str, dict] = {}
             for card in collection_cards:
-                key = self._resolve_key(card, buylist_by_name)
-                if key is None:
+                result = self._resolve_key(card, buylist_by_name, buylist_by_sid)
+                if result is None:
                     continue
+                key, bl_entry = result
                 if key not in grouped:
                     grouped[key] = {
                         "name":      card.get("name_en") or card.get("printed_name") or key,
-                        "set_code":  buylist_by_name[key].get("set") or card.get("set_code") or "",
-                        "bl_price":  buylist_by_name[key].get("price"),
+                        "set_code":  bl_entry.get("set") or card.get("set_code") or "",
+                        "bl_price":  bl_entry.get("price"),
                         "mkt_price": card.get("price_eur"),
                         "count":     0,
                         "container": card.get("container_name") or "—",
@@ -1239,10 +1241,13 @@ class BuylistsWidget(QWidget):
             f"{len(self._entries)} entries parsed{fx_note}, searching collection…"
         )
 
-        # Build lookup: lower(name) → buylist entry
+        # Build lookups: by name and (when available) by scryfall_id
         buylist_by_name: dict[str, dict] = {}
+        buylist_by_sid:  dict[str, dict] = {}
         for e in self._entries:
             buylist_by_name[e["name"].lower()] = e
+            if e.get("scryfall_id"):
+                buylist_by_sid[e["scryfall_id"]] = e
 
         card_names = list(buylist_by_name.keys())
         collection_cards = await db.get_cards_by_names(
@@ -1252,14 +1257,15 @@ class BuylistsWidget(QWidget):
         # Group collection rows by normalised name, attach buylist info
         grouped: dict[str, dict] = {}
         for card in collection_cards:
-            key = self._resolve_key(card, buylist_by_name)
-            if key is None:
+            result = self._resolve_key(card, buylist_by_name, buylist_by_sid)
+            if result is None:
                 continue
+            key, bl_entry = result
             if key not in grouped:
                 grouped[key] = {
                     "name":      card.get("name_en") or card.get("printed_name") or key,
-                    "set_code":  buylist_by_name[key].get("set") or card.get("set_code") or "",
-                    "bl_price":  buylist_by_name[key].get("price"),
+                    "set_code":  bl_entry.get("set") or card.get("set_code") or "",
+                    "bl_price":  bl_entry.get("price"),
                     "mkt_price": card.get("price_eur"),
                     "count":     0,
                     "container": card.get("container_name") or "—",
@@ -1373,11 +1379,42 @@ class BuylistsWidget(QWidget):
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _resolve_key(card: dict, buylist: dict[str, dict]) -> Optional[str]:
+    @staticmethod
+    def _resolve_key(
+        card: dict,
+        buylist_by_name: dict[str, dict],
+        buylist_by_sid: dict[str, dict] | None = None,
+    ) -> "tuple[str, dict] | None":
+        """Return ``(group_key, bl_entry)`` for the best match, or ``None``.
+
+        Match priority
+        --------------
+        1. ``scryfall_id`` — exact printing match (used for Card Kingdom entries
+           which carry a ``scryfall_id`` field).
+        2. Card name + set code — when the buylist entry carries a set code,
+           the collection card must be from the same set.
+        3. Card name only — fallback when the buylist has no set information.
+        """
+        # 1. Exact scryfall_id
+        sid = card.get("scryfall_id")
+        if sid and buylist_by_sid:
+            entry = buylist_by_sid.get(sid)
+            if entry is not None:
+                return entry["name"].lower(), entry
+
+        # 2 & 3. Name match, with optional set filter
         for field in ("name_en", "name_de", "printed_name"):
             v = (card.get(field) or "").lower()
-            if v and v in buylist:
-                return v
+            if not v or v not in buylist_by_name:
+                continue
+            entry    = buylist_by_name[v]
+            bl_set   = (entry.get("set") or "").upper().strip()
+            card_set = (card.get("set_code") or "").upper().strip()
+            # Require set match only when both sides have a set code
+            if bl_set and card_set and bl_set != card_set:
+                continue
+            return v, entry
+
         return None
 
     def _render_table(self):

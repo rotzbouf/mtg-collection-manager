@@ -31,12 +31,32 @@ _FETCH_HEADERS = {
 }
 
 
-def _resolve_key(card: dict, buylist: dict[str, dict]) -> Optional[str]:
-    """Try matching a collection card to a buylist entry by any name field."""
+def _resolve_key(
+    card: dict,
+    buylist_by_name: dict[str, dict],
+    buylist_by_sid: dict[str, dict] | None = None,
+) -> "tuple[str, dict] | None":
+    """Return ``(group_key, bl_entry)`` for the best match, or ``None``.
+
+    Priority: scryfall_id → name + set code → name only.
+    """
+    sid = card.get("scryfall_id")
+    if sid and buylist_by_sid:
+        entry = buylist_by_sid.get(sid)
+        if entry is not None:
+            return entry["name"].lower(), entry
+
     for field in ("name_en", "name_de", "printed_name"):
         v = (card.get(field) or "").lower()
-        if v and v in buylist:
-            return v
+        if not v or v not in buylist_by_name:
+            continue
+        entry    = buylist_by_name[v]
+        bl_set   = (entry.get("set") or "").upper().strip()
+        card_set = (card.get("set_code") or "").upper().strip()
+        if bl_set and card_set and bl_set != card_set:
+            continue
+        return v, entry
+
     return None
 
 
@@ -98,8 +118,11 @@ async def _match_buylist(entries: list[dict]) -> list[dict]:
         return []
 
     buylist_by_name: dict[str, dict] = {}
+    buylist_by_sid:  dict[str, dict] = {}
     for e in entries:
         buylist_by_name[e["name"].lower()] = e
+        if e.get("scryfall_id"):
+            buylist_by_sid[e["scryfall_id"]] = e
 
     collection_cards = await deps.db.get_cards_by_names(
         list(buylist_by_name.keys()),
@@ -108,11 +131,11 @@ async def _match_buylist(entries: list[dict]) -> list[dict]:
 
     grouped: dict[str, dict] = {}
     for card in collection_cards:
-        key = _resolve_key(card, buylist_by_name)
-        if key is None:
+        result = _resolve_key(card, buylist_by_name, buylist_by_sid)
+        if result is None:
             continue
+        key, bl_entry = result
         if key not in grouped:
-            bl_entry = buylist_by_name[key]
             grouped[key] = {
                 "name":      card.get("name_en") or card.get("printed_name") or key,
                 "set_code":  bl_entry.get("set") or card.get("set_code") or "",
