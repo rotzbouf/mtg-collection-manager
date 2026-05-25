@@ -10,9 +10,8 @@
   },
   "app": {
     "backup_dir": "backups",
-    "price_source": "scryfall",
     "ui_port": 8080,
-    "ui_host": "0.0.0.0",
+    "ui_host": "127.0.0.1",
     "debug_scan_preview": false
   },
   "container_types": [
@@ -26,5 +25,28 @@
     "deck",
     "commander",
     "overcount"
-  ]
+  ],
+  "buylist_sources": [
+    {"name": "My Local Store", "url": "https://example.com/buylist"}
+  ],
+  "store_credentials": [
+    {
+      "domain": "example.com",
+      "username": "your@email.com",
+      "password": "yourpassword",
+      "login_url": "https://example.com/login"
+    }
+  ],
+  "brave": {
+    "api_key": "YOUR_BRAVE_SEARCH_API_KEY",
+    "keywords": [
+      "MTG Karten Ankauf Buylist",
+      "Magic the Gathering Ankauf Buylist",
+      "MTG buylist",
+      "Magic the Gathering buylist",
+      "MTG singles buylist",
+      "MTG we buy singles"
+    ],
+    "max_results": 15
+  }
 }

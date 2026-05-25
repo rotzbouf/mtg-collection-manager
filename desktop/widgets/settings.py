@@ -1128,7 +1128,107 @@ class SettingsWidget(QWidget):
 
         self._brave_save_btn.clicked.connect(self._on_brave_save)
 
+        layout.addSpacing(4)
+        layout.addWidget(self._divider())
+        layout.addSpacing(4)
+
+        # ── Store Login Credentials ───────────────────────────────────────── #
+        layout.addWidget(self._section_header("Store Login Credentials"))
+        layout.addWidget(QLabel(
+            "Save login details for stores that require an account to view their buylist.\n"
+            "The webcrawler will auto-detect the login form and POST your credentials.\n"
+            "⚠ Stored in plaintext in config.json — do not use for sensitive accounts."
+        ))
+
+        self._creds_table = QTableWidget(0, 3)
+        self._creds_table.setHorizontalHeaderLabels(["Domain", "Username", "Login URL"])
+        ch = self._creds_table.horizontalHeader()
+        ch.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        ch.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
+        ch.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self._creds_table.setColumnWidth(0, 180)
+        self._creds_table.setColumnWidth(1, 140)
+        self._creds_table.verticalHeader().setVisible(False)
+        self._creds_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._creds_table.setAlternatingRowColors(True)
+        self._creds_table.setMaximumHeight(150)
+        layout.addWidget(self._creds_table)
+
+        for cred in cfg.load().get("store_credentials", []):
+            self._creds_add_row(
+                cred.get("domain", ""),
+                cred.get("username", ""),
+                cred.get("login_url", ""),
+            )
+
+        creds_btn_row = QHBoxLayout()
+        self._creds_remove_btn = QPushButton("Remove selected")
+        self._creds_remove_btn.setFixedWidth(140)
+        self._creds_save_btn   = QPushButton("Save")
+        self._creds_save_btn.setFixedWidth(90)
+        self._creds_status     = QLabel("")
+        self._creds_status.setStyleSheet("color: #888;")
+        creds_btn_row.addWidget(self._creds_remove_btn)
+        creds_btn_row.addWidget(self._creds_save_btn)
+        creds_btn_row.addWidget(self._creds_status)
+        creds_btn_row.addStretch()
+        layout.addLayout(creds_btn_row)
+        layout.addWidget(QLabel(
+            "<small>💡 To add credentials: right-click a store in Buylists → Web Search → "
+            "<i>Store credentials…</i></small>"
+        ))
+        layout.addStretch()
+
+        self._creds_remove_btn.clicked.connect(self._on_creds_remove_row)
+        self._creds_save_btn.clicked.connect(self._on_creds_save)
+
         return tab
+
+    def _creds_add_row(self, domain: str = "", username: str = "", login_url: str = ""):
+        row = self._creds_table.rowCount()
+        self._creds_table.insertRow(row)
+        self._creds_table.setItem(row, 0, QTableWidgetItem(domain))
+        self._creds_table.setItem(row, 1, QTableWidgetItem(username))
+        self._creds_table.setItem(row, 2, QTableWidgetItem(login_url))
+
+    def _on_creds_remove_row(self):
+        rows = sorted(
+            {idx.row() for idx in self._creds_table.selectedIndexes()},
+            reverse=True,
+        )
+        for row in rows:
+            self._creds_table.removeRow(row)
+
+    def _on_creds_save(self):
+        creds: list[dict] = []
+        # Preserve passwords — load existing creds and match by domain
+        existing = {c["domain"]: c for c in cfg.load().get("store_credentials", [])}
+        for row in range(self._creds_table.rowCount()):
+            d_item = self._creds_table.item(row, 0)
+            u_item = self._creds_table.item(row, 1)
+            l_item = self._creds_table.item(row, 2)
+            domain    = d_item.text().strip() if d_item else ""
+            username  = u_item.text().strip() if u_item else ""
+            login_url = l_item.text().strip() if l_item else ""
+            if not domain:
+                continue
+            # Re-use saved password (table doesn't show it)
+            password = existing.get(domain, {}).get("password", "")
+            creds.append({
+                "domain":    domain,
+                "username":  username,
+                "password":  password,
+                "login_url": login_url,
+            })
+        config = cfg.load()
+        config["store_credentials"] = creds
+        try:
+            cfg.save(config)
+            self._creds_status.setText("Saved.")
+            self._creds_status.setStyleSheet("color: #4caf50;")
+        except Exception as exc:
+            self._creds_status.setText(f"Error: {exc}")
+            self._creds_status.setStyleSheet("color: #e94560;")
 
     def _on_brave_save(self):
         kws = [

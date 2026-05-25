@@ -16,7 +16,9 @@ that adds a Discord bot and a browser-based web UI sharing the same database.
 | **Improve Deck** | Proposes data-backed card swaps for existing decks using competitive meta scores; physically swaps containers when accepted |
 | **Double-Faced Card support** | Front and back face images, mana costs, and stats correctly extracted and displayed — with a Flip button in the card detail panel |
 | **Deck Rating** | Composite S–F grade: synergy, mana-curve fit, role coverage (Ramp/Removal/Draw/Wipes/Win-cons), archetype coherence |
-| **Buylist Web Search** | Brave Search API discovers store buylist pages by keyword; matches against your collection; ranks stores by total payout and above-market offers |
+| **Buylist Webcrawler** | Brave Search API discovers store buylist pages by keyword; JS rendering for dynamic pages; login-wall detection with auto-login; ranks stores by total payout and above-market offers |
+| **Trade / Sell Assistant** | Matches your collection against any buylist; highlights cards where the store pays ≥ 80 % of market price |
+| **Set Completion Tracker** | Shows owned vs. total cards per set with a completion %; drill down for rarity-coloured card lists |
 | **Format Legality** | Tracks bans across Standard, Pioneer, Modern, Legacy, Vintage, Commander — with Vintage restricted support |
 | **Statistics** | Collection value over time, top-10 card thumbnails, rarity/language breakdown |
 
@@ -109,7 +111,8 @@ Launch with `bash start_desktop.sh`. Requires a display (X11 or Wayland).
 | **Collection** | Collection browser · Containers · Overcount · Format Bans |
 | **Decks** | Deck Builder · Deck Analysis · Improve Deck |
 | **Search** | Full-text + multi-filter search across all fields |
-| **Buylists** | Manual buylist matching · Brave web search across multiple stores |
+| **Buylists** | Manual buylist matching · Brave web search · JS rendering · login detection |
+| **Sets** | Set completion tracker — owned vs. total cards, rarity breakdown |
 | **Statistics** | Totals, rarity & language breakdown, top-10 by value, collection value chart |
 | **Logs** | Live log stream with level filter |
 | **Settings** | Config, container types, services, CM prices, buylist sources, backup / restore |
@@ -219,10 +222,11 @@ Two modes for comparing your collection against store buylists:
 
 #### Manual
 Paste a buylist URL or raw text (tab-separated table copy or HTML). The app fetches the page, parses it, and cross-references your collection. Results show:
-- **Buylist price vs. Market price** — green if the store offers ≥ 80 % of market, red if below
+- **Buylist price vs. Market price** — green if the store offers ≥ 80 % of market price, red if below
 - **Summary bar** — total cards on the buylist, matches found, total buylist value, total market value
 - **Card image preview** — selecting any row shows the card image in a side panel
 - **Saved sources** — store URLs saved in Settings appear as a quick-select combo
+- **Fetch (JS)** — button for JavaScript-rendered pages (requires PyQt6-WebEngine)
 
 #### Web Search (Brave API)
 Enter a keyword (e.g. "MTG Karten Ankauf Buylist") and let the app discover buylist pages automatically:
@@ -234,15 +238,31 @@ Enter a keyword (e.g. "MTG Karten Ankauf Buylist") and let the app discover buyl
 
 | Column | Description |
 |---|---|
-| Store | Page title + URL tooltip |
+| Store | Page title + URL tooltip; 🔒 = login required, 🔑 = credentials saved |
 | Matches | Cards from your collection found on this buylist |
 | BL Total | Sum of buylist prices × count you own |
 | MKT Total | Sum of market prices × count you own |
 | Above Market | Cards where the store pays ≥ 80 % of market (green) |
 
-Selecting a store shows its matching cards in the detail panel with the same BL/MKT color coding and card image preview.
+Selecting a store shows its matching cards in the detail panel with the same BL/MKT colour coding and card image preview.
 
-Keywords and API key are configured in **Settings → Buylists → Brave Web Search**.
+**Store ranking context menu (right-click):**
+- **Save to sources** — adds the URL to your persistent source list in Settings
+- **Store credentials…** — enter username/password for login-walled stores; the crawler auto-detects the login form and logs in before fetching
+
+**JS rendering** — toggle *Use JS rendering* to load dynamic pages through a full browser engine (QWebEngine). Set the post-load wait time (default 2.5 s) to give JavaScript time to populate the buylist table. Automatically engaged as a fallback when a plain fetch returns a login wall.
+
+Keywords, API key, max results, and credentials are configured in **Settings → Buylists**.
+
+---
+
+### Set Completion Tracker
+
+The **Sets** view gives you an at-a-glance overview of every set you own cards from:
+
+- **Set table** (left) — set code, name, copies owned, distinct card names, total value in EUR; filter by name
+- **Completion bar** (right) — owned distinct card names vs. the total number of cards in the set (via Scryfall)
+- **Card list** (right) — all your copies of that set's cards with collector number, name (rarity-coloured), rarity, language, condition, foil flag, and EUR price
 
 ---
 
@@ -293,8 +313,11 @@ Keywords and API key are configured in **Settings → Buylists → Brave Web Sea
 | **Improve Deck** | Meta-backed swap proposals for existing decks; accepts → physically swaps containers; color identity aware |
 | **Deck Rating** | S–F composite grade: synergy · curve fit · role coverage · coherence |
 | **Deck Analysis** | Commander header with SVG mana icons, archetype badges, curve chart |
-| **Buylists — Manual** | URL fetch or paste; BL vs. market color coding; card image preview |
-| **Buylists — Web Search** | Brave API keyword search; store profit ranking; above-market highlighting |
+| **Buylists — Manual** | URL fetch or paste; BL vs. market colour coding (≥ 80 % = green); card image preview; JS fetch button for dynamic pages |
+| **Buylists — Web Search** | Brave API keyword search; store profit ranking; above-market highlighting; right-click to save URL or store credentials |
+| **JS rendering** | QWebEngine headless browser for JavaScript-rendered buylist pages; configurable post-load wait; automatic fallback when plain fetch is too short |
+| **Login detection** | Heuristic login-wall detection (HTTP 4xx, redirect, password-field scan); auto-login via form POST with session cookies; 🔒/🔑 badges in store table |
+| **Set Completion Tracker** | Per-set completion bar (owned distinct cards / Scryfall total); rarity-coloured card list with language, condition, foil, price |
 | **Bundle builder** | Preset bundles split by language into separate containers |
 | **Export** | Moxfield CSV (default), full CSV, JSON |
 | **Import** | Moxfield CSV, bot-export CSV, bot-export JSON |
@@ -315,14 +338,16 @@ Key settings:
 | Key | Default | Description |
 |---|---|---|
 | `discord.token` | — | Your Discord bot token |
-| `app.price_source` | `scryfall` | Price provider (`scryfall` or `cardmarket`) |
 | `app.ui_port` | `8080` | Web UI port |
+| `app.ui_host` | `127.0.0.1` | Web UI bind address (`0.0.0.0` to expose on LAN) |
+| `app.backup_dir` | `backups` | Directory for `.db` backup files |
 | `container_types` | `["binder","box","deck","commander","overcount"]` | Available container types |
 | `overcount_excluded_types` | `["deck","commander","overcount"]` | Types excluded from overcount checks |
-| `buylist_sources` | `[]` | Saved buylist URLs (name + url pairs) |
-| `brave.api_key` | — | Brave Search API key for buylist web search |
+| `buylist_sources` | `[]` | Saved buylist URLs — `[{name, url}]`; appear as quick-select in Buylists view |
+| `store_credentials` | `[]` | Per-store login credentials — `[{domain, username, password, login_url}]`; used by the webcrawler to auto-login. Stored in plaintext. |
+| `brave.api_key` | — | Brave Search API key for buylist web search (free at brave.com/search/api) |
 | `brave.keywords` | `["MTG Karten Ankauf Buylist", …]` | Default search keywords |
-| `brave.max_results` | `5` | Results per keyword per search |
+| `brave.max_results` | `15` | Results per keyword per search |
 
 ---
 
@@ -344,6 +369,7 @@ core/               Shared service layer (used by all interfaces)
     _pool.py        Pool filtering, diversity enforcement
   meta_crawler.py   MTGTop8 competitive meta fetcher and card scorer
   brave_search.py   Brave Search API client (buylist URL discovery)
+  buylist_parser.py Pure-Python buylist parser (HTML tables, TSV, CSV, plain text)
   image_cache.py    Local card image cache (front + back face)
   sorting.py        Chaos sort key computation
   exporter.py       Moxfield CSV, full CSV, JSON serialisation
@@ -353,18 +379,26 @@ desktop/            Native desktop app (PyQt6 + qasync)
   app.py            QApplication entry point
   main_window.py    Sidebar navigation, DB initialisation, daily price sync
   db.py             Shared Database + ScryfallClient singletons
+  js_renderer.py    JsRenderer singleton — QWebEnginePage headless JS rendering
   widgets/          All page widgets
-    buylists.py     Manual + Brave web search buylist matching
+    buylists.py     Manual + Brave web search; JS rendering; login detection + credentials
+    set_completion.py Set completion tracker — per-set progress bar and card list
     deck.py         Deck Builder page
     deck_analysis.py Deck Analysis page with rating badge
     deck_improve.py  Improve Deck — meta-backed swap proposals and container swaps
     card_detail.py  Reusable card detail panel (dual prices, mana icons, Flip button)
-    settings.py     Settings with CM prices, buylist sources, Brave API, DFC repair
+    settings.py     Settings — config, CM prices, buylist sources, credentials, Brave API, DFC repair
   dialogs/          Card, container, price-history dialogs
 
 server/             Server-only code
   bot.py            Discord bot (discord.py)
   ui/               Web UI (FastAPI + Jinja2 + HTMX)
+    routes/
+      collection.py  Collection browser, card detail, search
+      containers.py  Container list + detail, format badges
+      stats.py       Statistics overview
+      trade.py       Trade/sell assistant — paste or search buylist, match vs. collection
+      sets.py        Set completion — list + detail with Scryfall set metadata
 ```
 
 ### Database
