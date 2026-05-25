@@ -1109,8 +1109,8 @@ class SettingsWidget(QWidget):
         res_row.addWidget(QLabel("Max results per keyword:"))
         from PyQt6.QtWidgets import QSpinBox
         self._brave_max_sb = QSpinBox()
-        self._brave_max_sb.setRange(1, 20)
-        self._brave_max_sb.setValue(cfg.load().get("brave", {}).get("max_results", 5))
+        self._brave_max_sb.setRange(1, 30)
+        self._brave_max_sb.setValue(cfg.load().get("brave", {}).get("max_results", 15))
         res_row.addWidget(self._brave_max_sb)
         res_row.addStretch()
         layout.addLayout(res_row)

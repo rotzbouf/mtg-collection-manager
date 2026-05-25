@@ -330,8 +330,8 @@ class BuylistsWidget(QWidget):
         right_lay.addWidget(detail_splitter)
 
         h_splitter.addWidget(right)
-        h_splitter.setStretchFactor(0, 1)
-        h_splitter.setStretchFactor(1, 2)
+        h_splitter.setStretchFactor(0, 2)
+        h_splitter.setStretchFactor(1, 3)
         h_splitter.setMinimumHeight(420)
         root.addWidget(h_splitter, stretch=1)
 
