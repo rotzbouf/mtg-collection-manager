@@ -1,6 +1,8 @@
 """Buylists widget — paste or fetch a store buylist, match against collection."""
 from __future__ import annotations
 
+import urllib.parse
+from html.parser import HTMLParser
 from typing import Optional
 
 from PyQt6.QtWidgets import (
@@ -9,7 +11,8 @@ from PyQt6.QtWidgets import (
     QTextEdit, QTableWidget, QTableWidgetItem,
     QHeaderView, QSplitter, QFrame, QComboBox,
     QTabWidget, QProgressBar, QSpinBox,
-    QMenu, QMessageBox,
+    QMenu, QMessageBox, QDialog, QDialogButtonBox,
+    QFormLayout, QCheckBox,
 )
 from PyQt6.QtCore import Qt, QTimer, QPoint
 from PyQt6.QtGui import QColor, QFont
@@ -27,6 +30,96 @@ _FETCH_HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "de-DE,de;q=0.9,en;q=0.8",
 }
+
+
+# ── Login-wall detection ───────────────────────────────────────────────────────
+
+_LOGIN_URL_KEYWORDS = frozenset([
+    "login", "signin", "sign-in", "anmelden", "einloggen", "authenticate",
+    "account/login", "customer/login", "user/login",
+])
+_LOGIN_HTML_PHRASES = [
+    "bitte anmelden", "bitte einloggen", "sie müssen angemeldet",
+    "please log in", "please sign in", "login required", "you must be logged in",
+    "member login", "log in to your account", "forgot password", "passwort vergessen",
+    "create an account", "konto erstellen", "register to view",
+]
+
+
+def _detect_login_required(final_url: str, html: str, http_status: int) -> bool:
+    """Heuristic: return True if the response looks like a login wall."""
+    if http_status in (401, 403):
+        return True
+    url_lower = final_url.lower()
+    if any(kw in url_lower for kw in _LOGIN_URL_KEYWORDS):
+        return True
+    if html:
+        html_lower = html.lower()
+        # Short page with a password field → almost certainly a login form
+        if 'type="password"' in html_lower and len(html) < 20_000:
+            return True
+        # Short page with known login phrases
+        if len(html) < 8_000 and any(ph in html_lower for ph in _LOGIN_HTML_PHRASES):
+            return True
+    return False
+
+
+class _LoginFormParser(HTMLParser):
+    """Extract the first HTML form that contains a password field."""
+
+    def __init__(self):
+        super().__init__()
+        self.forms: list[dict] = []
+        self._cur: dict | None = None
+
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        if tag == "form":
+            self._cur = {"action": a.get("action", ""), "method": a.get("method", "post"), "fields": {}}
+        elif tag == "input" and self._cur is not None:
+            name  = a.get("name", "")
+            ftype = a.get("type", "text").lower()
+            value = a.get("value", "")
+            if name:
+                self._cur["fields"][name] = (ftype, value)
+
+    def handle_endtag(self, tag):
+        if tag == "form" and self._cur is not None:
+            has_pw = any(t == "password" for t, _ in self._cur["fields"].values())
+            if has_pw:
+                self.forms.append(self._cur)
+            self._cur = None
+
+
+def _find_login_form(html: str, base_url: str) -> dict | None:
+    """Return the first login form from HTML with its absolute action URL, or None."""
+    p = _LoginFormParser()
+    try:
+        p.feed(html)
+    except Exception:
+        return None
+    if not p.forms:
+        return None
+    form = p.forms[0]
+    action = form["action"].strip() or base_url
+    form["action"] = urllib.parse.urljoin(base_url, action)
+    return form
+
+
+def _get_domain(url: str) -> str:
+    try:
+        host = urllib.parse.urlparse(url).netloc.lower()
+        return host.removeprefix("www.")
+    except Exception:
+        return url
+
+
+def _homepage(url: str) -> str:
+    try:
+        p = urllib.parse.urlparse(url)
+        return f"{p.scheme}://{p.netloc}/"
+    except Exception:
+        return url
 
 
 # ── Card image preview ────────────────────────────────────────────────────────
@@ -416,12 +509,109 @@ class BuylistsWidget(QWidget):
 
     # ── Web search slots ──────────────────────────────────────────────────────
 
+    # ── Credential helpers ────────────────────────────────────────────────────
+
+    @staticmethod
+    def _get_credentials(url: str) -> dict | None:
+        """Return stored credentials for the domain of *url*, or None."""
+        import core.config as _cfg
+        domain = _get_domain(url)
+        for c in _cfg.load().get("store_credentials", []):
+            stored = _get_domain(c.get("domain", ""))
+            if stored and (stored == domain or domain.endswith("." + stored) or stored.endswith("." + domain)):
+                return c
+        return None
+
+    async def _fetch_url_silent(
+        self, url: str
+    ) -> tuple[Optional[str], str, str]:
+        """Fetch *url* and return ``(html, status, final_url)``.
+
+        ``status`` is one of: ``"ok"``, ``"login_required"``, ``"fetch_error"``.
+        """
+        import aiohttp
+        try:
+            jar = aiohttp.CookieJar(unsafe=True)
+            async with aiohttp.ClientSession(
+                headers=_FETCH_HEADERS, cookie_jar=jar,
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as s:
+                async with s.get(url, allow_redirects=True) as resp:
+                    final_url  = str(resp.url)
+                    http_status = resp.status
+                    html = await resp.text(errors="replace")
+        except Exception:
+            return None, "fetch_error", url
+
+        if _detect_login_required(final_url, html, http_status):
+            return html, "login_required", final_url
+        if len(html) < 300:
+            return None, "fetch_error", url
+        return html, "ok", final_url
+
+    async def _attempt_login(self, buylist_url: str, creds: dict) -> Optional[str]:
+        """Try to log in using stored credentials and return the buylist HTML, or None."""
+        import aiohttp
+        home = creds.get("login_url") or _homepage(buylist_url)
+
+        # Fetch the login page to find the form
+        try:
+            jar = aiohttp.CookieJar(unsafe=True)
+            timeout = aiohttp.ClientTimeout(total=20)
+            async with aiohttp.ClientSession(
+                headers=_FETCH_HEADERS, cookie_jar=jar, timeout=timeout
+            ) as session:
+                async with session.get(home, allow_redirects=True) as resp:
+                    login_html = await resp.text(errors="replace")
+                    login_base = str(resp.url)
+
+                form = _find_login_form(login_html, login_base)
+                if not form:
+                    return None
+
+                # Build POST payload: fill password + username fields, keep hidden values
+                post: dict[str, str] = {}
+                username = creds.get("username", "")
+                password = creds.get("password", "")
+                for name, (ftype, value) in form["fields"].items():
+                    if ftype == "password":
+                        post[name] = password
+                    elif ftype in ("text", "email"):
+                        if any(kw in name.lower() for kw in ("user", "email", "mail", "login", "name")):
+                            post[name] = username
+                        else:
+                            post[name] = value
+                    elif ftype == "hidden":
+                        post[name] = value
+                    # skip submit/button/checkbox
+
+                # POST credentials
+                async with session.post(
+                    form["action"], data=post, allow_redirects=True
+                ) as resp2:
+                    final_url = str(resp2.url)
+                    content   = await resp2.text(errors="replace")
+                    if _detect_login_required(final_url, content, resp2.status):
+                        return None   # wrong credentials or unexpected form
+
+                # Retry the buylist URL with session cookies
+                async with session.get(buylist_url, allow_redirects=True) as resp3:
+                    final_url3 = str(resp3.url)
+                    html3 = await resp3.text(errors="replace")
+                    if _detect_login_required(final_url3, html3, resp3.status):
+                        return None
+                    return html3 if len(html3) >= 300 else None
+
+        except Exception:
+            return None
+
+    # ── Web search slots ──────────────────────────────────────────────────────
+
     @asyncSlot()
     async def _on_search(self):
         import core.config as _cfg
         from core.brave_search import search_buylist_urls
         from desktop.db import db
-        import aiohttp
 
         brave = _cfg.load().get("brave", {})
         api_key = brave.get("api_key", "").strip()
@@ -468,19 +658,48 @@ class BuylistsWidget(QWidget):
             self._search_status.setText(f"Fetching {i+1}/{len(urls)}: {title[:60]}…")
             self._search_progress.setValue(i)
 
-            html = await self._fetch_url_silent(url)
-            if html is None:
+            html, fetch_status, final_url = await self._fetch_url_silent(url)
+
+            # ── Login wall detected ───────────────────────────────────────────
+            if fetch_status == "login_required":
+                creds = self._get_credentials(url)
+                if creds:
+                    self._search_status.setText(
+                        f"🔑 Logging in to {title[:40]}…"
+                    )
+                    html = await self._attempt_login(url, creds)
+                    if html:
+                        fetch_status = "ok"
+                    else:
+                        fetch_status = "login_failed"
+
+                if fetch_status != "ok":
+                    store_results.append({
+                        "title":    title,
+                        "url":      url,
+                        "homepage": _homepage(url),
+                        "status":   fetch_status,   # "login_required" or "login_failed"
+                        "entries": [], "matches": [],
+                        "total_bl": 0.0, "total_mkt": 0.0, "above_market": 0,
+                    })
+                    continue
+
+            # ── Fetch error ───────────────────────────────────────────────────
+            elif html is None:
                 store_results.append({
-                    "title": title, "url": url, "status": "fetch_error",
+                    "title": title, "url": url, "homepage": _homepage(url),
+                    "status": "fetch_error",
                     "entries": [], "matches": [],
                     "total_bl": 0.0, "total_mkt": 0.0, "above_market": 0,
                 })
                 continue
 
+            # ── Parse & match ─────────────────────────────────────────────────
             entries = parse_buylist_text(html)
             if not entries:
                 store_results.append({
-                    "title": title, "url": url, "status": "no_entries",
+                    "title": title, "url": url, "homepage": _homepage(url),
+                    "status": "no_entries",
                     "entries": [], "matches": [],
                     "total_bl": 0.0, "total_mkt": 0.0, "above_market": 0,
                 })
@@ -529,7 +748,8 @@ class BuylistsWidget(QWidget):
                 and m["bl_price"] >= m["mkt_price"] * 0.8
             )
             store_results.append({
-                "title": title, "url": url, "status": "ok",
+                "title": title, "url": url, "homepage": _homepage(url),
+                "status": "ok",
                 "entries": entries, "matches": matches,
                 "total_bl": total_bl, "total_mkt": total_mkt, "above_market": above,
             })
@@ -537,47 +757,62 @@ class BuylistsWidget(QWidget):
         self._search_progress.setValue(len(urls))
         self._search_progress.setVisible(False)
 
-        # Sort by total buylist value descending (profit ranking)
         store_results.sort(key=lambda s: s["total_bl"], reverse=True)
         self._search_results = store_results
 
-        ok = [s for s in store_results if s["status"] == "ok"]
-        self._search_status.setText(
-            f"Done — {len(ok)}/{len(store_results)} stores matched · "
-            f"Best: {ok[0]['title'][:40] if ok else '—'}"
-        )
+        ok      = [s for s in store_results if s["status"] == "ok"]
+        locked  = [s for s in store_results if s["status"] in ("login_required", "login_failed")]
+        summary = f"Done — {len(ok)}/{len(store_results)} stores matched"
+        if locked:
+            summary += f" · 🔒 {len(locked)} require login"
+        if ok:
+            summary += f" · Best: {ok[0]['title'][:35]}"
+        self._search_status.setText(summary)
         self._render_store_table()
         self._search_btn.setEnabled(True)
 
-    async def _fetch_url_silent(self, url: str) -> Optional[str]:
-        import aiohttp
-        try:
-            jar = aiohttp.CookieJar(unsafe=True)
-            async with aiohttp.ClientSession(
-                headers=_FETCH_HEADERS, cookie_jar=jar,
-                timeout=aiohttp.ClientTimeout(total=15),
-            ) as s:
-                async with s.get(url, allow_redirects=True) as resp:
-                    html = await resp.text(errors="replace")
-            return html if len(html) >= 300 else None
-        except Exception:
-            return None
-
     def _render_store_table(self):
+        import core.config as _cfg
+        known_domains = {_get_domain(c.get("domain", "")) for c in _cfg.load().get("store_credentials", [])}
+
         self._store_table.blockSignals(True)
         self._store_table.setSortingEnabled(False)
         self._store_table.setRowCount(0)
         self._store_table.setRowCount(len(self._search_results))
 
         for row_idx, s in enumerate(self._search_results):
-            ok = s["status"] == "ok"
-            name_item = QTableWidgetItem(s["title"])
-            name_item.setData(Qt.ItemDataRole.UserRole, row_idx)
-            if not ok:
-                name_item.setForeground(QColor("#585b70"))
-                name_item.setToolTip(f"{s['url']}\nStatus: {s['status']}")
+            status = s["status"]
+            ok     = status == "ok"
+            domain = _get_domain(s.get("url", ""))
+            has_creds = domain in known_domains
+
+            # ── Name cell with status prefix ──────────────────────────────────
+            if status == "login_required":
+                prefix = "🔑 " if has_creds else "🔒 "
+                color  = QColor("#e8a838") if has_creds else QColor("#e05c5c")
+                tip    = (
+                    f"{s['url']}\n"
+                    + ("Credentials saved — will attempt login next search." if has_creds
+                       else "Login required.\nRight-click → 'Set credentials' or 'Open store to create account'.")
+                )
+            elif status == "login_failed":
+                prefix = "🔑❌ "
+                color  = QColor("#e05c5c")
+                tip    = f"{s['url']}\nLogin failed — check credentials (right-click → 'Update credentials')."
+            elif status in ("fetch_error", "no_entries"):
+                prefix = ""
+                color  = QColor("#585b70")
+                tip    = f"{s['url']}\nStatus: {status}"
             else:
-                name_item.setToolTip(s["url"])
+                prefix = ""
+                color  = None
+                tip    = s["url"]
+
+            name_item = QTableWidgetItem(f"{prefix}{s['title']}")
+            name_item.setData(Qt.ItemDataRole.UserRole, row_idx)
+            name_item.setToolTip(tip)
+            if color:
+                name_item.setForeground(color)
 
             match_item = _numeric_item(len(s["matches"]) if ok else 0, decimals=0)
             bl_item    = _numeric_item(s["total_bl"]  if ok else None)
@@ -596,10 +831,11 @@ class BuylistsWidget(QWidget):
         self._store_table.setSortingEnabled(True)
         self._store_table.blockSignals(False)
 
-    # ── Store context menu — save to config ───────────────────────────────────
+    # ── Store context menu ────────────────────────────────────────────────────
 
     def _on_store_context_menu(self, pos: QPoint):
         import core.config as _cfg
+        import webbrowser
 
         item = self._store_table.itemAt(pos)
         if item is None:
@@ -612,54 +848,102 @@ class BuylistsWidget(QWidget):
         if store_idx is None or store_idx >= len(self._search_results):
             return
 
-        store = self._search_results[store_idx]
-        url   = store.get("url", "")
-        title = store.get("title") or url
+        store  = self._search_results[store_idx]
+        url    = store.get("url", "")
+        title  = store.get("title") or url
+        home   = store.get("homepage") or _homepage(url)
+        status = store.get("status", "")
 
-        # Check if already saved
         config  = _cfg.load()
         sources = config.get("buylist_sources", [])
-        already = any(s.get("url", "").rstrip("/") == url.rstrip("/") for s in sources)
+        already_saved = any(s.get("url", "").rstrip("/") == url.rstrip("/") for s in sources)
+        existing_creds = self._get_credentials(url)
 
         menu = QMenu(self)
-        if already:
-            saved_act = menu.addAction(f"✅ Already saved: {title[:50]}")
-            saved_act.setEnabled(False)
-        else:
-            save_act = menu.addAction(f"💾 Save source: {title[:50]}")
-            menu.addSeparator()
+        act_open_home: object = None
+        act_creds:     object = None
 
-        open_act = menu.addAction("🌐 Open URL in browser")
+        # ── Login-wall actions ────────────────────────────────────────────────
+        if status in ("login_required", "login_failed"):
+            act_open_home = menu.addAction("🌐 Open store to create an account")
+            act_creds = menu.addAction(
+                "🔑 Update credentials" if existing_creds else "🔑 Set credentials for this store"
+            )
+            menu.addSeparator()
+        elif existing_creds:
+            act_creds = menu.addAction("🔑 Update credentials")
+
+        # ── Source saving ─────────────────────────────────────────────────────
+        if already_saved:
+            act_save = menu.addAction(f"✅ Already saved: {title[:45]}")
+            act_save.setEnabled(False)
+        else:
+            act_save = menu.addAction(f"💾 Save source: {title[:45]}")
+
+        menu.addSeparator()
+        act_open = menu.addAction("🌐 Open buylist URL in browser")
 
         action = menu.exec(self._store_table.viewport().mapToGlobal(pos))
         if not action:
             return
 
-        if action == open_act:
-            import webbrowser
+        # ── Dispatch ──────────────────────────────────────────────────────────
+        if action == act_open:
             webbrowser.open(url)
             return
 
-        if already or action.text().startswith("✅"):
+        if act_open_home and action == act_open_home:
+            webbrowser.open(home)
             return
 
-        # Save the new source
-        sources.append({"name": title, "url": url})
-        config["buylist_sources"] = sources
+        if act_creds and action == act_creds:
+            self._open_credentials_dialog(url, title, existing_creds)
+            return
+
+        if not already_saved and action == act_save:
+            sources.append({"name": title, "url": url})
+            config["buylist_sources"] = sources
+            try:
+                _cfg.save(config)
+                self._search_status.setText(f"✅ Saved '{title[:40]}' to sources.")
+                QTimer.singleShot(4000, lambda: self._search_status.setText(""))
+                self._load_sources()
+                self._sources_combo.blockSignals(True)
+                for i in range(self._sources_combo.count()):
+                    if self._sources_combo.itemData(i) == url:
+                        self._sources_combo.setCurrentIndex(i)
+                        break
+                self._sources_combo.blockSignals(False)
+            except Exception as exc:
+                self._search_status.setText(f"Error saving: {exc}")
+
+    def _open_credentials_dialog(
+        self, url: str, title: str, existing: dict | None
+    ) -> None:
+        """Open the credentials dialog and save if accepted."""
+        import core.config as _cfg
+        dlg = _CredentialsDialog(url, title, existing, parent=self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        creds = dlg.credentials()
+        config = _cfg.load()
+        store_creds: list[dict] = config.get("store_credentials", [])
+        domain = _get_domain(url)
+        # Update existing or append
+        for i, c in enumerate(store_creds):
+            if _get_domain(c.get("domain", "")) == domain:
+                store_creds[i] = creds
+                break
+        else:
+            store_creds.append(creds)
+        config["store_credentials"] = store_creds
         try:
             _cfg.save(config)
-            self._search_status.setText(f"✅ Saved '{title[:40]}' to sources.")
+            self._search_status.setText(f"🔑 Credentials saved for {domain}.")
             QTimer.singleShot(4000, lambda: self._search_status.setText(""))
-            self._load_sources()          # refresh the Manual tab combo
-            self._sources_combo.blockSignals(True)
-            # Select the newly added entry in the sources combo
-            for i in range(self._sources_combo.count()):
-                if self._sources_combo.itemData(i) == url:
-                    self._sources_combo.setCurrentIndex(i)
-                    break
-            self._sources_combo.blockSignals(False)
+            self._render_store_table()   # refresh 🔒 → 🔑 indicator
         except Exception as exc:
-            self._search_status.setText(f"Error saving: {exc}")
+            QMessageBox.critical(self, "Error", f"Could not save credentials:\n{exc}")
 
     def _on_store_selected(self):
         row = self._store_table.currentRow()
@@ -943,6 +1227,91 @@ class BuylistsWidget(QWidget):
         card = cards[0]
         pixmap = await async_pixmap(card.get("scryfall_id"), card.get("image_url"))
         self._preview.set_image(pixmap)
+
+
+# ── Credentials dialog ────────────────────────────────────────────────────────
+
+class _CredentialsDialog(QDialog):
+    """Small dialog for entering per-store login credentials."""
+
+    def __init__(
+        self,
+        url: str,
+        title: str,
+        existing: dict | None = None,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self._url = url
+        self._domain = _get_domain(url)
+        self.setWindowTitle(f"Credentials — {self._domain}")
+        self.setMinimumWidth(400)
+        self._build_ui(title, existing or {})
+
+    def _build_ui(self, title: str, existing: dict):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+
+        info = QLabel(
+            f"<b>{title}</b><br>"
+            f"<small>Store: <code>{self._domain}</code><br>"
+            f"Credentials are stored in plaintext in config.json.</small>"
+        )
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        form = QFormLayout()
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+
+        self._user_edit = QLineEdit(existing.get("username", ""))
+        self._user_edit.setPlaceholderText("email@example.com")
+        form.addRow("Username / Email:", self._user_edit)
+
+        pw_row = QHBoxLayout()
+        self._pw_edit = QLineEdit(existing.get("password", ""))
+        self._pw_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self._pw_edit.setPlaceholderText("password")
+        pw_row.addWidget(self._pw_edit)
+        show_cb = QCheckBox("Show")
+        show_cb.toggled.connect(
+            lambda checked: self._pw_edit.setEchoMode(
+                QLineEdit.EchoMode.Normal if checked else QLineEdit.EchoMode.Password
+            )
+        )
+        pw_row.addWidget(show_cb)
+        form.addRow("Password:", pw_row)
+
+        self._login_url_edit = QLineEdit(existing.get("login_url", "") or _homepage(self._url))
+        self._login_url_edit.setPlaceholderText(f"{_homepage(self._url)}login")
+        self._login_url_edit.setToolTip(
+            "URL of the login page. Leave as homepage and the app will auto-detect the login form."
+        )
+        form.addRow("Login page URL:", self._login_url_edit)
+
+        layout.addLayout(form)
+
+        note = QLabel(
+            "<small>💡 The crawler will auto-detect the login form and POST your credentials. "
+            "If login still fails, try setting the exact login URL above.</small>"
+        )
+        note.setWordWrap(True)
+        note.setStyleSheet("color: #888;")
+        layout.addWidget(note)
+
+        btns = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
+        )
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+    def credentials(self) -> dict:
+        return {
+            "domain":    self._domain,
+            "username":  self._user_edit.text().strip(),
+            "password":  self._pw_edit.text(),
+            "login_url": self._login_url_edit.text().strip(),
+        }
 
 
 def _make_card_table() -> QTableWidget:

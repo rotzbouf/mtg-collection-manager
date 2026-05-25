@@ -72,6 +72,10 @@ _DEFAULTS: dict = {
     "container_types":          list(BUILTIN_TYPES),
     "overcount_excluded_types": [],
     "buylist_sources":          [],
+    # Per-domain login credentials for protected buylist pages.
+    # Each entry: {domain, username, password, login_url}
+    # Stored in plaintext — this is intentional for a local desktop app.
+    "store_credentials":        [],
     "brave": {
         "api_key":     "",
         "keywords":    [
@@ -89,7 +93,7 @@ _DEFAULTS: dict = {
             "MTG we buy singles",
             "Magic the Gathering buy list",
         ],
-        "max_results": 10,
+        "max_results": 15,
     },
 }
 
