@@ -364,3 +364,19 @@ class ScryfallClient:
             return card, "en"
 
         return None, "unknown"
+
+    async def get_set_info(self, set_code: str) -> Optional[dict]:
+        """Fetch set metadata from Scryfall /sets/{code}.
+
+        Returns a dict with at least: code, name, card_count, set_type,
+        released_at, scryfall_uri.  Returns None on error or unknown set.
+        """
+        if not _SET_CODE_RE.match(set_code):
+            return None
+        key = ("setinfo", set_code.lower())
+        hit, cached = self._ncache_get(key, 86_400.0)  # cache 24 h
+        if hit:
+            return cached
+        data = await self._get(f"{BASE}/sets/{set_code.lower()}")
+        self._ncache_set(key, data)
+        return data

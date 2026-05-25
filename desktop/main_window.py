@@ -24,6 +24,7 @@ from desktop.widgets.deck_improve import DeckImproveWidget
 from desktop.widgets.overcount import OvercountWidget
 from desktop.widgets.format_bans import FormatBansWidget
 from desktop.widgets.buylists import BuylistsWidget
+from desktop.widgets.set_completion import SetCompletionWidget
 from desktop.widgets.logs_page import LogsWidget, QtLogHandler
 
 from core.version import __version__
@@ -38,6 +39,7 @@ _NAV_ITEMS = [
     ("Decks",       "decks"),
     ("Search",      "search"),
     ("Buylists",    "buylists"),
+    ("Sets",        "sets"),
     ("Statistics",  "stats"),
     ("Logs",        "logs"),
 ]
@@ -209,6 +211,8 @@ class MainWindow(QMainWindow):
             return page
         if key == "buylists":
             return BuylistsWidget()
+        if key == "sets":
+            return SetCompletionWidget()
         if key == "stats":
             return StatsWidget()
         if key == "decks":
