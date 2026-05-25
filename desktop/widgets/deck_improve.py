@@ -603,13 +603,15 @@ class DeckImproveWidget(QWidget):
             self._table.setItem(row, _COL_SCORE_A, _item(f"{cand.get('meta_score', 0):.1f}", center))
             self._table.setItem(row, _COL_DELTA,   _item(f"+{prop['delta']:.1f}", center))
 
-            # Accept button (embedded as a push-button via a widget)
+            # Accept button (embedded as a push-button via a widget).
+            # Capture *prop* by identity so the closure stays correct even
+            # after other rows are removed and row indices shift.
             accept_btn = QPushButton("Accept")
             accept_btn.setStyleSheet(
                 "QPushButton { font-size: 11px; padding: 2px 8px; }"
                 "QPushButton:hover { background: #2e7d32; }"
             )
-            accept_btn.clicked.connect(lambda checked, r=row: self._on_accept(r))
+            accept_btn.clicked.connect(lambda checked, p=prop: self._on_accept_prop(p))
             self._table.setCellWidget(row, _COL_ACCEPT, accept_btn)
 
         self._table.blockSignals(False)
@@ -630,10 +632,13 @@ class DeckImproveWidget(QWidget):
             self._remove_panel.clear()
             self._candidate_panel.clear()
 
-    def _on_accept(self, row: int):
-        if row >= len(self._proposals):
-            return
-        prop = self._proposals[row]
+    def _on_accept_prop(self, prop: dict):
+        """Entry point from button click — find the live row for *prop* by identity."""
+        row = next((i for i, p in enumerate(self._proposals) if p is prop), -1)
+        if row >= 0:
+            self._on_accept(row, prop)
+
+    def _on_accept(self, row: int, prop: dict):
         dc   = prop["deck_card"]
         cand = prop["candidate"]
 
@@ -655,10 +660,10 @@ class DeckImproveWidget(QWidget):
         if reply != QMessageBox.StandardButton.Yes:
             return
 
-        _bg(self._do_swap(row, dc["id"], cand["id"]))
+        _bg(self._do_swap(prop, dc["id"], cand["id"]))
 
     @asyncSlot()
-    async def _do_swap(self, row: int, card_id_deck: int, card_id_cand: int):
+    async def _do_swap(self, prop: dict, card_id_deck: int, card_id_cand: int):
         from desktop.db import db
         try:
             await db.swap_card_containers(card_id_deck, card_id_cand)
@@ -666,9 +671,12 @@ class DeckImproveWidget(QWidget):
             QMessageBox.critical(self, "Swap failed", str(exc))
             return
 
-        # Remove this row from the table and proposal list
-        self._proposals.pop(row)
-        self._table.removeRow(row)
+        # Re-locate the row by identity — indices may have shifted since the
+        # confirmation dialog was shown (e.g. a background refresh).
+        row = next((i for i, p in enumerate(self._proposals) if p is prop), -1)
+        if row >= 0:
+            self._proposals.pop(row)
+            self._table.removeRow(row)
 
         # Update status
         total_gain = sum(p["delta"] for p in self._proposals)
