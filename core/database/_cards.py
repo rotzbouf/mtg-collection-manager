@@ -169,7 +169,7 @@ class _CardsMixin:
         c_order   = color_sort_order(colors, type_line)
         t_order   = type_sort_order(type_line)
 
-        await self._db.execute(
+        cur = await self._db.execute(
             """
             UPDATE collection SET
                 name_en        = :name_en,
@@ -250,7 +250,7 @@ class _CardsMixin:
                 (scryfall_id, price_eur),
             )
         await self._db.commit()
-        return result.rowcount
+        return cur.rowcount
 
     async def fix_card_lang_data(self, card_id: int, card_data: dict) -> None:
         """Overwrite the localised fields of a single collection row.

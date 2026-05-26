@@ -52,8 +52,9 @@ class OvercountWidget(QWidget):
         self._oc_groups:   list[dict] = []
         self._oc_view:     str = "card"   # "card" | "container"
         self._containers: list[dict] = []
-        self._bundle_cards:  list[dict]       = []
-        self._bundle_chunks: list[list[dict]] = []  # non-empty in multi-bundle mode
+        self._bundle_cards:   list[dict]       = []
+        self._bundle_chunks:  list[list[dict]] = []  # non-empty in multi-bundle mode
+        self._staged_bundles: list[dict]       = []  # {"name": str, "chunks": list[list[dict]]}
         self._build_ui()
 
     def db_ready(self):
@@ -624,6 +625,7 @@ class OvercountWidget(QWidget):
         hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         for col in range(1, len(_BUNDLE_COLS)):
             hdr.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
+        self._bundle_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         splitter.addWidget(self._bundle_tree)
 
         self._bundle_detail = CardDetailPanel(show_buttons=False)
@@ -640,21 +642,45 @@ class OvercountWidget(QWidget):
         self._bundle_name.setPlaceholderText("e.g. Commons Bulk #1")
         self._bundle_name.setMinimumWidth(220)
         bottom.addWidget(self._bundle_name)
-        self._bundle_create_btn = QPushButton("✓  Create Bundle Container")
-        self._bundle_create_btn.setEnabled(False)
-        self._bundle_create_btn.setStyleSheet(
-            "QPushButton { background-color: #1e3a1e; border: 1px solid #4a8a4a; padding: 5px 12px; }"
-            "QPushButton:hover { background-color: #2a5a2a; }"
-            "QPushButton:disabled { color: #555; border-color: #333; }"
+        bottom.addSpacing(6)
+
+        _btn_style = (
+            "QPushButton {{ background-color: {bg}; border: 1px solid {br}; padding: 5px 12px; }}"
+            "QPushButton:hover {{ background-color: {hv}; }}"
+            "QPushButton:disabled {{ color: #555; border-color: #333; }}"
         )
-        bottom.addWidget(self._bundle_create_btn)
+        self._bundle_add_btn = QPushButton("＋  Add to Queue")
+        self._bundle_add_btn.setEnabled(False)
+        self._bundle_add_btn.setStyleSheet(
+            _btn_style.format(bg="#1e2a4a", br="#4a6a9a", hv="#2a3a6a")
+        )
+        bottom.addWidget(self._bundle_add_btn)
+        bottom.addSpacing(6)
+
+        self._bundle_create_all_btn = QPushButton("✓  Create All (0)")
+        self._bundle_create_all_btn.setEnabled(False)
+        self._bundle_create_all_btn.setStyleSheet(
+            _btn_style.format(bg="#1e3a1e", br="#4a8a4a", hv="#2a5a2a")
+        )
+        bottom.addWidget(self._bundle_create_all_btn)
+        bottom.addSpacing(6)
+
+        self._bundle_clear_btn = QPushButton("✗  Clear Queue")
+        self._bundle_clear_btn.setEnabled(False)
+        self._bundle_clear_btn.setStyleSheet(
+            _btn_style.format(bg="#3a1e1e", br="#8a4a4a", hv="#5a2a2a")
+        )
+        bottom.addWidget(self._bundle_clear_btn)
         bottom.addStretch()
         root.addLayout(bottom)
 
         self._bundle_tree.currentItemChanged.connect(self._on_bundle_item_selected)
-        self._bundle_create_btn.clicked.connect(
-            lambda: _bg(self._create_bundle())
+        self._bundle_tree.customContextMenuRequested.connect(self._on_bundle_context_menu)
+        self._bundle_add_btn.clicked.connect(self._add_to_queue)
+        self._bundle_create_all_btn.clicked.connect(
+            lambda: _bg(self._create_all_queued())
         )
+        self._bundle_clear_btn.clicked.connect(self._clear_queue)
         return w
 
     async def _load_bundle_sets(self):
@@ -761,7 +787,7 @@ class OvercountWidget(QWidget):
     def _populate_bundle_preview(self, chunks: list[list[dict]], duplicates_excluded: int = 0):
         self._bundle_tree.clear()
         self._bundle_detail.clear()
-        self._bundle_create_btn.setEnabled(False)
+        self._bundle_add_btn.setEnabled(False)
 
         all_cards = [c for chunk in chunks for c in chunk]
         if not all_cards:
@@ -846,7 +872,7 @@ class OvercountWidget(QWidget):
                 f"total value: {format_price(total_val)}{dup_note}"
             )
 
-        self._bundle_create_btn.setEnabled(True)
+        self._bundle_add_btn.setEnabled(True)
 
     def _on_bundle_item_selected(self, current: QTreeWidgetItem, _prev):
         if current is None or current.parent() is None:
@@ -856,7 +882,8 @@ class OvercountWidget(QWidget):
         if card:
             self._bundle_detail.set_card(card)
 
-    async def _create_bundle(self):
+    def _add_to_queue(self):
+        """Stage the current preview bundle into the queue."""
         if not self._bundle_chunks:
             return
         name = self._bundle_name.text().strip()
@@ -864,51 +891,204 @@ class OvercountWidget(QWidget):
             QMessageBox.warning(self, "Bundle name required",
                                 "Please enter a name for the bundle container.")
             return
+        self._staged_bundles.append({"name": name, "chunks": list(self._bundle_chunks)})
+        self._bundle_name.clear()
+        self._bundle_chunks = []
+        self._bundle_cards  = []
+        self._bundle_add_btn.setEnabled(False)
+        self._render_staged_queue()
 
-        from desktop.db import db
-        multi = len(self._bundle_chunks) > 1
-        try:
-            total_moved = 0
-            created: list[str] = []
+    def _render_staged_queue(self):
+        """Redraw the bundle tree to show all staged bundles."""
+        self._bundle_tree.clear()
+        self._bundle_detail.clear()
 
-            if multi:
-                # One container per chunk, named "Name #1", "Name #2", …
-                for idx, chunk in enumerate(self._bundle_chunks, 1):
-                    container_name = f"{name} #{idx}"
-                    container_id   = await db.create_container(
-                        container_name, description="Bundle", type="box"
-                    )
-                    card_ids = [c["id"] for c in chunk if c.get("id")]
-                    moved    = await db.move_cards_to_container(card_ids, container_id)
-                    total_moved += moved
-                    created.append(f"  • {container_name}  ({moved} cards)")
+        if not self._staged_bundles:
+            self._bundle_status.setText("Queue is empty. Select a preset to preview a bundle.")
+            self._bundle_create_all_btn.setEnabled(False)
+            self._bundle_create_all_btn.setText("✓  Create All (0)")
+            self._bundle_clear_btn.setEnabled(False)
+            return
+
+        # Count how many containers will be created in total
+        total_containers = 0
+        for s in self._staged_bundles:
+            chunks = s["chunks"]
+            if len(chunks) > 1:
+                total_containers += len(chunks)
             else:
-                # Single bundle: keep per-language split → "Name (DE)", "Name (EN)", …
+                langs = {(c.get("language") or "en").lower() for c in chunks[0]}
+                total_containers += len(langs)
+
+        total_cards = sum(
+            sum(len(ch) for ch in s["chunks"]) for s in self._staged_bundles
+        )
+        self._bundle_status.setText(
+            f"{len(self._staged_bundles)} staged bundle group(s)  ·  "
+            f"{total_containers} container(s) will be created  ·  "
+            f"{total_cards} card(s) total  —  right-click a group to remove it"
+        )
+
+        def _make_card_child(card: dict) -> QTreeWidgetItem:
+            rarity = (card.get("rarity") or "unknown").lower()
+            it = QTreeWidgetItem([
+                f"    {display_name(card)}",
+                f"{(card.get('set_code') or '').upper()} #{card.get('collector_number') or ''}",
+                rarity.capitalize(),
+                lang_flag(card),
+                card.get("container_name") or "—",
+                format_price(card.get("price_eur")),
+            ])
+            it.setForeground(2, _rarity_color(rarity))
+            it.setData(0, _CARD_ROLE,  card)
+            it.setData(0, _ENTRY_ROLE, card.get("id"))
+            return it
+
+        for staged in self._staged_bundles:
+            name   = staged["name"]
+            chunks = staged["chunks"]
+            all_cards = [c for ch in chunks for c in ch]
+            total_val = sum(c.get("price_eur") or 0 for c in all_cards)
+
+            top = QTreeWidgetItem([
+                f"  📦 {name}  ×{len(all_cards)}",
+                "", "", "", "",
+                format_price(total_val),
+            ])
+            f = top.font(0); f.setBold(True); top.setFont(0, f)
+            top.setForeground(0, QColor("#f0c060"))  # gold = staged/pending
+            top.setExpanded(False)
+
+            if len(chunks) > 1:
+                for idx, chunk in enumerate(chunks, 1):
+                    chunk_val = sum(c.get("price_eur") or 0 for c in chunk)
+                    sub = QTreeWidgetItem([
+                        f"    Bundle #{idx}  ×{len(chunk)}",
+                        "", "", "", "",
+                        format_price(chunk_val),
+                    ])
+                    f2 = sub.font(0); f2.setBold(True); sub.setFont(0, f2)
+                    sub.setForeground(0, QColor("#7eb8f7"))
+                    for card in chunk:
+                        sub.addChild(_make_card_child(card))
+                    top.addChild(sub)
+            else:
                 lang_groups: dict[str, list[dict]] = {}
-                for card in self._bundle_chunks[0]:
+                for card in chunks[0]:
                     lang = (card.get("language") or "en").lower()
                     lang_groups.setdefault(lang, []).append(card)
                 for lang in sorted(lang_groups):
-                    container_name = f"{name} ({lang.upper()})"
-                    container_id   = await db.create_container(
-                        container_name, description="Bundle", type="box"
-                    )
-                    card_ids = [c["id"] for c in lang_groups[lang] if c.get("id")]
-                    moved    = await db.move_cards_to_container(card_ids, container_id)
-                    total_moved += moved
-                    created.append(f"  • {container_name}  ({moved} cards)")
+                    grp     = lang_groups[lang]
+                    grp_val = sum(c.get("price_eur") or 0 for c in grp)
+                    flag    = lang_flag({"language": lang})
+                    sub = QTreeWidgetItem([
+                        f"    {flag} {lang.upper()}  ×{len(grp)}",
+                        "", "", "", "",
+                        format_price(grp_val),
+                    ])
+                    sub.setForeground(0, QColor("#7eb8f7"))
+                    for card in grp:
+                        sub.addChild(_make_card_child(card))
+                    top.addChild(sub)
+
+            self._bundle_tree.addTopLevelItem(top)
+
+        self._bundle_create_all_btn.setEnabled(True)
+        self._bundle_create_all_btn.setText(f"✓  Create All ({len(self._staged_bundles)})")
+        self._bundle_clear_btn.setEnabled(True)
+
+    def _clear_queue(self):
+        self._staged_bundles.clear()
+        self._bundle_chunks = []
+        self._bundle_cards  = []
+        self._bundle_add_btn.setEnabled(False)
+        self._bundle_tree.clear()
+        self._bundle_detail.clear()
+        self._bundle_status.setText("Queue cleared. Select a preset to preview a bundle.")
+        self._bundle_create_all_btn.setEnabled(False)
+        self._bundle_create_all_btn.setText("✓  Create All (0)")
+        self._bundle_clear_btn.setEnabled(False)
+
+    def _on_bundle_context_menu(self, pos):
+        item = self._bundle_tree.itemAt(pos)
+        if item is None or item.parent() is not None:
+            return   # only top-level staged-group nodes are removable
+        if not self._staged_bundles:
+            return   # tree is showing a preview, not the queue
+        idx = self._bundle_tree.indexOfTopLevelItem(item)
+        if idx < 0 or idx >= len(self._staged_bundles):
+            return
+        staged_name = self._staged_bundles[idx]["name"]
+        menu = QMenu(self)
+        menu.addAction(
+            f'✕  Remove "{staged_name}" from queue',
+            lambda: self._remove_from_queue(idx),
+        )
+        menu.exec(self._bundle_tree.viewport().mapToGlobal(pos))
+
+    def _remove_from_queue(self, idx: int):
+        if 0 <= idx < len(self._staged_bundles):
+            self._staged_bundles.pop(idx)
+            self._render_staged_queue()
+
+    async def _create_all_queued(self):
+        if not self._staged_bundles:
+            return
+
+        from desktop.db import db
+        try:
+            all_created: list[str] = []
+            total_moved = 0
+
+            for staged in self._staged_bundles:
+                name   = staged["name"]
+                chunks = staged["chunks"]
+
+                if len(chunks) > 1:
+                    # One container per chunk, named "Name #1", "Name #2", …
+                    for idx, chunk in enumerate(chunks, 1):
+                        container_name = f"{name} #{idx}"
+                        container_id   = await db.create_container(
+                            container_name, description="Bundle", type="box"
+                        )
+                        card_ids = [c["id"] for c in chunk if c.get("id")]
+                        moved    = await db.move_cards_to_container(card_ids, container_id)
+                        total_moved += moved
+                        all_created.append(f"  • {container_name}  ({moved} cards)")
+                else:
+                    # Single bundle: per-language split → "Name (DE)", "Name (EN)", …
+                    lang_groups: dict[str, list[dict]] = {}
+                    for card in chunks[0]:
+                        lang = (card.get("language") or "en").lower()
+                        lang_groups.setdefault(lang, []).append(card)
+                    for lang in sorted(lang_groups):
+                        container_name = f"{name} ({lang.upper()})"
+                        container_id   = await db.create_container(
+                            container_name, description="Bundle", type="box"
+                        )
+                        card_ids = [c["id"] for c in lang_groups[lang] if c.get("id")]
+                        moved    = await db.move_cards_to_container(card_ids, container_id)
+                        total_moved += moved
+                        all_created.append(f"  • {container_name}  ({moved} cards)")
 
             QMessageBox.information(
                 self, "Bundles created",
-                f"{len(created)} container(s) created — {total_moved} card(s) total:\n\n"
-                + "\n".join(created),
+                f"{len(all_created)} container(s) created — {total_moved} card(s) total:\n\n"
+                + "\n".join(all_created),
             )
-            self._bundle_cards  = []
+
+            # Reset everything
+            self._staged_bundles.clear()
             self._bundle_chunks = []
+            self._bundle_cards  = []
             self._bundle_name.clear()
             self._bundle_tree.clear()
-            self._bundle_status.setText("Bundles created. Select a preset to build another.")
-            self._bundle_create_btn.setEnabled(False)
+            self._bundle_detail.clear()
+            self._bundle_status.setText("All bundles created. Select a preset to build more.")
+            self._bundle_add_btn.setEnabled(False)
+            self._bundle_create_all_btn.setEnabled(False)
+            self._bundle_create_all_btn.setText("✓  Create All (0)")
+            self._bundle_clear_btn.setEnabled(False)
             await self._load_containers_async()
         except Exception as exc:
             QMessageBox.critical(self, "Error", str(exc))

@@ -5,6 +5,7 @@ Rate limit: max 10 req/s — we enforce a 100 ms gap between requests.
 
 import asyncio
 import logging
+import random
 import re
 import time
 from typing import Optional
@@ -139,11 +140,12 @@ class ScryfallClient:
         return self._session
 
     async def _get(self, url: str, **params) -> Optional[dict]:
+        _MAX_ATTEMPTS = 5
         async with self._semaphore:
             loop = asyncio.get_running_loop()
             await asyncio.sleep(max(0, 0.1 - (loop.time() - self._last_request)))
             session = await self._session_get()
-            for attempt in range(3):
+            for attempt in range(_MAX_ATTEMPTS):
                 try:
                     async with session.get(url, params=params, timeout=_REQUEST_TIMEOUT) as resp:
                         self._last_request = loop.time()
@@ -152,21 +154,54 @@ class ScryfallClient:
                         if resp.status == 404:
                             return None
                         if resp.status == 429:
-                            wait = float(resp.headers.get("Retry-After", 1.0))
-                            logger.warning("Scryfall 429 — retrying in %.1fs (attempt %d/3)", wait, attempt + 1)
+                            # Respect Retry-After header; fall back to exponential backoff
+                            retry_after = float(resp.headers.get("Retry-After", 0) or 0)
+                            wait = max(retry_after, 2.0 ** attempt) + random.uniform(0, 0.5)
+                            logger.warning(
+                                "Scryfall 429 — retrying in %.1fs (attempt %d/%d)",
+                                wait, attempt + 1, _MAX_ATTEMPTS,
+                            )
+                            await asyncio.sleep(wait)
+                            continue
+                        if resp.status in (500, 502, 503, 504):
+                            # Honour Retry-After if present (503 sometimes includes it)
+                            retry_after = float(resp.headers.get("Retry-After", 0) or 0)
+                            wait = max(retry_after, 2.0 ** attempt) + random.uniform(0, 0.5)
+                            logger.warning(
+                                "Scryfall %s → %d — retrying in %.1fs (attempt %d/%d)",
+                                url, resp.status, wait, attempt + 1, _MAX_ATTEMPTS,
+                            )
                             await asyncio.sleep(wait)
                             continue
                         if resp.status >= 500:
-                            logger.warning("Scryfall %s → %s (attempt %d/3)", url, resp.status, attempt + 1)
-                            await asyncio.sleep(1.0 * (attempt + 1))
+                            # Other unexpected 5xx — retry without a long wait
+                            wait = 2.0 ** attempt + random.uniform(0, 0.5)
+                            logger.warning(
+                                "Scryfall %s → %d — retrying in %.1fs (attempt %d/%d)",
+                                url, resp.status, wait, attempt + 1, _MAX_ATTEMPTS,
+                            )
+                            await asyncio.sleep(wait)
                             continue
-                        logger.warning("Scryfall %s → %s", url, resp.status)
+                        # 4xx that is not 404/429 — not retryable
+                        logger.warning("Scryfall %s → %d (not retrying)", url, resp.status)
                         return None
-                except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-                    logger.warning("Scryfall request error: %s (attempt %d/3)", e, attempt + 1)
-                    if attempt < 2:
-                        await asyncio.sleep(1.0 * (attempt + 1))
-            logger.error("Scryfall %s — gave up after 3 attempts", url)
+                except asyncio.TimeoutError:
+                    wait = 2.0 ** attempt + random.uniform(0, 0.5)
+                    logger.warning(
+                        "Scryfall request timed out (attempt %d/%d) — retrying in %.1fs",
+                        attempt + 1, _MAX_ATTEMPTS, wait,
+                    )
+                    if attempt < _MAX_ATTEMPTS - 1:
+                        await asyncio.sleep(wait)
+                except aiohttp.ClientError as exc:
+                    wait = 2.0 ** attempt + random.uniform(0, 0.5)
+                    logger.warning(
+                        "Scryfall network error (attempt %d/%d): %s — retrying in %.1fs",
+                        attempt + 1, _MAX_ATTEMPTS, exc, wait,
+                    )
+                    if attempt < _MAX_ATTEMPTS - 1:
+                        await asyncio.sleep(wait)
+            logger.error("Scryfall %s — gave up after %d attempts", url, _MAX_ATTEMPTS)
             return None
 
     async def close(self):
