@@ -52,7 +52,8 @@ class OvercountWidget(QWidget):
         self._oc_groups:   list[dict] = []
         self._oc_view:     str = "card"   # "card" | "container"
         self._containers: list[dict] = []
-        self._bundle_cards: list[dict] = []
+        self._bundle_cards:  list[dict]       = []
+        self._bundle_chunks: list[list[dict]] = []  # non-empty in multi-bundle mode
         self._build_ui()
 
     def db_ready(self):
@@ -695,10 +696,9 @@ class OvercountWidget(QWidget):
         selected_lang = self._bundle_lang_combo.currentData()
         languages = [selected_lang] if selected_lang else None
 
-        # Fetch a larger pool so deduplication still reaches max_count if possible.
-        # Without a max we fetch 5 000 at most; with a max we fetch 10× to leave
-        # plenty of headroom for duplicate removal.
-        fetch_limit = (max_count * 10 if max_count else 5000) if unique_only else (max_count or 2000)
+        # Fetch the full available pool — we need everything to divide into as
+        # many bundles as possible.  Without max_count fall back to a safe cap.
+        fetch_limit = 50_000 if max_count else (5000 if unique_only else 2000)
 
         cards = await db.get_cards_in_overcount_containers(
             rarities=rarities,
@@ -722,12 +722,17 @@ class OvercountWidget(QWidget):
                     duplicates_excluded += 1
             cards = unique_cards
 
-        # Apply max_count AFTER deduplication
-        if max_count and len(cards) > max_count:
-            cards = cards[:max_count]
+        # Split into chunks of max_count — each chunk becomes one bundle
+        if max_count:
+            chunks: list[list[dict]] = [
+                cards[i:i + max_count] for i in range(0, max(len(cards), 1), max_count)
+            ]
+        else:
+            chunks = [cards]
 
-        self._bundle_cards = cards
-        self._populate_bundle_preview(cards, duplicates_excluded=duplicates_excluded)
+        self._bundle_cards  = cards
+        self._bundle_chunks = chunks
+        self._populate_bundle_preview(chunks, duplicates_excluded=duplicates_excluded)
 
         # Auto-suggest a name
         if not self._bundle_name.text().strip():
@@ -753,75 +758,94 @@ class OvercountWidget(QWidget):
         if not self._bundle_name.text().strip():
             self._bundle_name.setText(f"{set_name} Bundle")
 
-    def _populate_bundle_preview(self, cards: list[dict], duplicates_excluded: int = 0):
+    def _populate_bundle_preview(self, chunks: list[list[dict]], duplicates_excluded: int = 0):
         self._bundle_tree.clear()
         self._bundle_detail.clear()
         self._bundle_create_btn.setEnabled(False)
 
-        if not cards:
+        all_cards = [c for chunk in chunks for c in chunk]
+        if not all_cards:
             self._bundle_status.setText("No cards match this preset in overcount containers.")
             return
 
-        total_val = sum(c.get("price_eur") or 0 for c in cards)
-
-        # Group by language, then sort within each group by rarity
-        lang_groups: dict[str, list[dict]] = {}
-        for card in cards:
-            lang = (card.get("language") or "en").lower()
-            lang_groups.setdefault(lang, []).append(card)
-
-        rarity_order = {"mythic": 0, "rare": 1, "uncommon": 2, "common": 3}
-        for lang in sorted(lang_groups):
-            lang_groups[lang].sort(
-                key=lambda c: (rarity_order.get((c.get("rarity") or "").lower(), 9),
-                               -(c.get("price_eur") or 0))
-            )
-
-        added = 0
-        for lang in sorted(lang_groups):
-            grp     = lang_groups[lang]
-            grp_val = sum(c.get("price_eur") or 0 for c in grp)
-            flag    = lang_flag({"language": lang})
-
-            parent = QTreeWidgetItem([
-                f"  {flag} {lang.upper()}  ×{len(grp)}",
-                "",
-                "",
-                "",
-                "",
-                format_price(grp_val),
-            ])
-            parent.setExpanded(True)
-            f = parent.font(0); f.setBold(True); parent.setFont(0, f)
-            parent.setForeground(0, QColor("#7eb8f7"))
-
-            for card in grp:
-                rarity = (card.get("rarity") or "unknown").lower()
-                col    = _rarity_color(rarity)
-                child  = QTreeWidgetItem([
-                    f"    {display_name(card)}",
-                    f"{(card.get('set_code') or '').upper()} #{card.get('collector_number') or ''}",
-                    rarity.capitalize(),
-                    lang_flag(card),
-                    card.get("container_name") or "—",
-                    format_price(card.get("price_eur")),
-                ])
-                child.setForeground(2, col)
-                child.setData(0, _CARD_ROLE, card)
-                child.setData(0, _ENTRY_ROLE, card.get("id"))
-                parent.addChild(child)
-                added += 1
-
-            self._bundle_tree.addTopLevelItem(parent)
-
-        dup_note = (
+        total_val  = sum(c.get("price_eur") or 0 for c in all_cards)
+        dup_note   = (
             f"  ·  {duplicates_excluded} duplicate name{'s' if duplicates_excluded != 1 else ''} excluded"
             if duplicates_excluded else ""
         )
-        self._bundle_status.setText(
-            f"{added} card(s)  ·  {len(lang_groups)} language(s)  ·  "
-            f"total value: {format_price(total_val)}{dup_note}"
-        )
+        rarity_order = {"mythic": 0, "rare": 1, "uncommon": 2, "common": 3}
+
+        def _add_card_child(parent_item: QTreeWidgetItem, card: dict):
+            rarity = (card.get("rarity") or "unknown").lower()
+            col    = _rarity_color(rarity)
+            child  = QTreeWidgetItem([
+                f"    {display_name(card)}",
+                f"{(card.get('set_code') or '').upper()} #{card.get('collector_number') or ''}",
+                rarity.capitalize(),
+                lang_flag(card),
+                card.get("container_name") or "—",
+                format_price(card.get("price_eur")),
+            ])
+            child.setForeground(2, col)
+            child.setData(0, _CARD_ROLE, card)
+            child.setData(0, _ENTRY_ROLE, card.get("id"))
+            parent_item.addChild(child)
+
+        if len(chunks) > 1:
+            # ── Multi-bundle: one top-level node per bundle ───────────────
+            for idx, chunk in enumerate(chunks, 1):
+                chunk_val = sum(c.get("price_eur") or 0 for c in chunk)
+                node = QTreeWidgetItem([
+                    f"  Bundle #{idx}  ×{len(chunk)}",
+                    "", "", "", "",
+                    format_price(chunk_val),
+                ])
+                node.setExpanded(idx == 1)   # expand first bundle only
+                f = node.font(0); f.setBold(True); node.setFont(0, f)
+                node.setForeground(0, QColor("#7eb8f7"))
+                for card in chunk:
+                    _add_card_child(node, card)
+                self._bundle_tree.addTopLevelItem(node)
+
+            self._bundle_status.setText(
+                f"{len(chunks)} bundle(s)  ·  {len(all_cards)} card(s) total  ·  "
+                f"total value: {format_price(total_val)}{dup_note}"
+            )
+        else:
+            # ── Single bundle: group by language (original layout) ─────────
+            cards = chunks[0]
+            lang_groups: dict[str, list[dict]] = {}
+            for card in cards:
+                lang = (card.get("language") or "en").lower()
+                lang_groups.setdefault(lang, []).append(card)
+
+            for lang in sorted(lang_groups):
+                lang_groups[lang].sort(
+                    key=lambda c: (rarity_order.get((c.get("rarity") or "").lower(), 9),
+                                   -(c.get("price_eur") or 0))
+                )
+
+            for lang in sorted(lang_groups):
+                grp     = lang_groups[lang]
+                grp_val = sum(c.get("price_eur") or 0 for c in grp)
+                flag    = lang_flag({"language": lang})
+                node = QTreeWidgetItem([
+                    f"  {flag} {lang.upper()}  ×{len(grp)}",
+                    "", "", "", "",
+                    format_price(grp_val),
+                ])
+                node.setExpanded(True)
+                f = node.font(0); f.setBold(True); node.setFont(0, f)
+                node.setForeground(0, QColor("#7eb8f7"))
+                for card in grp:
+                    _add_card_child(node, card)
+                self._bundle_tree.addTopLevelItem(node)
+
+            self._bundle_status.setText(
+                f"{len(cards)} card(s)  ·  {len(lang_groups)} language(s)  ·  "
+                f"total value: {format_price(total_val)}{dup_note}"
+            )
+
         self._bundle_create_btn.setEnabled(True)
 
     def _on_bundle_item_selected(self, current: QTreeWidgetItem, _prev):
@@ -833,37 +857,54 @@ class OvercountWidget(QWidget):
             self._bundle_detail.set_card(card)
 
     async def _create_bundle(self):
-        if not self._bundle_cards:
+        if not self._bundle_chunks:
             return
         name = self._bundle_name.text().strip()
         if not name:
-            QMessageBox.warning(self, "Bundle name required", "Please enter a name for the bundle container.")
+            QMessageBox.warning(self, "Bundle name required",
+                                "Please enter a name for the bundle container.")
             return
 
-        # Split cards by language → one container per language
-        lang_groups: dict[str, list[dict]] = {}
-        for card in self._bundle_cards:
-            lang = (card.get("language") or "en").lower()
-            lang_groups.setdefault(lang, []).append(card)
-
         from desktop.db import db
+        multi = len(self._bundle_chunks) > 1
         try:
             total_moved = 0
             created: list[str] = []
-            for lang in sorted(lang_groups):
-                container_name = f"{name} ({lang.upper()})"
-                container_id   = await db.create_container(container_name, description="Bundle", type="box")
-                card_ids       = [c["id"] for c in lang_groups[lang] if c.get("id")]
-                moved          = await db.move_cards_to_container(card_ids, container_id)
-                total_moved   += moved
-                created.append(f"  • {container_name}  ({moved} cards)")
+
+            if multi:
+                # One container per chunk, named "Name #1", "Name #2", …
+                for idx, chunk in enumerate(self._bundle_chunks, 1):
+                    container_name = f"{name} #{idx}"
+                    container_id   = await db.create_container(
+                        container_name, description="Bundle", type="box"
+                    )
+                    card_ids = [c["id"] for c in chunk if c.get("id")]
+                    moved    = await db.move_cards_to_container(card_ids, container_id)
+                    total_moved += moved
+                    created.append(f"  • {container_name}  ({moved} cards)")
+            else:
+                # Single bundle: keep per-language split → "Name (DE)", "Name (EN)", …
+                lang_groups: dict[str, list[dict]] = {}
+                for card in self._bundle_chunks[0]:
+                    lang = (card.get("language") or "en").lower()
+                    lang_groups.setdefault(lang, []).append(card)
+                for lang in sorted(lang_groups):
+                    container_name = f"{name} ({lang.upper()})"
+                    container_id   = await db.create_container(
+                        container_name, description="Bundle", type="box"
+                    )
+                    card_ids = [c["id"] for c in lang_groups[lang] if c.get("id")]
+                    moved    = await db.move_cards_to_container(card_ids, container_id)
+                    total_moved += moved
+                    created.append(f"  • {container_name}  ({moved} cards)")
 
             QMessageBox.information(
                 self, "Bundles created",
                 f"{len(created)} container(s) created — {total_moved} card(s) total:\n\n"
                 + "\n".join(created),
             )
-            self._bundle_cards = []
+            self._bundle_cards  = []
+            self._bundle_chunks = []
             self._bundle_name.clear()
             self._bundle_tree.clear()
             self._bundle_status.setText("Bundles created. Select a preset to build another.")
