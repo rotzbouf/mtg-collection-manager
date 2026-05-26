@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView,
     QMessageBox, QAbstractItemView, QFrame, QComboBox, QMenu, QApplication,
     QDialog, QDialogButtonBox, QFormLayout, QRadioButton, QButtonGroup,
+    QSizePolicy,
 )
 from PyQt6.QtCore import Qt, QTimer, QMimeData, QByteArray, QEvent
 from PyQt6.QtGui import QColor, QDrag
@@ -52,6 +53,17 @@ class ContainersWidget(QWidget):
         self._new_btn = QPushButton("+ New container")
         top_row.addWidget(self._new_btn)
         left_layout.addLayout(top_row)
+
+        # Type filter
+        filter_row = QHBoxLayout()
+        filter_row.addWidget(QLabel("Type:"))
+        self._type_filter_combo = QComboBox()
+        self._type_filter_combo.addItem("— All types —", None)
+        self._type_filter_combo.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+        filter_row.addWidget(self._type_filter_combo)
+        left_layout.addLayout(filter_row)
 
         self._list = QListWidget()
         left_layout.addWidget(self._list)
@@ -154,6 +166,7 @@ class ContainersWidget(QWidget):
         # Signals
         self._list.currentItemChanged.connect(self._on_container_selected)
         self._new_btn.clicked.connect(self._on_new_container)
+        self._type_filter_combo.currentIndexChanged.connect(self._apply_type_filter)
         self._rename_btn.clicked.connect(self._on_rename_container)
         self._delete_btn.clicked.connect(self._on_delete_container)
         self._format_combo.currentIndexChanged.connect(self._on_deck_format_changed)
@@ -172,9 +185,22 @@ class ContainersWidget(QWidget):
     @asyncSlot()
     async def _load_containers(self):
         from desktop.db import db
+        import core.config as cfg
 
         self._containers = await db.list_containers()
         prev_id = self._selected_container["id"] if self._selected_container else None
+
+        # Refresh type filter options (keep current selection if still valid)
+        types = cfg.load().get("container_types", [])
+        prev_filter = self._type_filter_combo.currentData()
+        self._type_filter_combo.blockSignals(True)
+        self._type_filter_combo.clear()
+        self._type_filter_combo.addItem("— All types —", None)
+        for t in types:
+            self._type_filter_combo.addItem(t.capitalize(), t)
+        idx = self._type_filter_combo.findData(prev_filter)
+        self._type_filter_combo.setCurrentIndex(max(0, idx))
+        self._type_filter_combo.blockSignals(False)
 
         self._list.blockSignals(True)
         self._list.clear()
@@ -188,6 +214,9 @@ class ContainersWidget(QWidget):
             self._list.addItem(item)
         self._list.blockSignals(False)
 
+        # Apply type filter (hides items that don't match)
+        self._apply_type_filter()
+
         # Reselect the previously selected container
         if prev_id is not None:
             for i in range(self._list.count()):
@@ -195,6 +224,24 @@ class ContainersWidget(QWidget):
                 if item and item.data(Qt.ItemDataRole.UserRole) == prev_id:
                     self._list.setCurrentItem(item)
                     break
+
+    def _apply_type_filter(self):
+        """Show/hide container list items based on the selected type filter."""
+        wanted_type = self._type_filter_combo.currentData()  # None = all
+        for i in range(self._list.count()):
+            item = self._list.item(i)
+            if item is None:
+                continue
+            cid = item.data(Qt.ItemDataRole.UserRole)
+            container = next((c for c in self._containers if c["id"] == cid), None)
+            if wanted_type is None or (container and container.get("type") == wanted_type):
+                item.setHidden(False)
+            else:
+                item.setHidden(True)
+                # Deselect if currently selected and now hidden
+                if item.isSelected():
+                    self._list.clearSelection()
+                    self._on_container_selected(None, None)
 
     @asyncSlot()
     async def _load_container_cards(self, container_id: int):
