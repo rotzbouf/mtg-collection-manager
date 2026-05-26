@@ -35,7 +35,7 @@ from desktop.widgets.card_detail import CardDetailPanel
 _OC_COLS          = ["Name / ID", "Set", "Cond", "Foil", "Lang", "Container", "Price (EUR)"]
 _OC_COLS_CONTAINER = ["Name", "Set", "Cond", "Foil", "Lang", "×", "Price (EUR)"]
 _SELL_COLS   = ["Name", "Set", "Rarity", "Foil", "Cond", "Lang", "Container", "Price (EUR)"]
-_BUNDLE_COLS = ["Name", "Set", "Rarity", "Lang", "Price (EUR)"]
+_BUNDLE_COLS = ["Name", "Set", "Rarity", "Lang", "Container", "Price (EUR)"]
 
 _ENTRY_ROLE = Qt.ItemDataRole.UserRole
 _CARD_ROLE  = Qt.ItemDataRole.UserRole + 1
@@ -788,6 +788,7 @@ class OvercountWidget(QWidget):
                 "",
                 "",
                 "",
+                "",
                 format_price(grp_val),
             ])
             parent.setExpanded(True)
@@ -802,6 +803,7 @@ class OvercountWidget(QWidget):
                     f"{(card.get('set_code') or '').upper()} #{card.get('collector_number') or ''}",
                     rarity.capitalize(),
                     lang_flag(card),
+                    card.get("container_name") or "—",
                     format_price(card.get("price_eur")),
                 ])
                 child.setForeground(2, col)
