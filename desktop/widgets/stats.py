@@ -218,13 +218,14 @@ class StatsWidget(QWidget):
         stats = await db.stats()
         container_stats = await db.container_stats()
         value_history = await db.get_collection_value_history()
-        self._render_stats(stats, container_stats, value_history)
+        sets = await db.get_sets_summary()
+        self._render_stats(stats, container_stats, value_history, sets)
 
     # ------------------------------------------------------------------ #
     # Rendering                                                             #
     # ------------------------------------------------------------------ #
 
-    def _render_stats(self, stats: dict, container_stats: list[dict], value_history: list[dict]):
+    def _render_stats(self, stats: dict, container_stats: list[dict], value_history: list[dict], sets: list[dict] | None = None):
         if self._value_chart_fig is not None:
             plt.close(self._value_chart_fig)
             self._value_chart_fig = None
@@ -330,6 +331,29 @@ class StatsWidget(QWidget):
             ))
             ct_row.addStretch()
             lay.addLayout(ct_row)
+
+        # ── Row 5: Set completion ─────────────────────────────────────── #
+        if sets:
+            top_sets = sorted(sets, key=lambda s: s.get("distinct_names") or 0, reverse=True)[:10]
+            lay.addWidget(_section_header(f"Set Completion  ({len(sets)} sets in collection)"))
+            set_rows = []
+            for s in top_sets:
+                eur = s.get("total_value_eur")
+                set_rows.append([
+                    (s.get("set_code") or "").upper(),
+                    s.get("set_name") or s.get("set_code") or "",
+                    str(s.get("distinct_names") or 0),
+                    str(s.get("card_count") or 0),
+                    f"€{eur:.2f}" if eur else "—",
+                ])
+            set_row = QHBoxLayout()
+            set_row.setAlignment(Qt.AlignmentFlag.AlignLeft)
+            set_row.addWidget(_header_table(
+                ["Code", "Set name", "Distinct", "Copies", "Value (EUR)"],
+                set_rows,
+            ))
+            set_row.addStretch()
+            lay.addLayout(set_row)
 
         # ── Collection value over time chart ──────────────────────────── #
         lay.addWidget(_section_header("Collection Value Over Time (EUR)"))
