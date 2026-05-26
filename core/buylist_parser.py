@@ -59,7 +59,10 @@ class _TableParser(HTMLParser):
 
 # ── Price / header helpers ─────────────────────────────────────────────────────
 
-_PRICE_RE = re.compile(r"(\d+[.,]\d+)")
+# Bounded quantifiers prevent ReDoS: unbounded \d+ causes O(n²) backtracking
+# when re.search() scans a long digit-only string with no decimal separator.
+# Prices are at most 6 integer digits (~999 999) and 1-4 fractional digits.
+_PRICE_RE = re.compile(r"(\d{1,6}[.,]\d{1,4})")
 
 
 def _parse_price(text: str) -> Optional[float]:
