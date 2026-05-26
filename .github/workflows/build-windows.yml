@@ -106,6 +106,7 @@ jobs:
             --nofollow-import-to=torch.jit `
             --nofollow-import-to=torch.onnx `
             --nofollow-import-to=torch.export `
+            --nofollow-import-to=torch.testing `
             --nofollow-import-to=torchaudio `
             --nofollow-import-to=torchvision.models `
             --nofollow-import-to=triton `
