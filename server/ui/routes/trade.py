@@ -1,9 +1,13 @@
 """Trade / Sell assistant — match a store buylist against the collection."""
 from __future__ import annotations
 
+import asyncio
+import ipaddress
 import os
 import logging
+import socket
 from typing import Optional
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse
@@ -20,6 +24,53 @@ _TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "templ
 templates = Jinja2Templates(directory=_TEMPLATES_DIR)
 
 router = APIRouter()
+
+async def _check_ssrf(url: str) -> Optional[str]:
+    """Return an error string if *url* should be blocked, else None.
+
+    Defends against SSRF by:
+    - Allowing only http / https schemes.
+    - Resolving the hostname and rejecting private, loopback, link-local,
+      reserved, multicast and unspecified addresses (e.g. 127.x, 10.x,
+      172.16-31.x, 192.168.x, 169.254.x, ::1, cloud metadata endpoints).
+
+    DNS resolution is performed in a thread executor to avoid blocking the
+    event loop.  Note: this check is a best-effort guard — it does not prevent
+    DNS-rebinding attacks, but it eliminates the straightforward SSRF vector.
+    """
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return "Malformed URL."
+
+    if parsed.scheme not in ("http", "https"):
+        return f"Only http:// and https:// URLs are allowed (got '{parsed.scheme}://')."
+
+    host = parsed.hostname
+    if not host:
+        return "URL contains no hostname."
+
+    try:
+        loop = asyncio.get_running_loop()
+        ip_str = await loop.run_in_executor(None, socket.gethostbyname, host)
+        ip = ipaddress.ip_address(ip_str)
+    except OSError:
+        return f"Cannot resolve hostname: {host}"
+    except ValueError:
+        return f"Could not parse resolved address for {host}."
+
+    if (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    ):
+        return "Requests to private or internal addresses are not allowed."
+
+    return None
+
 
 _FETCH_HEADERS = {
     "User-Agent": (
@@ -64,8 +115,14 @@ async def _fetch_url(url: str) -> tuple[Optional[str], Optional[str]]:
     """Fetch a URL and return (text, error_message).
 
     Card Kingdom URLs are redirected to their public JSON API automatically.
+    All URLs are validated against an SSRF guard before any network request.
     """
     import aiohttp, json as _json
+
+    ssrf_err = await _check_ssrf(url)
+    if ssrf_err:
+        return None, ssrf_err
+
     try:
         # Card Kingdom: use public JSON API directly
         if is_cardkingdom_url(url):
