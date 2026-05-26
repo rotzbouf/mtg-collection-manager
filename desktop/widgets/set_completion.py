@@ -24,14 +24,34 @@ def _rarity_order(r: str) -> int:
     return {"mythic": 0, "rare": 1, "uncommon": 2, "common": 3}.get(r.lower(), 4)
 
 
-def _num_item(value, decimals: int = 2) -> QTableWidgetItem:
+class _SortableItem(QTableWidgetItem):
+    """QTableWidgetItem whose sort order is driven by its UserRole value.
+
+    Qt calls ``__lt__`` when sorting; the default implementation compares
+    display text as a string, making numeric columns sort lexicographically
+    ("10" < "2").  Storing a numeric sort key in ``UserRole`` and overriding
+    ``__lt__`` here fixes that without changing displayed text.
+    """
+
+    def __lt__(self, other: "QTableWidgetItem") -> bool:  # type: ignore[override]
+        my_val = self.data(Qt.ItemDataRole.UserRole)
+        other_val = other.data(Qt.ItemDataRole.UserRole)
+        if my_val is not None and other_val is not None:
+            try:
+                return my_val < other_val  # type: ignore[operator]
+            except TypeError:
+                pass
+        return super().__lt__(other)
+
+
+def _num_item(value, decimals: int = 2) -> _SortableItem:
     """Right-aligned numeric table item that sorts by real value."""
     if value is None:
-        item = QTableWidgetItem("—")
+        item = _SortableItem("—")
         item.setData(Qt.ItemDataRole.UserRole, -1.0)
     else:
         text = str(int(value)) if decimals == 0 else f"€{value:.{decimals}f}"
-        item = QTableWidgetItem(text)
+        item = _SortableItem(text)
         item.setData(Qt.ItemDataRole.UserRole, float(value))
     item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
     return item
@@ -340,20 +360,20 @@ class SetCompletionWidget(QWidget):
             rarity = (c.get("rarity") or "common").lower()
             color = QColor(RARITY_COLORS.get(rarity, "#aaaaaa"))
 
-            # Collector number — numeric sort
+            # Collector number — numeric sort key stored in UserRole
             cn_raw = c.get("collector_number") or ""
             try:
                 cn_num = int(cn_raw)
             except (ValueError, TypeError):
                 cn_num = 9999
-            cn_item = QTableWidgetItem(cn_raw)
+            cn_item = _SortableItem(cn_raw)
             cn_item.setData(Qt.ItemDataRole.UserRole, cn_num)
             cn_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
             name_item = QTableWidgetItem(display_name(c))
             name_item.setForeground(color)
 
-            rarity_item = QTableWidgetItem(rarity.capitalize())
+            rarity_item = _SortableItem(rarity.capitalize())
             rarity_item.setForeground(color)
             rarity_item.setData(Qt.ItemDataRole.UserRole, _rarity_order(rarity))
 
