@@ -547,6 +547,16 @@ class OvercountWidget(QWidget):
             "The best copy is kept based on the current sort order."
         )
         opt_row.addWidget(self._unique_only_chk)
+        opt_row.addSpacing(20)
+        opt_row.addWidget(QLabel("Language:"))
+        self._bundle_lang_combo = QComboBox()
+        self._bundle_lang_combo.setMinimumWidth(130)
+        self._bundle_lang_combo.setToolTip(
+            "Filter bundle cards to a single language.\n"
+            "Only languages present in overcount containers are shown."
+        )
+        self._bundle_lang_combo.addItem("All languages", None)
+        opt_row.addWidget(self._bundle_lang_combo)
         opt_row.addStretch()
         box_layout.addLayout(opt_row)
 
@@ -655,6 +665,22 @@ class OvercountWidget(QWidget):
             label = f"{s['set_name']} ({s['set_code'].upper()})  ×{s['card_count']}"
             self._bundle_set_combo.addItem(label, s["set_code"])
 
+        # Populate the language filter — only languages actually in overcount containers
+        langs = await db.get_overcount_container_languages()
+        current_lang = self._bundle_lang_combo.currentData()
+        self._bundle_lang_combo.blockSignals(True)
+        self._bundle_lang_combo.clear()
+        self._bundle_lang_combo.addItem("All languages", None)
+        for lang in langs:
+            flag = lang_flag({"language": lang})
+            self._bundle_lang_combo.addItem(f"{flag} {lang.upper()}", lang)
+        # Restore previous selection if still available
+        for i in range(self._bundle_lang_combo.count()):
+            if self._bundle_lang_combo.itemData(i) == current_lang:
+                self._bundle_lang_combo.setCurrentIndex(i)
+                break
+        self._bundle_lang_combo.blockSignals(False)
+
     async def _preview_bundle(
         self,
         rarities: list[str] | None = None,
@@ -665,6 +691,10 @@ class OvercountWidget(QWidget):
         from desktop.db import db
         unique_only = self._unique_only_chk.isChecked()
 
+        # Read language filter from the dropdown (None = all languages)
+        selected_lang = self._bundle_lang_combo.currentData()
+        languages = [selected_lang] if selected_lang else None
+
         # Fetch a larger pool so deduplication still reaches max_count if possible.
         # Without a max we fetch 5 000 at most; with a max we fetch 10× to leave
         # plenty of headroom for duplicate removal.
@@ -673,6 +703,7 @@ class OvercountWidget(QWidget):
         cards = await db.get_cards_in_overcount_containers(
             rarities=rarities,
             set_codes=set_codes,
+            languages=languages,
             order_by=order,
             limit=fetch_limit,
         )

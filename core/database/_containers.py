@@ -172,12 +172,27 @@ class _ContainersMixin:
             )
             await self._db.commit()
 
+    async def get_overcount_container_languages(self) -> list[str]:
+        """Return distinct language codes present in overcount-type containers, sorted."""
+        async with self._db.execute(
+            """
+            SELECT DISTINCT LOWER(COALESCE(c.language, 'en')) AS lang
+            FROM collection c
+            JOIN containers ct ON c.container_id = ct.id
+            WHERE ct.type = 'overcount'
+            ORDER BY lang
+            """
+        ) as cur:
+            rows = await cur.fetchall()
+        return [r["lang"] for r in rows]
+
     async def get_cards_in_overcount_containers(
         self,
         min_price: float = 0.0,
         max_price: float | None = None,
         rarities: list[str] | None = None,
         set_codes: list[str] | None = None,
+        languages: list[str] | None = None,
         order_by: str = "price_desc",
         limit: int = 2000,
     ) -> list[dict]:
@@ -199,6 +214,10 @@ class _ContainersMixin:
             ph = ",".join("?" * len(set_codes))
             conds.append(f"c.set_code IN ({ph})")
             params.extend(set_codes)
+        if languages:
+            ph = ",".join("?" * len(languages))
+            conds.append(f"LOWER(COALESCE(c.language,'en')) IN ({ph})")
+            params.extend(lang.lower() for lang in languages)
 
         _ORDER_MAP = {
             "price_desc": "COALESCE(c.price_eur, 0) DESC, c.name_en",
