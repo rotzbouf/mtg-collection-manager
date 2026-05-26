@@ -9,22 +9,21 @@ permissions:
   contents: write   # needed to upload release assets
 
 jobs:
+
+  # ── Windows ──────────────────────────────────────────────────────────────────
   build-windows:
     runs-on: windows-latest
     timeout-minutes: 180
 
     steps:
-      # ── Checkout ────────────────────────────────────────────────────────────
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ── Python ──────────────────────────────────────────────────────────────
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
-      # ── Cache: pip packages ──────────────────────────────────────────────────
       # Keyed on requirements.txt + PyTorch CPU index so the full torch/easyocr
       # download (~1.5 GB) is skipped on repeat builds with unchanged deps.
       - name: Cache pip packages
@@ -36,50 +35,43 @@ jobs:
             pip-win-${{ hashFiles('deps/requirements.txt') }}-
             pip-win-
 
-      # ── Cache: Nuitka compilation cache ─────────────────────────────────────
-      # Nuitka stores per-module C compilation results here. On rebuilds only
+      # Nuitka stores per-module C compilation results here.  On rebuilds only
       # modules whose Python source changed are recompiled — huge time saving.
       - name: Cache Nuitka
         uses: actions/cache@v4
         with:
           path: ~\AppData\Local\Nuitka\Nuitka\Cache
           key: nuitka-win-py312-${{ hashFiles('core/**/*.py', 'desktop/**/*.py', 'server/**/*.py', 'cogs/**/*.py') }}
-          restore-keys: |
-            nuitka-win-py312-
+          restore-keys: nuitka-win-py312-
 
-      # ── System tools ────────────────────────────────────────────────────────
       - name: Install Tesseract
+        shell: pwsh
         run: |
           choco install tesseract --yes --no-progress
-          echo "C:\Program Files\Tesseract-OCR" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-        shell: pwsh
+          "C:\Program Files\Tesseract-OCR" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
-      # ── Python dependencies ─────────────────────────────────────────────────
       - name: Install Python dependencies
+        shell: pwsh
         run: |
           python -m pip install --upgrade pip
-          # PyTorch CPU-only — much smaller, scanner still works (GPU not available on runner)
           pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
           pip install -r deps/requirements.txt
           pip install nuitka ordered-set zstandard
-          # WebEngine needs extra Qt libs not pulled in by PyQt6 alone
-          pip install PyQt6-WebEngine || true
-        shell: pwsh
+          pip install PyQt6-WebEngine
 
-      # ── Seed config ─────────────────────────────────────────────────────────
       - name: Seed config.json
-        run: Copy-Item config.json.example config.json
         shell: pwsh
+        run: Copy-Item config.json.example config.json
 
-      # ── Nuitka build ────────────────────────────────────────────────────────
       - name: Build with Nuitka
+        shell: pwsh
         run: |
           $VERSION = git describe --tags --always
           python -m nuitka `
             --onefile `
             --assume-yes-for-downloads `
             --output-dir=dist `
-            --output-filename=mtg-collection-manager `
+            --output-filename=mtg-collection-manager-windows `
             "--onefile-tempdir-spec={CACHE_DIR}/mtg-collection-manager/$VERSION" `
             --enable-plugin=pyqt6 `
             --include-qt-plugins=sensible `
@@ -179,18 +171,7 @@ jobs:
             --python-flag=no_site `
             --windows-console-mode=disable `
             desktop/app.py
-        shell: pwsh
 
-      # ── Rename with .exe suffix for clarity ─────────────────────────────────
-      - name: Rename binary
-        run: |
-          Move-Item dist\mtg-collection-manager.exe dist\mtg-collection-manager-windows.exe -ErrorAction SilentlyContinue
-          if (-not (Test-Path dist\mtg-collection-manager-windows.exe)) {
-            Rename-Item dist\mtg-collection-manager dist\mtg-collection-manager-windows.exe
-          }
-        shell: pwsh
-
-      # ── Upload to GitHub Release ─────────────────────────────────────────────
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
