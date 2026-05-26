@@ -25,8 +25,13 @@ LANG_FLAGS = {
 async def stats_page(request: Request):
     data = await deps.db.stats()
     containers = await deps.db.container_stats()
+    sets = await deps.db.get_sets_summary()
+    # Top 10 sets by distinct card names owned (most varied first)
+    top_sets = sorted(sets, key=lambda s: s.get("distinct_names") or 0, reverse=True)[:10]
     return templates.TemplateResponse(request, "stats.html", {
         "stats": data,
         "containers": containers,
         "lang_flags": LANG_FLAGS,
+        "sets_count": len(sets),
+        "top_sets": top_sets,
     })

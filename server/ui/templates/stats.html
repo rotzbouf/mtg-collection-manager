@@ -124,6 +124,55 @@
 </article>
 {% endif %}
 
+{# ── Set completion ── #}
+{% if sets_count %}
+<h3>Set Completion</h3>
+<div class="grid">
+  <article>
+    <h4>Sets in collection</h4>
+    <p class="stat-big">{{ sets_count }}</p>
+    <small><a href="/sets">View all sets →</a></small>
+  </article>
+</div>
+
+{% if top_sets %}
+<article>
+  <h4>Top sets by distinct cards owned</h4>
+  <div class="overflow-auto">
+    <table>
+      <thead>
+        <tr>
+          <th>Set</th>
+          <th>Name</th>
+          <th style="text-align:right;">Distinct</th>
+          <th style="text-align:right;">Copies</th>
+          <th style="text-align:right;">Value (EUR)</th>
+          <th style="text-align:right;">Best card (EUR)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in top_sets %}
+        <tr>
+          <td><a href="/sets/{{ s.set_code }}"><code>{{ s.set_code | upper }}</code></a></td>
+          <td><a href="/sets/{{ s.set_code }}">{{ s.set_name or s.set_code }}</a></td>
+          <td style="text-align:right;">{{ s.distinct_names }}</td>
+          <td style="text-align:right;">{{ s.card_count }}</td>
+          <td style="text-align:right;">
+            {% if s.total_value_eur %}€{{ "%.2f"|format(s.total_value_eur) }}{% else %}—{% endif %}
+          </td>
+          <td style="text-align:right;">
+            {% if s.max_card_eur %}€{{ "%.2f"|format(s.max_card_eur) }}{% else %}—{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <footer><a href="/sets">View all {{ sets_count }} sets →</a></footer>
+</article>
+{% endif %}
+{% endif %}
+
 {% else %}
 <p>No data yet. <a href="/collection/add">Add some cards!</a></p>
 {% endif %}
