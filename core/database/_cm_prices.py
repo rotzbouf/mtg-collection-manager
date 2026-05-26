@@ -85,14 +85,19 @@ class _CMPricesMixin:
             "updated_at": row[1] if row else None,
         }
 
-    async def update_card_cm_id(self, scryfall_id: str, cm_id: int) -> None:
-        """Store the Cardmarket product ID for a card identified by its Scryfall ID."""
+    async def update_card_cm_id(self, scryfall_id: str, cm_id: int) -> int:
+        """Store the Cardmarket product ID for every row with this Scryfall ID.
+
+        Overwrites any existing value so stale / wrong IDs are corrected.
+        Returns the number of collection rows updated.
+        """
         async with self._write_lock:
-            await self._db.execute(
-                "UPDATE collection SET cardmarket_id = ? WHERE scryfall_id = ? AND cardmarket_id IS NULL",
+            cur = await self._db.execute(
+                "UPDATE collection SET cardmarket_id = ? WHERE scryfall_id = ?",
                 (cm_id, scryfall_id),
             )
             await self._db.commit()
+            return cur.rowcount
 
     async def get_scryfall_ids_missing_cm_id(self) -> list[str]:
         """Return distinct Scryfall IDs from collection where cardmarket_id is NULL."""

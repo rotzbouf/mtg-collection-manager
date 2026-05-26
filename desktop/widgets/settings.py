@@ -1815,27 +1815,49 @@ class SettingsWidget(QWidget):
 
     @asyncSlot()
     async def _on_backfill_cm_ids(self):
+        import logging as _log
+        _logger = _log.getLogger(__name__)
         from desktop.db import db, scryfall
         self._cm_backfill_btn.setEnabled(False)
         try:
             ids = await db.get_scryfall_ids_missing_cm_id()
             total = len(ids)
             if total == 0:
-                self._cm_status.setText("All collection cards already have a CM ID.")
+                self._cm_status.setText("✓ All collection cards already have a CM ID.")
                 return
             self._cm_status.setText(f"Backfilling 0 / {total}…")
-            filled = 0
+            rows_updated = 0   # actual DB rows changed
+            no_cm_id    = 0   # Scryfall has no CM ID for this card
+            errors      = 0
             for i, sid in enumerate(ids, 1):
                 try:
                     data = await scryfall.get_by_id(sid)
-                    if data and data.get("cardmarket_id"):
-                        await db.update_card_cm_id(sid, data["cardmarket_id"])
-                        filled += 1
-                except Exception:
-                    pass
+                    if data is None:
+                        errors += 1
+                        _logger.warning("CM backfill: Scryfall returned None for %s", sid)
+                    elif data.get("cardmarket_id"):
+                        changed = await db.update_card_cm_id(sid, data["cardmarket_id"])
+                        rows_updated += changed
+                        if changed == 0:
+                            _logger.debug(
+                                "CM backfill: update_card_cm_id(%s, %s) matched 0 rows",
+                                sid, data["cardmarket_id"],
+                            )
+                    else:
+                        no_cm_id += 1
+                        _logger.debug("CM backfill: no cardmarket_id on Scryfall for %s", sid)
+                except Exception as exc:
+                    errors += 1
+                    _logger.warning("CM backfill error for %s: %s", sid, exc)
                 if i % 5 == 0 or i == total:
                     self._cm_status.setText(f"Backfilling {i} / {total}…")
-            self._cm_status.setText(f"✓ CM IDs backfilled: {filled} / {total} cards updated.")
+
+            parts = [f"✓ {rows_updated} row(s) updated"]
+            if no_cm_id:
+                parts.append(f"{no_cm_id} card(s) have no CM ID on Scryfall")
+            if errors:
+                parts.append(f"{errors} error(s) — see Logs tab")
+            self._cm_status.setText("  ·  ".join(parts))
         except Exception as exc:
             self._cm_status.setText(f"Error: {exc}")
         finally:
