@@ -316,17 +316,21 @@ class StatsWidget(QWidget):
             lay.addWidget(_section_header("Containers"))
             ct_rows = []
             for c in container_stats:
-                eur = c.get("total_value_eur") or 0.0
+                eur     = c.get("total_value_eur") or 0.0
+                max_eur = c.get("max_card_eur")
+                fmt     = c.get("deck_format") or "—"
                 ct_rows.append([
                     c.get("name") or "",
                     c.get("type") or "",
+                    fmt,
                     str(c.get("card_count", 0)),
                     f"€{eur:.2f}",
+                    f"€{max_eur:.2f}" if max_eur else "—",
                 ])
             ct_row = QHBoxLayout()
             ct_row.setAlignment(Qt.AlignmentFlag.AlignLeft)
             ct_row.addWidget(_header_table(
-                ["Name", "Type", "Cards", "Value (EUR)"],
+                ["Name", "Type", "Format", "Cards", "Value (EUR)", "Best card (EUR)"],
                 ct_rows,
             ))
             ct_row.addStretch()
