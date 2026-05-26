@@ -21,6 +21,7 @@ from desktop.widgets.settings import SettingsWidget
 from desktop.widgets.deck import DeckWidget
 from desktop.widgets.deck_analysis import DeckAnalysisWidget
 from desktop.widgets.deck_improve import DeckImproveWidget
+from desktop.widgets.deck_complete import DeckCompleteWidget
 from desktop.widgets.overcount import OvercountWidget
 from desktop.widgets.format_bans import FormatBansWidget
 from desktop.widgets.buylists import BuylistsWidget
@@ -217,9 +218,10 @@ class MainWindow(QMainWindow):
             return StatsWidget()
         if key == "decks":
             return _TabbedPage([
-                ("Deck Builder",  DeckWidget()),
-                ("Deck Analysis", DeckAnalysisWidget()),
-                ("Improve Deck",  DeckImproveWidget()),
+                ("Deck Builder",   DeckWidget()),
+                ("Deck Analysis",  DeckAnalysisWidget()),
+                ("Improve Deck",   DeckImproveWidget()),
+                ("Complete Deck",  DeckCompleteWidget()),
             ])
         if key == "settings":
             return SettingsWidget()

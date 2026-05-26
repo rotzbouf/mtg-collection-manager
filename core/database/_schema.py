@@ -108,6 +108,21 @@ class _SchemaMixin:
                 """)
                 logger.info("Migrated: created cm_prices table")
 
+            async with self._db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='sets_meta'"
+            ) as cur:
+                has_sets_meta = (await cur.fetchone()) is not None
+
+            if not has_sets_meta:
+                await self._db.execute("""
+                    CREATE TABLE sets_meta (
+                        set_code   TEXT PRIMARY KEY,
+                        card_count INTEGER,
+                        updated_at TEXT DEFAULT (datetime('now'))
+                    )
+                """)
+                logger.info("Migrated: created sets_meta table")
+
             # Recreate view every startup so it stays in sync with column additions.
             await self._db.execute("DROP VIEW IF EXISTS collection_with_prices")
             await self._db.execute("""

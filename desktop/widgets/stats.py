@@ -214,18 +214,37 @@ class StatsWidget(QWidget):
 
     @asyncSlot()
     async def _load_stats(self):
-        from desktop.db import db
+        from desktop.db import db, scryfall
         stats = await db.stats()
         container_stats = await db.container_stats()
         value_history = await db.get_collection_value_history()
         sets = await db.get_sets_summary()
-        self._render_stats(stats, container_stats, value_history, sets)
+
+        # Build sets_meta map: try DB cache first; if any set is missing, refresh
+        # from Scryfall in the background and persist for next time.
+        sets_meta = await db.get_sets_meta_map()
+        collection_codes = {s["set_code"].lower() for s in sets if s.get("set_code")}
+        missing = collection_codes - sets_meta.keys()
+        if missing:
+            try:
+                all_sets = await scryfall.fetch_all_sets()
+                if all_sets:
+                    await db.upsert_sets_meta([
+                        {"set_code": s["code"], "card_count": s.get("card_count")}
+                        for s in all_sets
+                        if s.get("code") and s.get("card_count") is not None
+                    ])
+                    sets_meta = await db.get_sets_meta_map()
+            except Exception:
+                pass  # non-fatal — table will populate on next load
+
+        self._render_stats(stats, container_stats, value_history, sets, sets_meta)
 
     # ------------------------------------------------------------------ #
     # Rendering                                                             #
     # ------------------------------------------------------------------ #
 
-    def _render_stats(self, stats: dict, container_stats: list[dict], value_history: list[dict], sets: list[dict] | None = None):
+    def _render_stats(self, stats: dict, container_stats: list[dict], value_history: list[dict], sets: list[dict] | None = None, sets_meta: dict[str, int] | None = None):
         if self._value_chart_fig is not None:
             plt.close(self._value_chart_fig)
             self._value_chart_fig = None
@@ -341,19 +360,28 @@ class StatsWidget(QWidget):
             top_sets = sorted(sets, key=lambda s: s.get("distinct_names") or 0, reverse=True)[:10]
             lay.addWidget(_section_header(f"Set Completion  ({len(sets)} sets in collection)"))
             set_rows = []
+            _meta = sets_meta or {}
             for s in top_sets:
                 eur = s.get("total_value_eur")
+                distinct = s.get("distinct_names") or 0
+                code_lc = (s.get("set_code") or "").lower()
+                total_in_set = _meta.get(code_lc)
+                if total_in_set:
+                    pct = distinct / total_in_set * 100
+                    completion = f"{distinct} / {total_in_set}  ({pct:.0f}%)"
+                else:
+                    completion = str(distinct)
                 set_rows.append([
                     (s.get("set_code") or "").upper(),
                     s.get("set_name") or s.get("set_code") or "",
-                    str(s.get("distinct_names") or 0),
+                    completion,
                     str(s.get("card_count") or 0),
                     f"€{eur:.2f}" if eur else "—",
                 ])
             set_row = QHBoxLayout()
             set_row.setAlignment(Qt.AlignmentFlag.AlignLeft)
             set_row.addWidget(_header_table(
-                ["Code", "Set name", "Distinct", "Copies", "Value (EUR)"],
+                ["Code", "Set name", "Distinct (completion)", "Copies", "Value (EUR)"],
                 set_rows,
             ))
             set_row.addStretch()

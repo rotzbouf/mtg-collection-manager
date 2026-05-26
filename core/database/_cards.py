@@ -521,6 +521,39 @@ class _CardsMixin:
             rows = await cur.fetchall()
         return [dict(r) for r in rows]
 
+    async def upsert_sets_meta(self, entries: list[dict]) -> None:
+        """Persist set total card counts from Scryfall into sets_meta table.
+
+        Each entry should have: set_code (str), card_count (int).
+        """
+        rows = [
+            (e["set_code"].lower(), e["card_count"])
+            for e in entries
+            if e.get("set_code") and e.get("card_count") is not None
+        ]
+        if not rows:
+            return
+        async with self._write_lock:
+            await self._db.executemany(
+                """
+                INSERT INTO sets_meta (set_code, card_count, updated_at)
+                VALUES (?, ?, datetime('now'))
+                ON CONFLICT(set_code) DO UPDATE SET
+                    card_count = excluded.card_count,
+                    updated_at = excluded.updated_at
+                """,
+                rows,
+            )
+            await self._db.commit()
+
+    async def get_sets_meta_map(self) -> dict[str, int]:
+        """Return {set_code: card_count} for all rows in sets_meta."""
+        async with self._db.execute(
+            "SELECT set_code, card_count FROM sets_meta WHERE card_count IS NOT NULL"
+        ) as cur:
+            rows = await cur.fetchall()
+        return {row[0]: row[1] for row in rows}
+
     async def get_collection_by_set(self, set_code: str) -> list[dict]:
         """Return all collection cards for a given set, sorted by collector number.
 

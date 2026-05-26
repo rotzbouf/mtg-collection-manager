@@ -415,3 +415,22 @@ class ScryfallClient:
         data = await self._get(f"{BASE}/sets/{set_code.lower()}")
         self._ncache_set(key, data)
         return data
+
+    async def fetch_all_sets(self) -> list[dict]:
+        """Return all sets from Scryfall GET /sets.
+
+        Each item has at least: code, name, card_count, set_type, released_at.
+        Result is cached for 24 h.  Returns [] on error.
+        """
+        key = ("allsets",)
+        hit, cached = self._ncache_get(key, 86_400.0)
+        if hit:
+            return cached or []
+        data = await self._get(f"{BASE}/sets")
+        if not data or data.get("object") != "list":
+            logger.warning("fetch_all_sets: unexpected response")
+            self._ncache_set(key, [])
+            return []
+        sets = data.get("data", [])
+        self._ncache_set(key, sets)
+        return sets
