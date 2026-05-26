@@ -382,6 +382,33 @@ class _CardsMixin:
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
 
+    async def get_collection_candidates(self, exclude_container_id: int) -> list[dict]:
+        """All collection cards not in *exclude_container_id* and not in other decks
+        or overcount containers.
+
+        Returns the full card record including oracle_text so the caller can do
+        oracle-text-based synergy scoring in Python.
+        """
+        async with self._db.execute(
+            """
+            SELECT c.id, c.scryfall_id, c.name_en, c.printed_name, c.name_de,
+                   c.type_line, c.cmc, c.color_identity, c.mana_cost,
+                   c.oracle_text, c.rarity, c.foil, c.language,
+                   c.image_url, c.image_url_back,
+                   c.set_code, c.collector_number,
+                   c.container_id, ct.name AS container_name,
+                   COALESCE(cp.price_eur, c.price_eur) AS price_eur
+            FROM collection c
+            LEFT JOIN containers ct ON c.container_id = ct.id
+            LEFT JOIN card_prices cp ON c.scryfall_id = cp.scryfall_id
+            WHERE c.container_id != ?
+              AND (ct.type IS NULL OR ct.type NOT IN ('deck', 'commander', 'overcount'))
+            ORDER BY c.name_en
+            """,
+            (exclude_container_id,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
     async def get_binder_cards_for_improve(
         self, meta_format: str, exclude_container_id: int
     ) -> list[dict]:
