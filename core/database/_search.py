@@ -238,7 +238,9 @@ class _SearchMixin:
         if language:
             conditions.append("c.language = ?")
             params.append(language)
-        if container_id is not None:
+        if container_id == -1:
+            conditions.append("c.container_id IS NULL")
+        elif container_id is not None:
             conditions.append("c.container_id = ?")
             params.append(container_id)
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
