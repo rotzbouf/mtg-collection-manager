@@ -18,10 +18,12 @@ jobs:
             artifact: mtg-collection-manager-linux
             nuitka_cache: ~/.cache/Nuitka
             nuitka_pin: ""          # latest (4.x) works fine on Linux
+            webengine: true         # PyQt6-WebEngine works fine on Linux
           - os: macos-latest
             artifact: mtg-collection-manager-macos
             nuitka_cache: ~/Library/Caches/Nuitka
             nuitka_pin: ""          # latest; patched post-install (see step below)
+            webengine: false        # Nuitka can't locate QtWebEngine resources on macOS; JsRenderer falls back gracefully
 
     runs-on: ${{ matrix.os }}
     timeout-minutes: 180
@@ -85,8 +87,14 @@ jobs:
           pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
           pip install -r deps/requirements.txt
           pip install "nuitka${{ matrix.nuitka_pin }}" ordered-set zstandard
-          # WebEngine needs extra Qt libs not pulled in by PyQt6 alone
-          pip install PyQt6-WebEngine || true
+
+      # PyQt6-WebEngine: install only where Nuitka can package it.
+      # On macOS, Nuitka fatally fails to locate the QtWebEngine resources bundle
+      # (error: "failed to detect QtWebEngine resources path").
+      # JsRenderer.available() returns False at runtime → graceful no-op fallback.
+      - name: Install PyQt6-WebEngine (Linux only)
+        if: matrix.webengine
+        run: pip install PyQt6-WebEngine
 
       # ── Patch Nuitka: allow PyQt6 on macOS (downgrade fatal → warning) ───────
       # Nuitka added support_info: 'error' for PyQt6+macOS in its package config.
@@ -138,8 +146,7 @@ jobs:
             --include-package=cv2 \
             --include-package=torch \
             --include-package=PIL \
-            --include-package=PyQt6.QtWebEngineCore \
-            --include-package=PyQt6.QtWebEngineWidgets \
+            ${{ matrix.webengine && '--include-package=PyQt6.QtWebEngineCore --include-package=PyQt6.QtWebEngineWidgets' || '' }} \
             --include-package=discord \
             --include-package=aiohttp \
             --include-package=aiosqlite \
