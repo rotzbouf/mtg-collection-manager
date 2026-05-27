@@ -52,9 +52,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r deps/requirements.txt
           pip install nuitka ordered-set zstandard
-          pip install PyQt6-WebEngine
-          # torch/easyocr intentionally excluded on Windows — Tesseract handles
-          # OCR and avoids a ~2 GB download that causes build timeouts.
+          # torch/easyocr and PyQt6-WebEngine intentionally excluded on Windows.
 
       - name: Seed config.json
         shell: pwsh
@@ -78,18 +76,12 @@ jobs:
             --follow-import-to=cogs `
             --include-package=cv2 `
             --include-package=PIL `
-            --include-package=PyQt6.QtWebEngineCore `
-            --include-package=PyQt6.QtWebEngineWidgets `
             --include-package=discord `
             --include-package=aiohttp `
             --include-package=aiosqlite `
             --include-package=qasync `
             --include-package=matplotlib `
-            --include-package=fastapi `
-            --include-package=uvicorn `
-            --include-package=starlette `
             --include-package=pytesseract `
-            --include-package=anyio `
             --include-package=scipy `
             --nofollow-import-to=tkinter `
             --nofollow-import-to=_tkinter `
@@ -143,8 +135,6 @@ jobs:
             --nofollow-import-to=scipy.special.tests `
             --nofollow-import-to=scipy.stats.tests `
             "--include-data-dir=images/mana=images/mana" `
-            "--include-data-dir=server/ui/templates=server/ui/templates" `
-            "--include-data-dir=server/ui/static=server/ui/static" `
             "--include-data-files=config.json=config.json" `
             --standalone `
             --lto=no `
@@ -217,7 +207,7 @@ jobs:
           pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
           pip install -r deps/requirements.txt
           pip install nuitka ordered-set zstandard
-          pip install PyQt6-WebEngine
+          # PyQt6-WebEngine not installed — web UI removed from beta branch.
 
       - name: Seed config.json
         run: cp config.json.example config.json
@@ -240,18 +230,12 @@ jobs:
             --include-package=cv2 \
             --include-package=torch \
             --include-package=PIL \
-            --include-package=PyQt6.QtWebEngineCore \
-            --include-package=PyQt6.QtWebEngineWidgets \
             --include-package=discord \
             --include-package=aiohttp \
             --include-package=aiosqlite \
             --include-package=qasync \
             --include-package=matplotlib \
-            --include-package=fastapi \
-            --include-package=uvicorn \
-            --include-package=starlette \
             --include-package=pytesseract \
-            --include-package=anyio \
             --include-package=scipy \
             --nofollow-import-to=torch.cuda \
             --nofollow-import-to=torch.backends.cuda \
@@ -319,8 +303,6 @@ jobs:
             --nofollow-import-to=scipy.special.tests \
             --nofollow-import-to=scipy.stats.tests \
             "--include-data-dir=images/mana=images/mana" \
-            "--include-data-dir=server/ui/templates=server/ui/templates" \
-            "--include-data-dir=server/ui/static=server/ui/static" \
             "--include-data-files=config.json=config.json" \
             --standalone \
             --lto=yes \
@@ -465,11 +447,7 @@ jobs:
             --include-package=aiosqlite \
             --include-package=qasync \
             --include-package=matplotlib \
-            --include-package=fastapi \
-            --include-package=uvicorn \
-            --include-package=starlette \
             --include-package=pytesseract \
-            --include-package=anyio \
             --include-package=scipy \
             --nofollow-import-to=PyQt6.QtWebEngineCore \
             --nofollow-import-to=PyQt6.QtWebEngineWidgets \
@@ -540,8 +518,6 @@ jobs:
             --nofollow-import-to=scipy.special.tests \
             --nofollow-import-to=scipy.stats.tests \
             "--include-data-dir=images/mana=images/mana" \
-            "--include-data-dir=server/ui/templates=server/ui/templates" \
-            "--include-data-dir=server/ui/static=server/ui/static" \
             "--include-data-files=config.json=config.json" \
             --standalone \
             --lto=yes \
