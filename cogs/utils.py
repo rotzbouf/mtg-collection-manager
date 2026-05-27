@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import discord
-from discord import app_commands
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -33,17 +32,6 @@ _SCAN_IMAGE_EXTS = {"jpg", "jpeg", "png", "gif", "webp", "bmp", "tiff", "heic"}
 
 
 # ── Formatting helpers ────────────────────────────────────────────────────────
-
-async def container_autocomplete(
-    interaction: discord.Interaction, current: str
-) -> list[app_commands.Choice[str]]:
-    containers = await interaction.client.db.list_containers()
-    return [
-        app_commands.Choice(name=f"{c['name']} ({c['card_count']} cards)", value=str(c["id"]))
-        for c in containers
-        if current.lower() in c["name"].lower()
-    ][:25]
-
 
 def _fmt_price(card: dict) -> str:
     parts = []
