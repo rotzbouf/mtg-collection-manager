@@ -7,7 +7,7 @@ import os
 import logging
 import socket
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse
@@ -30,13 +30,16 @@ async def _check_ssrf(url: str) -> Optional[str]:
 
     Defends against SSRF by:
     - Allowing only http / https schemes.
-    - Resolving the hostname and rejecting private, loopback, link-local,
-      reserved, multicast and unspecified addresses (e.g. 127.x, 10.x,
-      172.16-31.x, 192.168.x, 169.254.x, ::1, cloud metadata endpoints).
+    - Resolving the hostname via getaddrinfo (IPv4 *and* IPv6) and rejecting
+      private, loopback, link-local, reserved, multicast and unspecified
+      addresses (e.g. 127.x, 10.x, 172.16-31.x, 192.168.x, 169.254.x,
+      ::1, cloud metadata endpoints).
 
     DNS resolution is performed in a thread executor to avoid blocking the
     event loop.  Note: this check is a best-effort guard — it does not prevent
     DNS-rebinding attacks, but it eliminates the straightforward SSRF vector.
+    Call this function for *every* URL that will be fetched, including
+    redirect destinations.
     """
     try:
         parsed = urlparse(url)
@@ -52,22 +55,28 @@ async def _check_ssrf(url: str) -> Optional[str]:
 
     try:
         loop = asyncio.get_running_loop()
-        ip_str = await loop.run_in_executor(None, socket.gethostbyname, host)
-        ip = ipaddress.ip_address(ip_str)
+        # getaddrinfo covers both IPv4 and IPv6 (gethostbyname only does IPv4).
+        infos = await loop.run_in_executor(
+            None,
+            lambda: socket.getaddrinfo(host, None, socket.AF_UNSPEC, socket.SOCK_STREAM),
+        )
     except OSError:
         return f"Cannot resolve hostname: {host}"
-    except ValueError:
-        return f"Could not parse resolved address for {host}."
 
-    if (
-        ip.is_private
-        or ip.is_loopback
-        or ip.is_link_local
-        or ip.is_reserved
-        or ip.is_multicast
-        or ip.is_unspecified
-    ):
-        return "Requests to private or internal addresses are not allowed."
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            return f"Could not parse resolved address for {host}."
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_reserved
+            or ip.is_multicast
+            or ip.is_unspecified
+        ):
+            return "Requests to private or internal addresses are not allowed."
 
     return None
 
@@ -143,8 +152,29 @@ async def _fetch_url(url: str) -> tuple[Optional[str], Optional[str]]:
             cookie_jar=jar,
             timeout=timeout,
         ) as session:
-            async with session.get(url, allow_redirects=True) as resp:
-                html = await resp.text(errors="replace")
+            # Follow redirects manually so every Location header is validated
+            # through _check_ssrf before we connect — prevents redirect-based
+            # SSRF bypasses (e.g. open-redirect on the initial host pointing
+            # back to 169.254.x or 192.168.x).
+            _MAX_REDIRECTS = 10
+            current_url = url
+            html = ""
+            for _ in range(_MAX_REDIRECTS):
+                async with session.get(current_url, allow_redirects=False) as resp:
+                    if resp.status in (301, 302, 303, 307, 308):
+                        location = resp.headers.get("Location", "")
+                        if not location:
+                            return None, "Redirect with no Location header."
+                        next_url = urljoin(current_url, location)
+                        hop_err = await _check_ssrf(next_url)
+                        if hop_err:
+                            return None, f"Redirect blocked: {hop_err}"
+                        current_url = next_url
+                        continue
+                    html = await resp.text(errors="replace")
+                    break
+            else:
+                return None, "Too many redirects."
         if len(html) < 300:
             return None, "Response too short — the site may require JavaScript."
         return html, None
