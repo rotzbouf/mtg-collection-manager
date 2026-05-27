@@ -22,6 +22,36 @@ from desktop.widgets.card_detail import CardDetailPanel
 _COLUMNS = ["#", "Name", "Set", "CN", "Cond", "Foil", "Lang", "Price (EUR)"]
 
 
+def _cn_sort_key(cn: str) -> float:
+    """Numeric sort key for collector numbers ('123', '123a', '★3' → 3.0, '' → ∞)."""
+    digits = ""
+    for ch in (cn or ""):
+        if ch.isdigit():
+            digits += ch
+        elif digits:
+            break  # stop at first non-digit after leading digits
+    return float(digits) if digits else float("inf")
+
+
+class _NumericItem(QTableWidgetItem):
+    """QTableWidgetItem that compares numerically when both items carry a sort_val."""
+
+    def __init__(self, text: str, sort_val: float | None = None):
+        super().__init__(text)
+        self._sort_val = sort_val
+
+    def __lt__(self, other: QTableWidgetItem) -> bool:
+        if isinstance(other, _NumericItem):
+            sv, ov = self._sort_val, other._sort_val
+            if sv is not None and ov is not None:
+                return sv < ov
+            if sv is None:
+                return False   # None sorts last
+            if ov is None:
+                return True
+        return super().__lt__(other)
+
+
 class ContainersWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -64,6 +94,19 @@ class ContainersWidget(QWidget):
         )
         filter_row.addWidget(self._type_filter_combo)
         left_layout.addLayout(filter_row)
+
+        # Container sort
+        sort_row = QHBoxLayout()
+        sort_row.addWidget(QLabel("Sort:"))
+        self._sort_combo = QComboBox()
+        self._sort_combo.addItem("Name A→Z", "name_asc")
+        self._sort_combo.addItem("Cards ↓", "count_desc")
+        self._sort_combo.addItem("Value € ↓", "value_desc")
+        self._sort_combo.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+        sort_row.addWidget(self._sort_combo)
+        left_layout.addLayout(sort_row)
 
         self._list = QListWidget()
         left_layout.addWidget(self._list)
@@ -142,6 +185,8 @@ class ContainersWidget(QWidget):
         self._table.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
         hdr = self._table.horizontalHeader()
         hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        hdr.setSectionsClickable(True)
+        self._table.setSortingEnabled(True)
         self._table.verticalHeader().setVisible(False)
         self._table.viewport().installEventFilter(self)
         card_splitter.addWidget(self._table)
@@ -166,7 +211,8 @@ class ContainersWidget(QWidget):
         # Signals
         self._list.currentItemChanged.connect(self._on_container_selected)
         self._new_btn.clicked.connect(self._on_new_container)
-        self._type_filter_combo.currentIndexChanged.connect(self._apply_type_filter)
+        self._type_filter_combo.currentIndexChanged.connect(self._refresh_container_list)
+        self._sort_combo.currentIndexChanged.connect(self._refresh_container_list)
         self._rename_btn.clicked.connect(self._on_rename_container)
         self._delete_btn.clicked.connect(self._on_delete_container)
         self._format_combo.currentIndexChanged.connect(self._on_deck_format_changed)
@@ -188,7 +234,6 @@ class ContainersWidget(QWidget):
         import core.config as cfg
 
         self._containers = await db.list_containers()
-        prev_id = self._selected_container["id"] if self._selected_container else None
 
         # Refresh type filter options (keep current selection if still valid)
         types = cfg.load().get("container_types", [])
@@ -202,9 +247,35 @@ class ContainersWidget(QWidget):
         self._type_filter_combo.setCurrentIndex(max(0, idx))
         self._type_filter_combo.blockSignals(False)
 
+        self._refresh_container_list()
+
+    def _refresh_container_list(self):
+        """Rebuild the container list applying the current type filter and sort."""
+        wanted_type = self._type_filter_combo.currentData()   # None = all
+        sort_key    = self._sort_combo.currentData()
+
+        containers = self._containers
+        if wanted_type is not None:
+            containers = [c for c in containers if c.get("type") == wanted_type]
+
+        if sort_key == "name_asc":
+            containers = sorted(containers, key=lambda c: c["name"].casefold())
+        elif sort_key == "count_desc":
+            containers = sorted(containers, key=lambda c: c.get("card_count", 0), reverse=True)
+        elif sort_key == "value_desc":
+            containers = sorted(containers, key=lambda c: c.get("total_value_eur") or 0.0, reverse=True)
+
+        selected_id = self._selected_container["id"] if self._selected_container else None
+
+        # Deselect if the currently selected container is now filtered out
+        if selected_id is not None and not any(c["id"] == selected_id for c in containers):
+            self._list.clearSelection()
+            self._on_container_selected(None, None)
+            selected_id = None
+
         self._list.blockSignals(True)
         self._list.clear()
-        for c in self._containers:
+        for c in containers:
             count = c.get("card_count", 0)
             value = c.get("total_value_eur") or 0.0
             item = QListWidgetItem(
@@ -214,34 +285,13 @@ class ContainersWidget(QWidget):
             self._list.addItem(item)
         self._list.blockSignals(False)
 
-        # Apply type filter (hides items that don't match)
-        self._apply_type_filter()
-
-        # Reselect the previously selected container
-        if prev_id is not None:
+        # Reselect the previously selected container if still visible
+        if selected_id is not None:
             for i in range(self._list.count()):
                 item = self._list.item(i)
-                if item and item.data(Qt.ItemDataRole.UserRole) == prev_id:
+                if item and item.data(Qt.ItemDataRole.UserRole) == selected_id:
                     self._list.setCurrentItem(item)
                     break
-
-    def _apply_type_filter(self):
-        """Show/hide container list items based on the selected type filter."""
-        wanted_type = self._type_filter_combo.currentData()  # None = all
-        for i in range(self._list.count()):
-            item = self._list.item(i)
-            if item is None:
-                continue
-            cid = item.data(Qt.ItemDataRole.UserRole)
-            container = next((c for c in self._containers if c["id"] == cid), None)
-            if wanted_type is None or (container and container.get("type") == wanted_type):
-                item.setHidden(False)
-            else:
-                item.setHidden(True)
-                # Deselect if currently selected and now hidden
-                if item.isSelected():
-                    self._list.clearSelection()
-                    self._on_container_selected(None, None)
 
     @asyncSlot()
     async def _load_container_cards(self, container_id: int):
@@ -266,6 +316,8 @@ class ContainersWidget(QWidget):
         else:
             duplicate_names: set = set()
 
+        # Disable sorting during fill to prevent mid-insert re-sorts
+        self._table.setSortingEnabled(False)
         self._table.setRowCount(0)
         for row_idx, card in enumerate(cards):
             self._table.insertRow(row_idx)
@@ -281,8 +333,13 @@ class ContainersWidget(QWidget):
                 cid: int | None = None,
                 commander: bool = is_cmd,
                 duplicate: bool = is_dup,
+                sort_val: float | None = None,
             ) -> QTableWidgetItem:
-                item = QTableWidgetItem(str(text))
+                item = (
+                    _NumericItem(str(text), sort_val=sort_val)
+                    if sort_val is not None
+                    else QTableWidgetItem(str(text))
+                )
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 if cid is not None:
                     item.setData(Qt.ItemDataRole.UserRole, cid)
@@ -297,14 +354,18 @@ class ContainersWidget(QWidget):
             name_text = f"👑 {display_name(card)}" if is_cmd else display_name(card)
             if is_dup:
                 name_text = f"⚠ {name_text}"
-            self._table.setItem(row_idx, 0, _item(str(card.get("id", "")), card.get("id")))
+            card_id  = card.get("id") or 0
+            price    = card.get("price_eur")
+            cn_text  = card.get("collector_number") or ""
+            self._table.setItem(row_idx, 0, _item(str(card_id), cid=card_id, sort_val=float(card_id)))
             self._table.setItem(row_idx, 1, _item(name_text))
             self._table.setItem(row_idx, 2, _item((card.get("set_code") or "").upper()))
-            self._table.setItem(row_idx, 3, _item(card.get("collector_number") or ""))
+            self._table.setItem(row_idx, 3, _item(cn_text, sort_val=_cn_sort_key(cn_text)))
             self._table.setItem(row_idx, 4, _item(card.get("condition") or ""))
             self._table.setItem(row_idx, 5, _item("★" if card.get("foil") else ""))
             self._table.setItem(row_idx, 6, _item(lang_flag(card)))
-            self._table.setItem(row_idx, 7, _item(format_price(card.get("price_eur"))))
+            self._table.setItem(row_idx, 7, _item(format_price(price), sort_val=float(price if price is not None else -1.0)))
+        self._table.setSortingEnabled(True)
 
     # ------------------------------------------------------------------ #
     # Slots                                                                 #
