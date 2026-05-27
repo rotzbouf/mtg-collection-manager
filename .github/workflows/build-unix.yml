@@ -220,27 +220,62 @@ jobs:
           # QtWebEngine resources bundle on macOS.  JsRenderer.available() returns
           # False at runtime and all JS-rendering UI falls back gracefully.
 
-      # Nuitka marks PyQt6+macOS as a fatal error in its package config.
-      # Downgrade to 'warning' so the build proceeds; the binary works in practice.
-      - name: Patch Nuitka PyQt6-on-macOS check
+      # Nuitka marks PyQt6+macOS as a fatal error in its package config, and the
+      # Python plugin code also fatally exits when it finds Qt WebEngine dylibs in
+      # the Qt framework but can't locate the resources bundle (which only ships
+      # with the PyQt6-WebEngine pip package, intentionally not installed here).
+      # Patch 1: YAML — downgrade support_info from 'error' to 'warning'.
+      # Patch 2: Python plugin — convert the WebEngine resources sysexit to a
+      #          warning + early return so the build continues without WebEngine.
+      - name: Patch Nuitka PyQt6-on-macOS checks
         run: |
           python3 - <<'EOF'
-          import pathlib, site, sys
+          import pathlib, re, site, sys
+
           for p in site.getsitepackages():
-              cfg = pathlib.Path(p) / "nuitka/plugins/standard/standard.nuitka-package.config.yml"
+              sitebase = pathlib.Path(p)
+              if not (sitebase / "nuitka").exists():
+                  continue
+
+              # ── Patch 1: YAML ──────────────────────────────────────────────
+              cfg = sitebase / "nuitka/plugins/standard/standard.nuitka-package.config.yml"
               if cfg.exists():
                   txt = cfg.read_text()
-                  patched = txt.replace(
+                  new = txt.replace(
                       "support_info: 'error'\n        when: 'macos and use_pyqt6'",
                       "support_info: 'warning'\n        when: 'macos and use_pyqt6'",
                   )
-                  if patched != txt:
-                      cfg.write_text(patched)
-                      print("Patched", cfg)
+                  if new != txt:
+                      cfg.write_text(new)
+                      print("Patched YAML:", cfg)
                   else:
-                      print("Pattern not found — check Nuitka version")
-                  sys.exit(0)
-          print("Nuitka config not found in site-packages")
+                      print("YAML pattern not found (Nuitka may have changed)")
+
+              # ── Patch 2: Python plugin — WebEngine FATAL → warning + return ─
+              for py_path in (sitebase / "nuitka").rglob("*.py"):
+                  txt = py_path.read_text(errors="replace")
+                  if "failed to detect QtWebEngine resources path" not in txt:
+                      continue
+                  new = re.sub(
+                      r'([ \t]*)self\.sysexit\("Error, failed to detect QtWebEngine resources path[^"]*"\)',
+                      lambda m: (
+                          m.group(1) + 'self.warning("QtWebEngine resources not found'
+                          ' — WebEngine disabled on macOS")\n'
+                          + m.group(1) + 'return'
+                      ),
+                      txt,
+                  )
+                  if new != txt:
+                      py_path.write_text(new)
+                      print("Patched WebEngine FATAL in:", py_path)
+                  else:
+                      print("WebEngine FATAL pattern not found in:", py_path)
+                  break
+
+              sys.exit(0)
+
+          print("ERROR: Nuitka not found in site-packages")
+          sys.exit(1)
           EOF
 
       - name: Seed config.json
@@ -276,6 +311,9 @@ jobs:
             --include-package=pytesseract \
             --include-package=anyio \
             --include-package=scipy \
+            --nofollow-import-to=PyQt6.QtWebEngineCore \
+            --nofollow-import-to=PyQt6.QtWebEngineWidgets \
+            --nofollow-import-to=PyQt6.QtWebEngineQuick \
             --nofollow-import-to=torch.cuda \
             --nofollow-import-to=torch.backends.cuda \
             --nofollow-import-to=torch.backends.cudnn \
