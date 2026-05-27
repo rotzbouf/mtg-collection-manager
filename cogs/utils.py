@@ -5,8 +5,6 @@ import discord
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-CONDITIONS = ["NM", "LP", "MP", "HP", "DMG"]
-
 LANG_EMOJI = {
     "en": "🇬🇧", "de": "🇩🇪", "fr": "🇫🇷", "it": "🇮🇹",
     "es": "🇪🇸", "pt": "🇵🇹", "ja": "🇯🇵", "ko": "🇰🇷",
@@ -27,8 +25,6 @@ RARITY_COLOR = {
 }
 
 CONTAINER_TYPES = ["binder", "box", "deck", "trade", "other"]
-
-_SCAN_IMAGE_EXTS = {"jpg", "jpeg", "png", "gif", "webp", "bmp", "tiff", "heic"}
 
 
 # ── Formatting helpers ────────────────────────────────────────────────────────
