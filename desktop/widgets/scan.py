@@ -381,7 +381,7 @@ class ScanWidget(QWidget):
     # ── File picker ────────────────────────────────────────────────────────────
 
     def _on_browse(self):
-        path, _ = QFileDialog.getOpenFileName(
+        path, _unused = QFileDialog.getOpenFileName(
             self, _("Open card image"),
             "", _("Images (*.jpg *.jpeg *.png *.gif *.webp *.bmp *.tiff *.heic)")
         )

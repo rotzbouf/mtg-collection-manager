@@ -727,7 +727,7 @@ class DeckAnalysisWidget(QWidget):
         text = format_container_decklist(self._cards, deck_name=deck_name, mtga=mtga)
         suffix = "_mtga" if mtga else "_full"
         default_name = f"{deck_name.replace(' ', '_')}{suffix}_{date.today()}.txt"
-        path, _ = QFileDialog.getSaveFileName(
+        path, _unused = QFileDialog.getSaveFileName(
             self, _("Export Decklist"), default_name, _("Text files (*.txt)")
         )
         if path:

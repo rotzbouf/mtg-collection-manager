@@ -871,7 +871,7 @@ class DeckWidget(QWidget):
             default_name = f"{fmt}{suffix}_{date.today()}.txt"
             text = format_60_decklist_mtga(result) if mtga else format_60_decklist(result)
 
-        path, _ = QFileDialog.getSaveFileName(
+        path, _unused = QFileDialog.getSaveFileName(
             self, _("Export Decklist"), default_name,
             _("Text files (*.txt);;All files (*)"),
         )
@@ -1039,7 +1039,7 @@ class _ManifestDialog(QDialog):
     def _on_save(self):
         from datetime import date
         default_name = f"manifest_{date.today()}.txt"
-        path, _ = QFileDialog.getSaveFileName(
+        path, _unused = QFileDialog.getSaveFileName(
             self, _("Save Manifest"), default_name, _("Text files (*.txt);;All files (*)")
         )
         if path:

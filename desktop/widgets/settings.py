@@ -138,7 +138,7 @@ class SettingsWidget(QWidget):
         bot_status_row.addStretch()
         bot_layout.addLayout(bot_status_row)
 
-        _py, _args, _ = _bot_launch()
+        _py, _args, _unused = _bot_launch()
         info = QLabel(f"<small>{_py}  ·  {' '.join(_args)}</small>")
         info.setStyleSheet("color: #555;")
         bot_layout.addWidget(info)
@@ -1182,7 +1182,7 @@ class SettingsWidget(QWidget):
             "moxfield": ("CSV Files (*.csv)", ".csv"),
         }
         filt, ext = filters[fmt]
-        path, _ = QFileDialog.getSaveFileName(self, "Save file", f"collection{ext}", filt)
+        path, _unused = QFileDialog.getSaveFileName(self, "Save file", f"collection{ext}", filt)
         if not path:
             return
 
@@ -1209,7 +1209,7 @@ class SettingsWidget(QWidget):
     # ------------------------------------------------------------------ #
 
     def _on_choose_import(self):
-        path, _ = QFileDialog.getOpenFileName(
+        path, _unused = QFileDialog.getOpenFileName(
             self, "Choose import file",
             "", "Supported files (*.csv *.json)"
         )
@@ -1758,7 +1758,7 @@ class SettingsWidget(QWidget):
         default_name = f"mtg_backup_{date.today()}.db"
         default_path = str(Path(default_dir) / default_name) if default_dir else default_name
 
-        path, _ = QFileDialog.getSaveFileName(
+        path, _unused = QFileDialog.getSaveFileName(
             self, "Save backup", default_path, "Database (*.db)"
         )
         if not path:
@@ -1780,7 +1780,7 @@ class SettingsWidget(QWidget):
         import lzma
         from desktop.db import db
 
-        path, _ = QFileDialog.getOpenFileName(
+        path, _unused = QFileDialog.getOpenFileName(
             self, "Open backup", "",
             "Backup files (*.db *.db.gz *.db.xz);;All files (*)"
         )
