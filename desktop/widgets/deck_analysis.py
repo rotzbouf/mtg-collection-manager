@@ -33,7 +33,9 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont, QAction, QPixmap, QPainter
 from PyQt6.QtSvg import QSvgRenderer
-from qasync import asyncSlot
+from qasync import asyncSlot, asyncWrap
+
+from core.i18n import _
 
 _MANA_DIR = Path(__file__).parent.parent.parent / "images" / "mana"
 
@@ -121,15 +123,15 @@ class DeckAnalysisWidget(QWidget):
 
         # Header
         hdr = QHBoxLayout()
-        hdr.addWidget(QLabel("<h2>Deck Analysis</h2>"))
+        hdr.addWidget(QLabel(_("<h2>Deck Analysis</h2>")))
         hdr.addStretch()
-        hdr.addWidget(QLabel("Deck:"))
+        hdr.addWidget(QLabel(_("Deck:")))
         self._deck_cb = QComboBox()
         self._deck_cb.setMinimumWidth(280)
         hdr.addWidget(self._deck_cb)
         self._refresh_btn = QPushButton("↻")
         self._refresh_btn.setFixedWidth(28)
-        self._refresh_btn.setToolTip("Reload")
+        self._refresh_btn.setToolTip(_("Reload"))
         hdr.addWidget(self._refresh_btn)
         root.addLayout(hdr)
 
@@ -181,20 +183,24 @@ class DeckAnalysisWidget(QWidget):
         # Filters
         flt = QHBoxLayout()
         self._name_filter = QLineEdit()
-        self._name_filter.setPlaceholderText("Filter by name…")
+        self._name_filter.setPlaceholderText(_("Filter by name…"))
         self._name_filter.setClearButtonEnabled(True)
         flt.addWidget(self._name_filter, stretch=2)
         self._type_filter = QComboBox()
-        self._type_filter.addItem("All types", None)
-        for t in ("Creatures", "Instants", "Sorceries", "Enchantments",
-                  "Artifacts", "Planeswalkers", "Lands", "Other"):
-            self._type_filter.addItem(t, t)
+        self._type_filter.addItem(_("All types"), None)
+        for _key, _label in (
+            ("Creatures", _("Creatures")), ("Instants", _("Instants")),
+            ("Sorceries", _("Sorceries")), ("Enchantments", _("Enchantments")),
+            ("Artifacts", _("Artifacts")), ("Planeswalkers", _("Planeswalkers")),
+            ("Lands", _("Lands")), ("Other", _("Other")),
+        ):
+            self._type_filter.addItem(_label, _key)
         flt.addWidget(self._type_filter)
         root.addLayout(flt)
 
         # Card table
         self._table = QTableWidget(0, 5)
-        self._table.setHorizontalHeaderLabels(["MV", "Name", "Type", "Container", "€"])
+        self._table.setHorizontalHeaderLabels([_("MV"), _("Name"), _("Type"), _("Container"), _("€")])
         hh = self._table.horizontalHeader()
         hh.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         hh.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
@@ -212,21 +218,21 @@ class DeckAnalysisWidget(QWidget):
 
         # Toolbar
         bar = QHBoxLayout()
-        self._add_btn = QPushButton("+ Add from collection")
+        self._add_btn = QPushButton(_("+ Add from collection"))
         self._add_btn.setEnabled(False)
         bar.addWidget(self._add_btn)
-        self._remove_btn = QPushButton("Remove selected")
+        self._remove_btn = QPushButton(_("Remove selected"))
         self._remove_btn.setEnabled(False)
         bar.addWidget(self._remove_btn)
         bar.addStretch()
-        self._manifest_btn = QPushButton("📋 Manifest…")
-        self._manifest_btn.setToolTip("View, print, or export the card picking manifest sorted by container")
+        self._manifest_btn = QPushButton(_("📋 Manifest…"))
+        self._manifest_btn.setToolTip(_("View, print, or export the card picking manifest sorted by container"))
         self._manifest_btn.setEnabled(False)
         bar.addWidget(self._manifest_btn)
-        self._exp_full_btn = QPushButton("Export .txt")
+        self._exp_full_btn = QPushButton(_("Export .txt"))
         self._exp_full_btn.setEnabled(False)
         bar.addWidget(self._exp_full_btn)
-        self._exp_mtga_btn = QPushButton("Export MTGA")
+        self._exp_mtga_btn = QPushButton(_("Export MTGA"))
         self._exp_mtga_btn.setEnabled(False)
         bar.addWidget(self._exp_mtga_btn)
         root.addLayout(bar)
@@ -265,7 +271,7 @@ class DeckAnalysisWidget(QWidget):
         prev_id = self._deck_cb.currentData()
         self._deck_cb.blockSignals(True)
         self._deck_cb.clear()
-        self._deck_cb.addItem("— Select a deck —", None)
+        self._deck_cb.addItem(_("— Select a deck —"), None)
         for c in self._containers:
             fmt = c.get("deck_format") or c.get("type") or ""
             label = f"{c['name']}  [{fmt}]  {c.get('card_count', 0)} cards"
@@ -299,7 +305,7 @@ class DeckAnalysisWidget(QWidget):
             )
             self._cards = await db.list_cards(container_id=container_id, limit=500, sort="chaos")
         except Exception as exc:
-            QMessageBox.critical(self, "Error", f"Could not load deck: {exc}")
+            QMessageBox.critical(self, _("Error"), _("Could not load deck: {exc}").format(exc=exc))
             return
         self._apply_filter()
         self._update_stats()
@@ -612,9 +618,9 @@ class DeckAnalysisWidget(QWidget):
         cards = [self._table.item(r.row(), 1).data(Qt.ItemDataRole.UserRole) for r in rows]
 
         menu = QMenu(self)
-        remove_act = menu.addAction(f"Remove {len(cards)} card(s) from deck")
+        remove_act = menu.addAction(_("Remove {count} card(s) from deck").format(count=len(cards)))
         menu.addSeparator()
-        move_act = menu.addAction("Move to container…")
+        move_act = menu.addAction(_("Move to container…"))
 
         action = menu.exec(self._table.viewport().mapToGlobal(pos))
         if action == remove_act:
@@ -636,9 +642,9 @@ class DeckAnalysisWidget(QWidget):
     async def _remove_cards(self, cards: list[dict]):
         from desktop.db import db
         reply = QMessageBox.question(
-            self, "Remove from deck",
-            f"Remove {len(cards)} card(s) from this deck container?\n"
-            "Cards will have no container assigned afterwards.",
+            self, _("Remove from deck"),
+            _("Remove {count} card(s) from this deck container?\n"
+              "Cards will have no container assigned afterwards.").format(count=len(cards)),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:
@@ -647,7 +653,7 @@ class DeckAnalysisWidget(QWidget):
         try:
             await db.move_cards_to_container(card_ids, None)
         except Exception as exc:
-            QMessageBox.critical(self, "Error", str(exc))
+            QMessageBox.critical(self, _("Error"), str(exc))
             return
         await self._load_deck_cards(self._current_container["id"])
 
@@ -658,7 +664,7 @@ class DeckAnalysisWidget(QWidget):
         choices = [c for c in containers if c["id"] != current_id]
 
         dlg = _ContainerPickerDialog(choices, parent=self)
-        if dlg.exec() != QDialog.DialogCode.Accepted:
+        if await asyncWrap(dlg.exec) != QDialog.DialogCode.Accepted:
             return
         target_id = dlg.selected_id()
         if target_id is None:
@@ -667,7 +673,7 @@ class DeckAnalysisWidget(QWidget):
         try:
             await db.move_cards_to_container(card_ids, target_id)
         except Exception as exc:
-            QMessageBox.critical(self, "Error", str(exc))
+            QMessageBox.critical(self, _("Error"), str(exc))
             return
         await self._load_deck_cards(self._current_container["id"])
 
@@ -681,7 +687,7 @@ class DeckAnalysisWidget(QWidget):
             return
 
         dlg = _AddCardsDialog(pool, parent=self)
-        if dlg.exec() != QDialog.DialogCode.Accepted:
+        if await asyncWrap(dlg.exec) != QDialog.DialogCode.Accepted:
             return
         card_ids = dlg.selected_ids()
         if not card_ids or self._current_container is None:
@@ -689,7 +695,7 @@ class DeckAnalysisWidget(QWidget):
         try:
             await db.move_cards_to_container(card_ids, self._current_container["id"])
         except Exception as exc:
-            QMessageBox.critical(self, "Error", str(exc))
+            QMessageBox.critical(self, _("Error"), str(exc))
             return
         await self._load_deck_cards(self._current_container["id"])
 
@@ -705,7 +711,7 @@ class DeckAnalysisWidget(QWidget):
         deck_name = self._current_container.get("name", "")
         text = format_container_location_manifest(self._cards, deck_name=deck_name)
         if not text:
-            QMessageBox.information(self, "Manifest", "No cards with container data.")
+            QMessageBox.information(self, _("Manifest"), _("No cards with container data."))
             return
         dlg = _ManifestDialog(text, parent=self)
         dlg.exec()
@@ -721,13 +727,13 @@ class DeckAnalysisWidget(QWidget):
         suffix = "_mtga" if mtga else "_full"
         default_name = f"{deck_name.replace(' ', '_')}{suffix}_{date.today()}.txt"
         path, _ = QFileDialog.getSaveFileName(
-            self, "Export Decklist", default_name, "Text files (*.txt)"
+            self, _("Export Decklist"), default_name, _("Text files (*.txt)")
         )
         if path:
             try:
                 Path(path).write_text(text, encoding="utf-8")
             except OSError as exc:
-                QMessageBox.warning(self, "Export failed", str(exc))
+                QMessageBox.warning(self, _("Export failed"), str(exc))
 
 
 # ── Dialogs ───────────────────────────────────────────────────────────────────
@@ -735,10 +741,10 @@ class DeckAnalysisWidget(QWidget):
 class _ContainerPickerDialog(QDialog):
     def __init__(self, containers: list[dict], parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Move to container")
+        self.setWindowTitle(_("Move to container"))
         self.setMinimumWidth(320)
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("Select target container:"))
+        layout.addWidget(QLabel(_("Select target container:")))
         self._list = QListWidget()
         for c in containers:
             item = QListWidgetItem(f"{c['name']}  [{c.get('type', '')}]")
@@ -761,13 +767,13 @@ class _ContainerPickerDialog(QDialog):
 class _AddCardsDialog(QDialog):
     def __init__(self, pool: list[dict], parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Add cards from collection")
+        self.setWindowTitle(_("Add cards from collection"))
         self.setMinimumSize(500, 400)
         layout = QVBoxLayout(self)
 
         filter_row = QHBoxLayout()
         self._filter = QLineEdit()
-        self._filter.setPlaceholderText("Filter by name…")
+        self._filter.setPlaceholderText(_("Filter by name…"))
         self._filter.setClearButtonEnabled(True)
         filter_row.addWidget(self._filter)
         layout.addLayout(filter_row)
@@ -776,7 +782,7 @@ class _AddCardsDialog(QDialog):
         self._list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         layout.addWidget(self._list)
 
-        layout.addWidget(QLabel("Hold Ctrl/Shift to select multiple cards."))
+        layout.addWidget(QLabel(_("Hold Ctrl/Shift to select multiple cards.")))
 
         btns = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel

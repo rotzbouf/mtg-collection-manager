@@ -76,6 +76,11 @@ def main():
         return
 
     _configure_logging()
+
+    import core.config as _cfg
+    import core.i18n as _i18n
+    _i18n.setup(_cfg.load().get("app", {}).get("language", "en"))
+
     app = QApplication(sys.argv)
     app.setApplicationName("MTG Collection Manager")
     app.setOrganizationName("MTGBot")

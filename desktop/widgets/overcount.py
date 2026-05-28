@@ -27,8 +27,9 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor, QFont
-from qasync import asyncSlot
+from qasync import asyncSlot, asyncWrap
 
+from core.i18n import _
 from desktop.utils import lang_flag, format_price, display_name, RARITY_COLORS
 from desktop.widgets.card_detail import CardDetailPanel
 
@@ -73,9 +74,9 @@ class OvercountWidget(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(8, 8, 8, 8)
         self._tabs = QTabWidget()
-        self._tabs.addTab(self._build_overcount_tab(),  "Overcounted")
-        self._tabs.addTab(self._build_sell_tab(),       "Sell Candidates")
-        self._tabs.addTab(self._build_bundle_tab(),     "Bundle Builder")
+        self._tabs.addTab(self._build_overcount_tab(),  _("Overcounted"))
+        self._tabs.addTab(self._build_sell_tab(),       _("Sell Candidates"))
+        self._tabs.addTab(self._build_bundle_tab(),     _("Bundle Builder"))
         self._tabs.currentChanged.connect(self._on_tab_changed)
         root.addWidget(self._tabs)
 
@@ -95,22 +96,22 @@ class OvercountWidget(QWidget):
         root.setContentsMargins(8, 8, 8, 8)
 
         toolbar = QHBoxLayout()
-        toolbar.addWidget(QLabel("<b>Overcounted Cards</b>"))
+        toolbar.addWidget(QLabel(_("<b>Overcounted Cards</b>")))
         toolbar.addStretch()
-        toolbar.addWidget(QLabel("View:"))
+        toolbar.addWidget(QLabel(_("View:")))
         self._view_combo = QComboBox()
-        self._view_combo.addItem("By Card", "card")
-        self._view_combo.addItem("By Container", "container")
+        self._view_combo.addItem(_("By Card"), "card")
+        self._view_combo.addItem(_("By Container"), "container")
         self._view_combo.setFixedWidth(130)
         toolbar.addWidget(self._view_combo)
         toolbar.addSpacing(12)
-        toolbar.addWidget(QLabel("Threshold ≥"))
+        toolbar.addWidget(QLabel(_("Threshold ≥")))
         self._spin = QSpinBox()
         self._spin.setRange(2, 99)
         self._spin.setValue(self._threshold)
         self._spin.setFixedWidth(60)
         toolbar.addWidget(self._spin)
-        self._refresh_btn = QPushButton("Refresh")
+        self._refresh_btn = QPushButton(_("Refresh"))
         toolbar.addWidget(self._refresh_btn)
         root.addLayout(toolbar)
 
@@ -122,7 +123,7 @@ class OvercountWidget(QWidget):
 
         self._tree = QTreeWidget()
         self._tree.setColumnCount(len(_OC_COLS))
-        self._tree.setHeaderLabels(_OC_COLS)
+        self._tree.setHeaderLabels([_("Name / ID"), _("Set"), _("Cond"), _("Foil"), _("Lang"), _("Container"), _("Price (EUR)")])
         self._tree.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._tree.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -189,11 +190,11 @@ class OvercountWidget(QWidget):
     # ── By-Card view (original) ────────────────────────────────────────
 
     def _render_by_card(self, groups: list[dict]):
-        self._tree.setHeaderLabels(_OC_COLS)
+        self._tree.setHeaderLabels([_("Name / ID"), _("Set"), _("Cond"), _("Foil"), _("Lang"), _("Container"), _("Price (EUR)")])
         self._tree.clear()
         self._detail.clear()
         if not groups:
-            self._oc_status.setText(f"No cards with {self._threshold}+ copies.")
+            self._oc_status.setText(_("No cards with {threshold}+ copies.").format(threshold=self._threshold))
             return
         total = sum(g["total"] for g in groups)
         self._oc_status.setText(f"{len(groups)} unique card(s)  ·  {total} total copies")
@@ -234,11 +235,11 @@ class OvercountWidget(QWidget):
     def _render_by_container(self, groups: list[dict]):
         from collections import defaultdict
 
-        self._tree.setHeaderLabels(_OC_COLS_CONTAINER)
+        self._tree.setHeaderLabels([_("Name"), _("Set"), _("Cond"), _("Foil"), _("Lang"), _("×"), _("Price (EUR)")])
         self._tree.clear()
         self._detail.clear()
         if not groups:
-            self._oc_status.setText(f"No cards with {self._threshold}+ copies.")
+            self._oc_status.setText(_("No cards with {threshold}+ copies.").format(threshold=self._threshold))
             return
 
         # Flatten all entries, tag each with its display name and per-card copy count
@@ -322,9 +323,9 @@ class OvercountWidget(QWidget):
         n    = len(ids)
         noun = f"{n} card{'s' if n > 1 else ''}"
         menu = QMenu(self)
-        menu.addAction(f"↗ Move {noun} to container…",
+        menu.addAction(_("↗ Move {noun} to container…").format(noun=noun),
                        lambda: self._on_move_to_container(ids))
-        menu.addAction(f"✕ Remove {noun} from container",
+        menu.addAction(_("✕ Remove {noun} from container").format(noun=noun),
                        lambda: _bg(self._do_move_cards(ids, None)))
         menu.exec(self._tree.viewport().mapToGlobal(pos))
 
@@ -336,7 +337,7 @@ class OvercountWidget(QWidget):
         self._containers = await db.list_containers()
         dlg = _MoveToContainerDialog(self._containers, len(card_ids), parent=self,
                                      allowed_types=["overcount"])
-        if dlg.exec() != QDialog.DialogCode.Accepted:
+        if await asyncWrap(dlg.exec) != QDialog.DialogCode.Accepted:
             return
         is_new, container_id, new_name, new_type = dlg.selected_result()
         if is_new:
@@ -365,9 +366,9 @@ class OvercountWidget(QWidget):
         root.setContentsMargins(8, 8, 8, 8)
 
         toolbar = QHBoxLayout()
-        toolbar.addWidget(QLabel("<b>Cards in Overcount Containers</b>"))
+        toolbar.addWidget(QLabel(_("<b>Cards in Overcount Containers</b>")))
         toolbar.addStretch()
-        toolbar.addWidget(QLabel("Min. price (EUR):"))
+        toolbar.addWidget(QLabel(_("Min. price (EUR):")))
         self._sell_min = QDoubleSpinBox()
         self._sell_min.setRange(0.0, 999.0)
         self._sell_min.setValue(0.30)
@@ -375,7 +376,7 @@ class OvercountWidget(QWidget):
         self._sell_min.setDecimals(2)
         self._sell_min.setFixedWidth(80)
         toolbar.addWidget(self._sell_min)
-        self._sell_refresh_btn = QPushButton("Refresh")
+        self._sell_refresh_btn = QPushButton(_("Refresh"))
         toolbar.addWidget(self._sell_refresh_btn)
         root.addLayout(toolbar)
 
@@ -387,7 +388,7 @@ class OvercountWidget(QWidget):
 
         self._sell_table = QTableWidget()
         self._sell_table.setColumnCount(len(_SELL_COLS))
-        self._sell_table.setHorizontalHeaderLabels(_SELL_COLS)
+        self._sell_table.setHorizontalHeaderLabels([_("Name"), _("Set"), _("Rarity"), _("Foil"), _("Cond"), _("Lang"), _("Container"), _("Price (EUR)")])
         self._sell_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._sell_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._sell_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -407,7 +408,7 @@ class OvercountWidget(QWidget):
         root.addWidget(splitter)
 
         bottom = QHBoxLayout()
-        self._sell_move_btn = QPushButton("↗ Move selected to container…")
+        self._sell_move_btn = QPushButton(_("↗ Move selected to container…"))
         self._sell_move_btn.setEnabled(False)
         bottom.addWidget(self._sell_move_btn)
         bottom.addStretch()
@@ -437,7 +438,7 @@ class OvercountWidget(QWidget):
         self._sell_detail.clear()
 
         if not cards:
-            self._sell_status.setText("No cards found above the price threshold.")
+            self._sell_status.setText(_("No cards found above the price threshold."))
             self._sell_move_btn.setEnabled(False)
             return
 
@@ -508,7 +509,7 @@ class OvercountWidget(QWidget):
         self._containers = await db.list_containers()
         dlg = _MoveToContainerDialog(self._containers, len(cards), parent=self,
                                      allowed_types=["overcount"])
-        if dlg.exec() != QDialog.DialogCode.Accepted:
+        if await asyncWrap(dlg.exec) != QDialog.DialogCode.Accepted:
             return
         is_new, container_id, new_name, new_type = dlg.selected_result()
         if is_new:
@@ -538,36 +539,36 @@ class OvercountWidget(QWidget):
         root.setContentsMargins(8, 8, 8, 8)
 
         # ── Preset group ────────────────────────────────────────────────
-        box = QGroupBox("Preset Bundles  (from overcount containers)")
+        box = QGroupBox(_("Preset Bundles  (from overcount containers)"))
         box_layout = QVBoxLayout(box)
 
         opt_row = QHBoxLayout()
-        self._unique_only_chk = QCheckBox("Unique card names only")
+        self._unique_only_chk = QCheckBox(_("Unique card names only"))
         self._unique_only_chk.setChecked(True)
         self._unique_only_chk.setToolTip(
-            "When checked, only one copy of each card name is included in the bundle.\n"
-            "The best copy is kept based on the current sort order."
+            _("When checked, only one copy of each card name is included in the bundle.\n"
+              "The best copy is kept based on the current sort order.")
         )
         opt_row.addWidget(self._unique_only_chk)
         opt_row.addSpacing(20)
-        opt_row.addWidget(QLabel("Language:"))
+        opt_row.addWidget(QLabel(_("Language:")))
         self._bundle_lang_combo = QComboBox()
         self._bundle_lang_combo.setMinimumWidth(130)
         self._bundle_lang_combo.setToolTip(
-            "Filter bundle cards to a single language.\n"
-            "Only languages present in overcount containers are shown."
+            _("Filter bundle cards to a single language.\n"
+              "Only languages present in overcount containers are shown.")
         )
-        self._bundle_lang_combo.addItem("All languages", None)
+        self._bundle_lang_combo.addItem(_("All languages"), None)
         opt_row.addWidget(self._bundle_lang_combo)
         opt_row.addStretch()
         box_layout.addLayout(opt_row)
 
         row1 = QHBoxLayout()
         for label, rarities, count in [
-            ("50 Commons",    ["common"],   50),
-            ("100 Commons",   ["common"],   100),
-            ("50 Uncommons",  ["uncommon"], 50),
-            ("100 Uncommons", ["uncommon"], 100),
+            (_("50 Commons"),    ["common"],   50),
+            (_("100 Commons"),   ["common"],   100),
+            (_("50 Uncommons"),  ["uncommon"], 50),
+            (_("100 Uncommons"), ["uncommon"], 100),
         ]:
             btn = QPushButton(label)
             btn.clicked.connect(
@@ -580,7 +581,7 @@ class OvercountWidget(QWidget):
         box_layout.addLayout(row1)
 
         row2 = QHBoxLayout()
-        rares_btn = QPushButton("All Rares & Mythics")
+        rares_btn = QPushButton(_("All Rares & Mythics"))
         rares_btn.clicked.connect(
             lambda: _bg(
                 self._preview_bundle(rarities=["rare", "mythic"], order="price_desc")
@@ -589,7 +590,7 @@ class OvercountWidget(QWidget):
         row2.addWidget(rares_btn)
 
         row2.addSpacing(16)
-        row2.addWidget(QLabel("By set:"))
+        row2.addWidget(QLabel(_("By set:")))
         self._bundle_set_combo = QComboBox()
         self._bundle_set_combo.setMinimumWidth(180)
         row2.addWidget(self._bundle_set_combo)
@@ -599,7 +600,7 @@ class OvercountWidget(QWidget):
         self._bundle_set_count.setFixedWidth(70)
         self._bundle_set_count.setPrefix("×")
         row2.addWidget(self._bundle_set_count)
-        by_set_btn = QPushButton("Preview")
+        by_set_btn = QPushButton(_("Preview"))
         by_set_btn.clicked.connect(
             lambda: _bg(self._preview_set_bundle())
         )
@@ -609,7 +610,7 @@ class OvercountWidget(QWidget):
         root.addWidget(box)
 
         # ── Preview ─────────────────────────────────────────────────────
-        self._bundle_status = QLabel("Select a preset to preview the bundle.")
+        self._bundle_status = QLabel(_("Select a preset to preview the bundle."))
         self._bundle_status.setStyleSheet("color: #888; font-size: 12px;")
         root.addWidget(self._bundle_status)
 
@@ -617,7 +618,7 @@ class OvercountWidget(QWidget):
 
         self._bundle_tree = QTreeWidget()
         self._bundle_tree.setColumnCount(len(_BUNDLE_COLS))
-        self._bundle_tree.setHeaderLabels(_BUNDLE_COLS)
+        self._bundle_tree.setHeaderLabels([_("Name"), _("Set"), _("Rarity"), _("Lang"), _("Container"), _("Price (EUR)")])
         self._bundle_tree.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._bundle_tree.setAlternatingRowColors(True)
         self._bundle_tree.setUniformRowHeights(True)
@@ -637,9 +638,9 @@ class OvercountWidget(QWidget):
 
         # ── Bottom bar ──────────────────────────────────────────────────
         bottom = QHBoxLayout()
-        bottom.addWidget(QLabel("Bundle name:"))
+        bottom.addWidget(QLabel(_("Bundle name:")))
         self._bundle_name = QLineEdit()
-        self._bundle_name.setPlaceholderText("e.g. Commons Bulk #1")
+        self._bundle_name.setPlaceholderText(_("e.g. Commons Bulk #1"))
         self._bundle_name.setMinimumWidth(220)
         bottom.addWidget(self._bundle_name)
         bottom.addSpacing(6)
@@ -649,7 +650,7 @@ class OvercountWidget(QWidget):
             "QPushButton:hover {{ background-color: {hv}; }}"
             "QPushButton:disabled {{ color: #555; border-color: #333; }}"
         )
-        self._bundle_add_btn = QPushButton("＋  Add to Queue")
+        self._bundle_add_btn = QPushButton(_("＋  Add to Queue"))
         self._bundle_add_btn.setEnabled(False)
         self._bundle_add_btn.setStyleSheet(
             _btn_style.format(bg="#1e2a4a", br="#4a6a9a", hv="#2a3a6a")
@@ -657,7 +658,7 @@ class OvercountWidget(QWidget):
         bottom.addWidget(self._bundle_add_btn)
         bottom.addSpacing(6)
 
-        self._bundle_create_all_btn = QPushButton("✓  Create All (0)")
+        self._bundle_create_all_btn = QPushButton(_("✓  Create All (0)"))
         self._bundle_create_all_btn.setEnabled(False)
         self._bundle_create_all_btn.setStyleSheet(
             _btn_style.format(bg="#1e3a1e", br="#4a8a4a", hv="#2a5a2a")
@@ -665,7 +666,7 @@ class OvercountWidget(QWidget):
         bottom.addWidget(self._bundle_create_all_btn)
         bottom.addSpacing(6)
 
-        self._bundle_clear_btn = QPushButton("✗  Clear Queue")
+        self._bundle_clear_btn = QPushButton(_("✗  Clear Queue"))
         self._bundle_clear_btn.setEnabled(False)
         self._bundle_clear_btn.setStyleSheet(
             _btn_style.format(bg="#3a1e1e", br="#8a4a4a", hv="#5a2a2a")
@@ -697,7 +698,7 @@ class OvercountWidget(QWidget):
         current_lang = self._bundle_lang_combo.currentData()
         self._bundle_lang_combo.blockSignals(True)
         self._bundle_lang_combo.clear()
-        self._bundle_lang_combo.addItem("All languages", None)
+        self._bundle_lang_combo.addItem(_("All languages"), None)
         for lang in langs:
             flag = lang_flag({"language": lang})
             self._bundle_lang_combo.addItem(f"{flag} {lang.upper()}", lang)
@@ -791,7 +792,7 @@ class OvercountWidget(QWidget):
 
         all_cards = [c for chunk in chunks for c in chunk]
         if not all_cards:
-            self._bundle_status.setText("No cards match this preset in overcount containers.")
+            self._bundle_status.setText(_("No cards match this preset in overcount containers."))
             return
 
         total_val  = sum(c.get("price_eur") or 0 for c in all_cards)
@@ -888,8 +889,8 @@ class OvercountWidget(QWidget):
             return
         name = self._bundle_name.text().strip()
         if not name:
-            QMessageBox.warning(self, "Bundle name required",
-                                "Please enter a name for the bundle container.")
+            QMessageBox.warning(self, _("Bundle name required"),
+                                _("Please enter a name for the bundle container."))
             return
         self._staged_bundles.append({"name": name, "chunks": list(self._bundle_chunks)})
         self._bundle_name.clear()
@@ -904,9 +905,9 @@ class OvercountWidget(QWidget):
         self._bundle_detail.clear()
 
         if not self._staged_bundles:
-            self._bundle_status.setText("Queue is empty. Select a preset to preview a bundle.")
+            self._bundle_status.setText(_("Queue is empty. Select a preset to preview a bundle."))
             self._bundle_create_all_btn.setEnabled(False)
-            self._bundle_create_all_btn.setText("✓  Create All (0)")
+            self._bundle_create_all_btn.setText(_("✓  Create All (0)"))
             self._bundle_clear_btn.setEnabled(False)
             return
 
@@ -994,7 +995,7 @@ class OvercountWidget(QWidget):
             self._bundle_tree.addTopLevelItem(top)
 
         self._bundle_create_all_btn.setEnabled(True)
-        self._bundle_create_all_btn.setText(f"✓  Create All ({len(self._staged_bundles)})")
+        self._bundle_create_all_btn.setText(_("✓  Create All ({count})").format(count=len(self._staged_bundles)))
         self._bundle_clear_btn.setEnabled(True)
 
     def _clear_queue(self):
@@ -1004,9 +1005,9 @@ class OvercountWidget(QWidget):
         self._bundle_add_btn.setEnabled(False)
         self._bundle_tree.clear()
         self._bundle_detail.clear()
-        self._bundle_status.setText("Queue cleared. Select a preset to preview a bundle.")
+        self._bundle_status.setText(_("Queue cleared. Select a preset to preview a bundle."))
         self._bundle_create_all_btn.setEnabled(False)
-        self._bundle_create_all_btn.setText("✓  Create All (0)")
+        self._bundle_create_all_btn.setText(_("✓  Create All (0)"))
         self._bundle_clear_btn.setEnabled(False)
 
     def _on_bundle_context_menu(self, pos):
@@ -1072,9 +1073,10 @@ class OvercountWidget(QWidget):
                         all_created.append(f"  • {container_name}  ({moved} cards)")
 
             QMessageBox.information(
-                self, "Bundles created",
-                f"{len(all_created)} container(s) created — {total_moved} card(s) total:\n\n"
-                + "\n".join(all_created),
+                self, _("Bundles created"),
+                _("{count} container(s) created — {moved} card(s) total:\n\n").format(
+                    count=len(all_created), moved=total_moved
+                ) + "\n".join(all_created),
             )
 
             # Reset everything
@@ -1084,14 +1086,14 @@ class OvercountWidget(QWidget):
             self._bundle_name.clear()
             self._bundle_tree.clear()
             self._bundle_detail.clear()
-            self._bundle_status.setText("All bundles created. Select a preset to build more.")
+            self._bundle_status.setText(_("All bundles created. Select a preset to build more."))
             self._bundle_add_btn.setEnabled(False)
             self._bundle_create_all_btn.setEnabled(False)
-            self._bundle_create_all_btn.setText("✓  Create All (0)")
+            self._bundle_create_all_btn.setText(_("✓  Create All (0)"))
             self._bundle_clear_btn.setEnabled(False)
             await self._load_containers_async()
         except Exception as exc:
-            QMessageBox.critical(self, "Error", str(exc))
+            QMessageBox.critical(self, _("Error"), str(exc))
 
     async def _load_containers_async(self):
         from desktop.db import db
@@ -1113,15 +1115,15 @@ class _MoveToContainerDialog(QDialog):
 
         self._new_containers: list[tuple[str, str]] = []
 
-        self.setWindowTitle("Move to container")
+        self.setWindowTitle(_("Move to container"))
         self.setMinimumWidth(400)
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
 
-        layout.addWidget(QLabel(f"Move <b>{card_count}</b> card(s) to:"))
+        layout.addWidget(QLabel(_("Move <b>{count}</b> card(s) to:").format(count=card_count)))
 
         self._combo = QComboBox()
-        self._combo.addItem("— Remove from container —", None)
+        self._combo.addItem(_("— Remove from container —"), None)
         for c in containers:
             if allowed_types and c.get("type") not in allowed_types:
                 continue
@@ -1132,13 +1134,13 @@ class _MoveToContainerDialog(QDialog):
         sep.setFrameShape(QFrame.Shape.HLine)
         layout.addWidget(sep)
 
-        layout.addWidget(QLabel("<b>Create new container:</b>"))
+        layout.addWidget(QLabel(_("<b>Create new container:</b>")))
 
         new_row = QHBoxLayout()
         new_row.setSpacing(6)
 
         self._new_name_edit = QLineEdit()
-        self._new_name_edit.setPlaceholderText("Container name…")
+        self._new_name_edit.setPlaceholderText(_("Container name…"))
         new_row.addWidget(self._new_name_edit, stretch=2)
 
         self._new_type_cb = QComboBox()
@@ -1150,7 +1152,7 @@ class _MoveToContainerDialog(QDialog):
         self._new_type_cb.addItems(type_choices)
         new_row.addWidget(self._new_type_cb, stretch=1)
 
-        add_btn = QPushButton("Add & Select")
+        add_btn = QPushButton(_("Add & Select"))
         add_btn.setStyleSheet(
             "padding: 4px 10px; background: #0f3460; color: white; border-radius: 3px;"
         )
@@ -1163,9 +1165,9 @@ class _MoveToContainerDialog(QDialog):
         layout.addWidget(sep2)
 
         btn_row = QHBoxLayout()
-        ok_btn = QPushButton("Move")
+        ok_btn = QPushButton(_("Move"))
         ok_btn.setDefault(True)
-        cancel_btn = QPushButton("Cancel")
+        cancel_btn = QPushButton(_("Cancel"))
         btn_row.addStretch()
         btn_row.addWidget(cancel_btn)
         btn_row.addWidget(ok_btn)

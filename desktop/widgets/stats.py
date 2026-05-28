@@ -18,6 +18,7 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QPixmap
 from qasync import asyncSlot
 
+from core.i18n import _
 from desktop.utils import async_pixmap
 
 
@@ -190,9 +191,9 @@ class StatsWidget(QWidget):
         root.setSpacing(0)
 
         top_row = QHBoxLayout()
-        top_row.addWidget(QLabel("<h2>Collection Statistics</h2>"))
+        top_row.addWidget(QLabel(_("<h2>Collection Statistics</h2>")))
         top_row.addStretch()
-        self._refresh_btn = QPushButton("Refresh")
+        self._refresh_btn = QPushButton(_("Refresh"))
         top_row.addWidget(self._refresh_btn)
         root.addLayout(top_row)
         self._refresh_btn.clicked.connect(self._load_stats)
@@ -259,37 +260,37 @@ class StatsWidget(QWidget):
         self._embeds = []
 
         # ── Row 1: Overview + Rarity side by side ─────────────────────── #
-        lay.addWidget(_section_header("Overview"))
+        lay.addWidget(_section_header(_("Overview")))
         row1 = QHBoxLayout()
         row1.setSpacing(24)
         row1.setAlignment(Qt.AlignmentFlag.AlignLeft)
 
         overview_rows = [
-            ("Total cards",       str(stats.get("total_cards", 0))),
-            ("Unique cards",      str(stats.get("unique_cards", 0))),
-            ("Foil cards",        str(stats.get("foil_total", 0))),
-            ("Total value (EUR)", f"€{stats.get('total_value_eur') or 0:.2f}"),
-            ("Total value (USD)", f"${stats.get('total_value_usd') or 0:.2f}"),
-            ("Foil value (EUR)",  f"€{stats.get('foil_eur') or 0:.2f}"),
+            (_("Total cards"),       str(stats.get("total_cards", 0))),
+            (_("Unique cards"),      str(stats.get("unique_cards", 0))),
+            (_("Foil cards"),        str(stats.get("foil_total", 0))),
+            (_("Total value (EUR)"), f"€{stats.get('total_value_eur') or 0:.2f}"),
+            (_("Total value (USD)"), f"${stats.get('total_value_usd') or 0:.2f}"),
+            (_("Foil value (EUR)"),  f"€{stats.get('foil_eur') or 0:.2f}"),
         ]
         row1.addWidget(_kv_table(overview_rows))
 
         rarity_rows = []
         for key, label in [
-            ("r_common",   "Common"),
-            ("r_uncommon", "Uncommon"),
-            ("r_rare",     "Rare"),
-            ("r_mythic",   "Mythic"),
+            ("r_common",   _("Common")),
+            ("r_uncommon", _("Uncommon")),
+            ("r_rare",     _("Rare")),
+            ("r_mythic",   _("Mythic")),
         ]:
             rarity_rows.append([
                 label,
                 str(stats.get(key, 0)),
                 f"€{stats.get(key + '_eur') or 0:.2f}",
             ])
-        rarity_tbl = _header_table(["Rarity", "Count", "Value (EUR)"], rarity_rows)
+        rarity_tbl = _header_table([_("Rarity"), _("Count"), _("Value (EUR)")], rarity_rows)
         row1_right = QVBoxLayout()
         row1_right.setSpacing(2)
-        row1_right.addWidget(_section_header("Rarity"))
+        row1_right.addWidget(_section_header(_("Rarity")))
         row1_right.addWidget(rarity_tbl)
         row1.addLayout(row1_right)
 
@@ -297,9 +298,9 @@ class StatsWidget(QWidget):
         lay.addLayout(row1)
 
         # ── Row 2: Language breakdown ──────────────────────────────────── #
-        lay.addWidget(_section_header("Language Breakdown"))
+        lay.addWidget(_section_header(_("Language Breakdown")))
         lang_rows = []
-        for code, label in [("en", "English 🇬🇧"), ("de", "German 🇩🇪")]:
+        for code, label in [("en", _("English 🇬🇧")), ("de", _("German 🇩🇪"))]:
             lang_rows.append([
                 label,
                 str(stats.get(f"{code}_total", 0)),
@@ -311,14 +312,14 @@ class StatsWidget(QWidget):
         lang_row = QHBoxLayout()
         lang_row.setAlignment(Qt.AlignmentFlag.AlignLeft)
         lang_row.addWidget(_header_table(
-            ["Language", "Total", "Non-foil", "NF value", "Foil", "Foil value"],
+            [_("Language"), _("Total"), _("Non-foil"), _("NF value"), _("Foil"), _("Foil value")],
             lang_rows,
         ))
         lang_row.addStretch()
         lay.addLayout(lang_row)
 
         # ── Row 3: Top 10 most valuable — 2 rows × 5 ─────────────────── #
-        lay.addWidget(_section_header("Top 10 Most Valuable Cards"))
+        lay.addWidget(_section_header(_("Top 10 Most Valuable Cards")))
         top_cards = stats.get("top_cards", [])
         embeds_grid = QGridLayout()
         embeds_grid.setSpacing(10)
@@ -332,7 +333,7 @@ class StatsWidget(QWidget):
 
         # ── Row 4: Containers ─────────────────────────────────────────── #
         if container_stats:
-            lay.addWidget(_section_header("Containers"))
+            lay.addWidget(_section_header(_("Containers")))
             ct_rows = []
             for c in container_stats:
                 eur     = c.get("total_value_eur") or 0.0
@@ -349,7 +350,7 @@ class StatsWidget(QWidget):
             ct_row = QHBoxLayout()
             ct_row.setAlignment(Qt.AlignmentFlag.AlignLeft)
             ct_row.addWidget(_header_table(
-                ["Name", "Type", "Format", "Cards", "Value (EUR)", "Best card (EUR)"],
+                [_("Name"), _("Type"), _("Format"), _("Cards"), _("Value (EUR)"), _("Best card (EUR)")],
                 ct_rows,
             ))
             ct_row.addStretch()
@@ -358,7 +359,7 @@ class StatsWidget(QWidget):
         # ── Row 5: Set completion ─────────────────────────────────────── #
         if sets:
             top_sets = sorted(sets, key=lambda s: s.get("distinct_names") or 0, reverse=True)[:10]
-            lay.addWidget(_section_header(f"Set Completion  ({len(sets)} sets in collection)"))
+            lay.addWidget(_section_header(_("Set Completion  ({count} sets in collection)").format(count=len(sets))))
             set_rows = []
             _meta = sets_meta or {}
             for s in top_sets:
@@ -381,18 +382,18 @@ class StatsWidget(QWidget):
             set_row = QHBoxLayout()
             set_row.setAlignment(Qt.AlignmentFlag.AlignLeft)
             set_row.addWidget(_header_table(
-                ["Code", "Set name", "Distinct (completion)", "Copies", "Value (EUR)"],
+                [_("Code"), _("Set name"), _("Distinct (completion)"), _("Copies"), _("Value (EUR)")],
                 set_rows,
             ))
             set_row.addStretch()
             lay.addLayout(set_row)
 
         # ── Collection value over time chart ──────────────────────────── #
-        lay.addWidget(_section_header("Collection Value Over Time (EUR)"))
+        lay.addWidget(_section_header(_("Collection Value Over Time (EUR)")))
         if len(value_history) < 2:
             no_data = QLabel(
-                "Not enough price history yet.\n"
-                "Run a price sync daily to build up the chart."
+                _("Not enough price history yet.\n"
+                  "Run a price sync daily to build up the chart.")
             )
             no_data.setStyleSheet("color: #666; font-size: 12px; padding: 8px 0;")
             lay.addWidget(no_data)

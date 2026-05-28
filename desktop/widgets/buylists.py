@@ -16,13 +16,14 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QTimer, QPoint
 from PyQt6.QtGui import QColor, QFont
-from qasync import asyncSlot
+from qasync import asyncSlot, asyncWrap
 
 from core.buylist_parser import (  # noqa: E402 — after Qt imports
     parse_buylist_text,
     is_cardkingdom_url,
     CARDKINGDOM_API_URL,
 )
+from core.i18n import _
 
 _DEFAULT_URL = "https://mtgkartenankauf.de/buylist.html"
 
@@ -223,11 +224,11 @@ class BuylistsWidget(QWidget):
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(10)
 
-        root.addWidget(QLabel("<h2>Buylists</h2>"))
+        root.addWidget(QLabel("<h2>" + _("Buylists") + "</h2>"))
 
         self._tabs = QTabWidget()
-        self._tabs.addTab(self._build_manual_tab(), "Manual")
-        self._tabs.addTab(self._build_search_tab(), "Web Search")
+        self._tabs.addTab(self._build_manual_tab(), _("Manual"))
+        self._tabs.addTab(self._build_search_tab(), _("Web Search"))
         root.addWidget(self._tabs)
 
     # ── Manual tab ────────────────────────────────────────────────────────────
@@ -240,13 +241,13 @@ class BuylistsWidget(QWidget):
 
         # ── Saved sources ─────────────────────────────────────────────────────
         sources_row = QHBoxLayout()
-        sources_row.addWidget(QLabel("Saved source:"))
+        sources_row.addWidget(QLabel(_("Saved source:")))
         self._sources_combo = QComboBox()
         self._sources_combo.setMinimumWidth(220)
         sources_row.addWidget(self._sources_combo)
         self._refresh_sources_btn = QPushButton("↻")
         self._refresh_sources_btn.setFixedWidth(32)
-        self._refresh_sources_btn.setToolTip("Reload saved sources from settings")
+        self._refresh_sources_btn.setToolTip(_("Reload saved sources from settings"))
         sources_row.addWidget(self._refresh_sources_btn)
         sources_row.addStretch()
         root.addLayout(sources_row)
@@ -254,14 +255,14 @@ class BuylistsWidget(QWidget):
 
         # ── URL row ───────────────────────────────────────────────────────────
         url_row = QHBoxLayout()
-        url_row.addWidget(QLabel("URL:"))
+        url_row.addWidget(QLabel(_("URL:")))
         self._url_edit = QLineEdit(_DEFAULT_URL)
         url_row.addWidget(self._url_edit)
-        self._fetch_btn = QPushButton("Fetch")
+        self._fetch_btn = QPushButton(_("Fetch"))
         self._fetch_btn.setFixedWidth(80)
         url_row.addWidget(self._fetch_btn)
         from desktop.js_renderer import JsRenderer as _JsR
-        self._fetch_js_btn = QPushButton("Fetch (JS)")
+        self._fetch_js_btn = QPushButton(_("Fetch (JS)"))
         self._fetch_js_btn.setFixedWidth(80)
         self._fetch_js_btn.setEnabled(_JsR.available())
         self._fetch_js_btn.setToolTip(
@@ -274,18 +275,18 @@ class BuylistsWidget(QWidget):
         root.addLayout(url_row)
 
         # ── Paste area ────────────────────────────────────────────────────────
-        sep = QLabel("— or paste buylist content below —")
+        sep = QLabel(_("— or paste buylist content below —"))
         sep.setAlignment(Qt.AlignmentFlag.AlignCenter)
         sep.setStyleSheet("color: #585b70; font-size: 11px;")
         root.addWidget(sep)
 
         self._paste_area = QTextEdit()
         self._paste_area.setPlaceholderText(
-            "Paste the buylist here (tab-separated from browser copy, or HTML).\n\n"
-            "Expected format: Card Name <tab> Price  (one card per line)\n"
-            "Example:\n"
-            "  Lightning Bolt\t0.30\n"
-            "  Sol Ring\t2.50"
+            _("Paste the buylist here (tab-separated from browser copy, or HTML).\n\n"
+              "Expected format: Card Name <tab> Price  (one card per line)\n"
+              "Example:\n"
+              "  Lightning Bolt\t0.30\n"
+              "  Sol Ring\t2.50")
         )
         self._paste_area.setMaximumHeight(130)
         self._paste_area.setFont(QFont("Monospace", 9))
@@ -293,7 +294,7 @@ class BuylistsWidget(QWidget):
 
         # ── Action row ────────────────────────────────────────────────────────
         action_row = QHBoxLayout()
-        self._match_btn = QPushButton("Match collection")
+        self._match_btn = QPushButton(_("Match collection"))
         self._match_btn.setEnabled(False)
         action_row.addWidget(self._match_btn)
         action_row.addStretch()
@@ -310,10 +311,10 @@ class BuylistsWidget(QWidget):
         )
         summary_layout = QHBoxLayout(self._summary_frame)
         summary_layout.setContentsMargins(8, 4, 8, 4)
-        self._sum_buylist_lbl  = QLabel("Buylist: — cards")
-        self._sum_matches_lbl  = QLabel("Matches: —")
-        self._sum_bl_val_lbl   = QLabel("Buylist value: —")
-        self._sum_mkt_val_lbl  = QLabel("Market value: —")
+        self._sum_buylist_lbl  = QLabel(_("Buylist: — cards"))
+        self._sum_matches_lbl  = QLabel(_("Matches: —"))
+        self._sum_bl_val_lbl   = QLabel(_("Buylist value: —"))
+        self._sum_mkt_val_lbl  = QLabel(_("Market value: —"))
         for lbl in (self._sum_buylist_lbl, self._sum_matches_lbl,
                     self._sum_bl_val_lbl, self._sum_mkt_val_lbl):
             lbl.setStyleSheet("color: #cdd6f4; font-size: 11px; padding: 0 8px;")
@@ -357,20 +358,20 @@ class BuylistsWidget(QWidget):
 
         # ── Controls ──────────────────────────────────────────────────────────
         ctrl_row = QHBoxLayout()
-        ctrl_row.addWidget(QLabel("Keyword:"))
+        ctrl_row.addWidget(QLabel(_("Keyword:")))
         self._search_kw_combo = QComboBox()
         self._search_kw_combo.setEditable(True)
         self._search_kw_combo.setMinimumWidth(280)
         ctrl_row.addWidget(self._search_kw_combo, stretch=1)
 
-        ctrl_row.addWidget(QLabel("Max results:"))
+        ctrl_row.addWidget(QLabel(_("Max results:")))
         self._search_max_sb = QSpinBox()
         self._search_max_sb.setRange(1, 30)
         self._search_max_sb.setValue(15)
         self._search_max_sb.setFixedWidth(55)
         ctrl_row.addWidget(self._search_max_sb)
 
-        self._search_btn = QPushButton("Search & Match")
+        self._search_btn = QPushButton(_("Search & Match"))
         self._search_btn.setEnabled(False)
         ctrl_row.addWidget(self._search_btn)
         root.addLayout(ctrl_row)
@@ -423,11 +424,11 @@ class BuylistsWidget(QWidget):
         left_lay = QVBoxLayout(left)
         left_lay.setContentsMargins(0, 0, 4, 0)
         left_lay.setSpacing(4)
-        left_lay.addWidget(QLabel("<b>Store Ranking</b>  (by total buylist value)"))
+        left_lay.addWidget(QLabel("<b>" + _("Store Ranking") + "</b>  " + _("(by total buylist value)")))
 
         self._store_table = QTableWidget(0, 5)
         self._store_table.setHorizontalHeaderLabels([
-            "Store", "Matches", "BL Total €", "MKT Total €", "Above Market",
+            _("Store"), _("Matches"), _("BL Total €"), _("MKT Total €"), _("Above Market"),
         ])
         sh = self._store_table.horizontalHeader()
         sh.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
@@ -454,7 +455,7 @@ class BuylistsWidget(QWidget):
         right_lay.setContentsMargins(4, 0, 0, 0)
         right_lay.setSpacing(4)
 
-        self._detail_header = QLabel("Select a store to view card matches")
+        self._detail_header = QLabel(_("Select a store to view card matches"))
         self._detail_header.setStyleSheet("color: #888; font-size: 11px;")
         right_lay.addWidget(self._detail_header)
 
@@ -513,7 +514,7 @@ class BuylistsWidget(QWidget):
         sources = _cfg.load().get("buylist_sources", [])
         self._sources_combo.blockSignals(True)
         self._sources_combo.clear()
-        self._sources_combo.addItem("— select saved source —", "")
+        self._sources_combo.addItem(_("— select saved source —"), "")
         for src in sources:
             name = src.get("name") or src.get("url", "")
             url  = src.get("url", "")
@@ -714,25 +715,25 @@ class BuylistsWidget(QWidget):
         brave = _cfg.load().get("brave", {})
         api_key = brave.get("api_key", "").strip()
         if not api_key:
-            self._search_status.setText("No Brave API key — set it in Settings → Buylists.")
+            self._search_status.setText(_("No Brave API key — set it in Settings → Buylists."))
             return
 
         query = self._search_kw_combo.currentText().strip()
         if not query:
-            self._search_status.setText("Enter a search keyword.")
+            self._search_status.setText(_("Enter a search keyword."))
             return
 
         max_res    = self._search_max_sb.value()
         use_js     = self._js_cb.isChecked()
         js_wait_ms = self._js_wait_sb.value()
         self._search_btn.setEnabled(False)
-        self._search_status.setText("Searching…")
+        self._search_status.setText(_("Searching…"))
         self._search_progress.setVisible(True)
         self._search_progress.setRange(0, 0)
         self._search_results = []
         self._store_table.setRowCount(0)
         self._detail_table.setRowCount(0)
-        self._detail_header.setText("Select a store to view card matches")
+        self._detail_header.setText(_("Select a store to view card matches"))
 
         try:
             urls = await search_buylist_urls(api_key, query, max_res)
@@ -743,7 +744,7 @@ class BuylistsWidget(QWidget):
             return
 
         if not urls:
-            self._search_status.setText("No results found.")
+            self._search_status.setText(_("No results found."))
             self._search_progress.setVisible(False)
             self._search_btn.setEnabled(True)
             return
@@ -1051,7 +1052,7 @@ class BuylistsWidget(QWidget):
             QTimer.singleShot(4000, lambda: self._search_status.setText(""))
             self._render_store_table()   # refresh 🔒 → 🔑 indicator
         except Exception as exc:
-            QMessageBox.critical(self, "Error", f"Could not save credentials:\n{exc}")
+            QMessageBox.critical(self, _("Error"), _("Could not save credentials:\n{exc}").format(exc=exc))
 
     def _on_store_selected(self):
         row = self._store_table.currentRow()
@@ -1109,7 +1110,7 @@ class BuylistsWidget(QWidget):
 
         import aiohttp
         self._fetch_btn.setEnabled(False)
-        self._status_lbl.setText("Fetching…")
+        self._status_lbl.setText(_("Fetching…"))
 
         try:
             jar = aiohttp.CookieJar(unsafe=True)
@@ -1123,7 +1124,7 @@ class BuylistsWidget(QWidget):
                     html = await resp.text(errors="replace")
 
             if len(html) < 500:
-                self._status_lbl.setText("Fetch failed — site may require JavaScript. Paste manually.")
+                self._status_lbl.setText(_("Fetch failed — site may require JavaScript. Paste manually."))
                 return
 
             self._paste_area.setPlainText(html)
@@ -1138,7 +1139,7 @@ class BuylistsWidget(QWidget):
         import aiohttp, json as _json
         self._fetch_btn.setEnabled(False)
         self._fetch_js_btn.setEnabled(False)
-        self._status_lbl.setText("Fetching Card Kingdom buylist via API…")
+        self._status_lbl.setText(_("Fetching Card Kingdom buylist via API…"))
         try:
             async with aiohttp.ClientSession(
                 headers={**_FETCH_HEADERS, "Accept": "application/json"},
@@ -1186,7 +1187,7 @@ class BuylistsWidget(QWidget):
         try:
             html = await JsRenderer.instance().render(url, wait_ms=wait_ms, timeout=40.0)
             if not html:
-                self._status_lbl.setText("JS render failed — site may block headless browsers. Try pasting manually.")
+                self._status_lbl.setText(_("JS render failed — site may block headless browsers. Try pasting manually."))
                 return
             self._paste_area.setPlainText(html)
             self._status_lbl.setText(f"JS-rendered {len(html):,} bytes — click 'Match collection'")
@@ -1222,15 +1223,15 @@ class BuylistsWidget(QWidget):
 
         text = self._paste_area.toPlainText().strip()
         if not text:
-            self._status_lbl.setText("Nothing to parse.")
+            self._status_lbl.setText(_("Nothing to parse."))
             return
 
         self._match_btn.setEnabled(False)
-        self._status_lbl.setText("Parsing buylist…")
+        self._status_lbl.setText(_("Parsing buylist…"))
 
         self._entries = parse_buylist_text(text)
         if not self._entries:
-            self._status_lbl.setText("No entries found. Check the pasted format.")
+            self._status_lbl.setText(_("No entries found. Check the pasted format."))
             self._match_btn.setEnabled(True)
             return
 
@@ -1328,7 +1329,7 @@ class BuylistsWidget(QWidget):
             self._containers = await db.list_containers()
 
         dlg = QDialog(self)
-        dlg.setWindowTitle("Move cards to container")
+        dlg.setWindowTitle(_("Move cards to container"))
         dlg.setMinimumWidth(340)
         layout = QVBoxLayout(dlg)
 
@@ -1347,7 +1348,7 @@ class BuylistsWidget(QWidget):
         cb = QComboBox()
         for c in self._containers:
             cb.addItem(f"{c['name']}  ({c.get('type', '')})", c["id"])
-        form.addRow("Target container:", cb)
+        form.addRow(_("Target container:"), cb)
         layout.addLayout(form)
 
         btns = QDialogButtonBox(
@@ -1357,7 +1358,7 @@ class BuylistsWidget(QWidget):
         btns.rejected.connect(dlg.reject)
         layout.addWidget(btns)
 
-        if dlg.exec() != QDialog.DialogCode.Accepted:
+        if await asyncWrap(dlg.exec) != QDialog.DialogCode.Accepted:
             return
 
         target_id = cb.currentData()
@@ -1369,12 +1370,13 @@ class BuylistsWidget(QWidget):
         try:
             moved = await db.move_cards_to_container(card_ids, target_id)
             QMessageBox.information(
-                self, "Moved",
-                f"{moved} card(s) moved to '{target_name}'."
+                self, _("Moved"),
+                _("{moved} card(s) moved to '{target_name}'.").format(
+                    moved=moved, target_name=target_name)
             )
             self._containers = await db.list_containers()
         except Exception as exc:
-            QMessageBox.critical(self, "Error", f"Could not move cards:\n{exc}")
+            QMessageBox.critical(self, _("Error"), _("Could not move cards:\n{exc}").format(exc=exc))
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -1427,11 +1429,11 @@ class BuylistsWidget(QWidget):
         total_bl  = sum((m["bl_price"]  or 0) * m["count"] for m in self._matches)
         total_mkt = sum((m["mkt_price"] or 0) * m["count"] for m in self._matches)
 
-        self._sum_buylist_lbl.setText(f"Buylist: {n_bl} cards")
-        self._sum_matches_lbl.setText(f"Matches: {n_hit}")
-        self._sum_bl_val_lbl.setText(f"Buylist value: €{total_bl:.2f}")
-        self._sum_mkt_val_lbl.setText(f"Market value: €{total_mkt:.2f}")
-        self._status_lbl.setText(f"Done — {n_hit} of {n_bl} buylist cards found in collection")
+        self._sum_buylist_lbl.setText(_("Buylist: {n} cards").format(n=n_bl))
+        self._sum_matches_lbl.setText(_("Matches: {n}").format(n=n_hit))
+        self._sum_bl_val_lbl.setText(_("Buylist value: €{val:.2f}").format(val=total_bl))
+        self._sum_mkt_val_lbl.setText(_("Market value: €{val:.2f}").format(val=total_mkt))
+        self._status_lbl.setText(_("Done — {n_hit} of {n_bl} buylist cards found in collection").format(n_hit=n_hit, n_bl=n_bl))
 
     @asyncSlot()
     async def _on_row_selected(self):
@@ -1501,28 +1503,28 @@ class _CredentialsDialog(QDialog):
 
         self._user_edit = QLineEdit(existing.get("username", ""))
         self._user_edit.setPlaceholderText("email@example.com")
-        form.addRow("Username / Email:", self._user_edit)
+        form.addRow(_("Username / Email:"), self._user_edit)
 
         pw_row = QHBoxLayout()
         self._pw_edit = QLineEdit(existing.get("password", ""))
         self._pw_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self._pw_edit.setPlaceholderText("password")
         pw_row.addWidget(self._pw_edit)
-        show_cb = QCheckBox("Show")
+        show_cb = QCheckBox(_("Show"))
         show_cb.toggled.connect(
             lambda checked: self._pw_edit.setEchoMode(
                 QLineEdit.EchoMode.Normal if checked else QLineEdit.EchoMode.Password
             )
         )
         pw_row.addWidget(show_cb)
-        form.addRow("Password:", pw_row)
+        form.addRow(_("Password:"), pw_row)
 
         self._login_url_edit = QLineEdit(existing.get("login_url", "") or _homepage(self._url))
         self._login_url_edit.setPlaceholderText(f"{_homepage(self._url)}login")
         self._login_url_edit.setToolTip(
             "URL of the login page. Leave as homepage and the app will auto-detect the login form."
         )
-        form.addRow("Login page URL:", self._login_url_edit)
+        form.addRow(_("Login page URL:"), self._login_url_edit)
 
         layout.addLayout(form)
 

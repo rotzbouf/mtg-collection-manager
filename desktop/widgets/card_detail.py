@@ -15,6 +15,7 @@ from PyQt6.QtSvg import QSvgRenderer
 from qasync import asyncSlot
 
 from desktop.utils import display_name, lang_flag, format_price, scale_pixmap, async_pixmap, async_pixmap_back
+from core.i18n import _
 
 _PLACEHOLDER_STYLE = "background: #1e1e2e; border-radius: 8px; color: #555; font-size: 12px;"
 
@@ -132,7 +133,7 @@ class CardDetailPanel(QWidget):
     def clear(self):
         self._current_card = None
         self._is_back = False
-        self._img_label.setText("Select a card\nto view details")
+        self._img_label.setText(_("Select a card\nto view details"))
         self._img_label.setPixmap(QPixmap())
         for lbl in (
             self._lbl_name, self._lbl_set, self._lbl_type,
@@ -165,8 +166,8 @@ class CardDetailPanel(QWidget):
         root.addWidget(self._img_label, alignment=Qt.AlignmentFlag.AlignHCenter)
 
         # Flip button — only visible for double-faced cards
-        self._flip_btn = QPushButton("↩ Flip")
-        self._flip_btn.setToolTip("Show the other face of this double-faced card")
+        self._flip_btn = QPushButton("↩ " + _("Flip"))
+        self._flip_btn.setToolTip(_("Show the other face of this double-faced card"))
         self._flip_btn.setStyleSheet("font-size: 11px; padding: 3px 10px;")
         self._flip_btn.setVisible(False)
         self._flip_btn.clicked.connect(self._on_flip)
@@ -194,31 +195,31 @@ class CardDetailPanel(QWidget):
             info.addWidget(lbl)
             return lbl
 
-        self._lbl_name = _row("Name")
-        self._lbl_set = _row("Set")
-        self._lbl_type = _row("Type")
+        self._lbl_name = _row(_("Name"))
+        self._lbl_set = _row(_("Set"))
+        self._lbl_type = _row(_("Type"))
 
         # Mana cost — icon row
-        mana_header = QLabel("<b>Mana cost</b>")
+        mana_header = QLabel("<b>" + _("Mana cost") + "</b>")
         mana_header.setStyleSheet("font-size: 11px; color: #888;")
         info.addWidget(mana_header)
         self._mana_widget = ManaWidget()
         info.addWidget(self._mana_widget)
 
-        self._lbl_cmc = _row("Mana Value")
-        self._lbl_oracle = _row("Oracle text")
-        self._lbl_pt = _row("P / T / Loyalty")
-        self._lbl_lang = _row("Language")
-        self._lbl_cond = _row("Condition")
-        self._lbl_price_eur = _row("Price (EUR)")
-        self._lbl_cm_price = _row("CM Trend (EUR)")
-        self._lbl_price_usd = _row("Price (USD)")
+        self._lbl_cmc = _row(_("Mana Value"))
+        self._lbl_oracle = _row(_("Oracle text"))
+        self._lbl_pt = _row(_("P / T / Loyalty"))
+        self._lbl_lang = _row(_("Language"))
+        self._lbl_cond = _row(_("Condition"))
+        self._lbl_price_eur = _row(_("Price (EUR)"))
+        self._lbl_cm_price = _row(_("CM Trend (EUR)"))
+        self._lbl_price_usd = _row(_("Price (USD)"))
 
         info.addStretch()
         scroll.setWidget(inner)
         root.addWidget(scroll)
 
-        self._price_history_btn = QPushButton("Price History")
+        self._price_history_btn = QPushButton(_("Price History"))
         self._price_history_btn.setStyleSheet("font-size: 11px; padding: 4px 8px;")
         self._price_history_btn.setEnabled(False)
         self._price_history_btn.clicked.connect(self._on_price_history)
@@ -226,8 +227,8 @@ class CardDetailPanel(QWidget):
 
         if self._show_buttons:
             btn_row = QHBoxLayout()
-            self._edit_btn = QPushButton("Edit")
-            self._delete_btn = QPushButton("Delete")
+            self._edit_btn = QPushButton(_("Edit"))
+            self._delete_btn = QPushButton(_("Delete"))
             self._delete_btn.setStyleSheet("color: #e05c5c;")
             self._edit_btn.setEnabled(False)
             self._delete_btn.setEnabled(False)
@@ -245,7 +246,7 @@ class CardDetailPanel(QWidget):
     def _load_card(self, card: dict):
         self._is_back = False
         self._flip_btn.setVisible(bool(card.get("image_url_back")))
-        self._flip_btn.setText("↩ Flip")
+        self._flip_btn.setText("↩ " + _("Flip"))
         self._lbl_name.setText(f"<b>{display_name(card)}</b>")
         self._lbl_set.setText(
             f"{card.get('set_name', '')} "
@@ -282,7 +283,7 @@ class CardDetailPanel(QWidget):
             self._delete_btn.setEnabled(True)
 
         # Load image
-        self._img_label.setText("Loading…")
+        self._img_label.setText(_("Loading…"))
         self._img_label.setPixmap(QPixmap())
         self._load_image(card)
 
@@ -299,14 +300,14 @@ class CardDetailPanel(QWidget):
                 self._img_label.setPixmap(scale_pixmap(pixmap))
                 self._img_label.setText("")
             else:
-                self._img_label.setText("No image\navailable")
+                self._img_label.setText(_("No image\navailable"))
 
     def _on_flip(self):
         if not self._current_card:
             return
         self._is_back = not self._is_back
-        self._flip_btn.setText("↩ Front" if self._is_back else "↩ Flip")
-        self._img_label.setText("Loading…")
+        self._flip_btn.setText("↩ " + (_("Front") if self._is_back else _("Flip")))
+        self._img_label.setText(_("Loading…"))
         self._img_label.setPixmap(QPixmap())
         self._load_image(self._current_card)
 

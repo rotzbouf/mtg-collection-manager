@@ -10,7 +10,9 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor
-from qasync import asyncSlot
+from qasync import asyncSlot, asyncWrap
+
+from core.i18n import _
 
 FORMATS = [
     ("standard",  "Standard"),
@@ -38,12 +40,12 @@ class FormatBansWidget(QWidget):
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(10)
 
-        root.addWidget(QLabel("<h2>Format Ban Lists</h2>"))
+        root.addWidget(QLabel(_("<h2>Format Ban Lists</h2>")))
 
         # ── Toolbar ────────────────────────────────────────────────────────
         bar = QHBoxLayout()
 
-        bar.addWidget(QLabel("Format:"))
+        bar.addWidget(QLabel(_("Format:")))
         self._fmt_cb = QComboBox()
         for key, label in FORMATS:
             self._fmt_cb.addItem(label, key)
@@ -58,11 +60,11 @@ class FormatBansWidget(QWidget):
 
         bar.addStretch()
 
-        self._add_override_btn = QPushButton("Add override")
-        self._add_override_btn.setToolTip("Manually ban, restrict, or un-ban a card for this format")
+        self._add_override_btn = QPushButton(_("Add override"))
+        self._add_override_btn.setToolTip(_("Manually ban, restrict, or un-ban a card for this format"))
         bar.addWidget(self._add_override_btn)
 
-        self._remove_override_btn = QPushButton("Remove override")
+        self._remove_override_btn = QPushButton(_("Remove override"))
         self._remove_override_btn.setEnabled(False)
         bar.addWidget(self._remove_override_btn)
 
@@ -70,7 +72,7 @@ class FormatBansWidget(QWidget):
 
         # ── Ban table ──────────────────────────────────────────────────────
         self._table = QTableWidget(0, 3)
-        self._table.setHorizontalHeaderLabels(["Card name", "Status", "Reason / override"])
+        self._table.setHorizontalHeaderLabels([_("Card name"), _("Status"), _("Reason / override")])
         self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
         self._table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
@@ -150,7 +152,7 @@ class FormatBansWidget(QWidget):
             parts.append(f"{restricted_count} restricted")
         if override_count:
             parts.append(f"{override_count} overridden")
-        self._status_lbl.setText("  ·  ".join(parts) if parts else "No bans in collection")
+        self._status_lbl.setText("  ·  ".join(parts) if parts else _("No bans in collection"))
 
         self._remove_override_btn.setEnabled(False)
 
@@ -172,7 +174,7 @@ class FormatBansWidget(QWidget):
         if not fmt:
             return
         dlg = _AddOverrideDialog(fmt, self)
-        if dlg.exec() != QDialog.DialogCode.Accepted:
+        if await asyncWrap(dlg.exec) != QDialog.DialogCode.Accepted:
             return
         card_name, status, reason = dlg.values()
         from desktop.db import db
@@ -188,8 +190,8 @@ class FormatBansWidget(QWidget):
         card_name = name_item.data(Qt.ItemDataRole.UserRole)
         fmt = self._fmt_cb.currentData()
         reply = QMessageBox.question(
-            self, "Remove override",
-            f"Remove override for '{card_name}' in {fmt}?",
+            self, _("Remove override"),
+            _("Remove override for '{name}' in {fmt}?").format(name=card_name, fmt=fmt),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:
@@ -209,18 +211,18 @@ class _AddOverrideDialog(QDialog):
         form = QFormLayout()
 
         self._name_edit = QLineEdit()
-        self._name_edit.setPlaceholderText("Exact English card name")
-        form.addRow("Card name:", self._name_edit)
+        self._name_edit.setPlaceholderText(_("Exact English card name"))
+        form.addRow(_("Card name:"), self._name_edit)
 
         self._status_cb = QComboBox()
-        self._status_cb.addItem("Banned", "banned")
-        self._status_cb.addItem("Restricted (Vintage — max 1 copy)", "restricted")
-        self._status_cb.addItem("Legal (un-ban override)", "legal")
-        form.addRow("Status:", self._status_cb)
+        self._status_cb.addItem(_("Banned"), "banned")
+        self._status_cb.addItem(_("Restricted (Vintage — max 1 copy)"), "restricted")
+        self._status_cb.addItem(_("Legal (un-ban override)"), "legal")
+        form.addRow(_("Status:"), self._status_cb)
 
         self._reason_edit = QLineEdit()
-        self._reason_edit.setPlaceholderText("Optional reason / announcement URL")
-        form.addRow("Reason:", self._reason_edit)
+        self._reason_edit.setPlaceholderText(_("Optional reason / announcement URL"))
+        form.addRow(_("Reason:"), self._reason_edit)
 
         layout.addLayout(form)
 
@@ -233,7 +235,7 @@ class _AddOverrideDialog(QDialog):
 
     def _validate(self):
         if not self._name_edit.text().strip():
-            QMessageBox.warning(self, "Missing name", "Please enter a card name.")
+            QMessageBox.warning(self, _("Missing name"), _("Please enter a card name."))
             return
         self.accept()
 

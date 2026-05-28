@@ -11,12 +11,13 @@ from PyQt6.QtWidgets import (
     QHeaderView, QFileDialog, QMessageBox, QFrame,
     QProgressBar, QTabWidget, QLineEdit, QGroupBox,
     QFormLayout, QScrollArea, QCheckBox, QListWidget,
-    QListWidgetItem, QPlainTextEdit,
+    QListWidgetItem, QPlainTextEdit, QComboBox,
 )
 from PyQt6.QtCore import Qt, QProcess, QProcessEnvironment
 from qasync import asyncSlot
 
 import core.config as cfg
+from core.i18n import _, get_available as _i18n_available, get_lang as _i18n_get_lang
 
 _PROJECT_ROOT  = Path(__file__).parent.parent.parent
 _VENV_PYTHON   = _PROJECT_ROOT / "venv" / "bin" / "python"
@@ -91,14 +92,14 @@ class SettingsWidget(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(8, 8, 8, 8)
 
-        root.addWidget(QLabel("<h2>Settings</h2>"))
+        root.addWidget(QLabel(_("<h2>Settings</h2>")))
 
         tabs = QTabWidget()
-        tabs.addTab(self._build_services_tab(), "Services")
-        tabs.addTab(self._build_maintenance_tab(), "Maintenance")
-        tabs.addTab(self._build_env_tab(), "Configuration")
-        tabs.addTab(self._build_containers_tab(), "Containers & Overcount")
-        tabs.addTab(self._build_buylists_tab(), "Buylists")
+        tabs.addTab(self._build_services_tab(), _("Services"))
+        tabs.addTab(self._build_maintenance_tab(), _("Maintenance"))
+        tabs.addTab(self._build_env_tab(), _("Configuration"))
+        tabs.addTab(self._build_containers_tab(), _("Containers & Overcount"))
+        tabs.addTab(self._build_buylists_tab(), _("Buylists"))
         root.addWidget(tabs)
 
         # Signals
@@ -125,13 +126,13 @@ class SettingsWidget(QWidget):
         layout.setSpacing(12)
 
         # ── Discord Bot ──────────────────────────────────────────────── #
-        bot_box = QGroupBox("Discord Bot")
+        bot_box = QGroupBox(_("Discord Bot"))
         bot_layout = QVBoxLayout(bot_box)
         bot_layout.setSpacing(8)
 
         bot_status_row = QHBoxLayout()
-        bot_status_row.addWidget(QLabel("Status:"))
-        self._bot_status_lbl = QLabel("○ Stopped")
+        bot_status_row.addWidget(QLabel(_("Status:")))
+        self._bot_status_lbl = QLabel(_("○ Stopped"))
         self._bot_status_lbl.setStyleSheet("font-weight: bold; color: #888;")
         bot_status_row.addWidget(self._bot_status_lbl)
         bot_status_row.addStretch()
@@ -143,8 +144,8 @@ class SettingsWidget(QWidget):
         bot_layout.addWidget(info)
 
         bot_btn_row = QHBoxLayout()
-        self._bot_start_btn = QPushButton("▶  Start bot")
-        self._bot_stop_btn  = QPushButton("■  Stop bot")
+        self._bot_start_btn = QPushButton(_("▶  Start bot"))
+        self._bot_stop_btn  = QPushButton(_("■  Stop bot"))
         self._bot_stop_btn.setEnabled(False)
         bot_btn_row.addWidget(self._bot_start_btn)
         bot_btn_row.addWidget(self._bot_stop_btn)
@@ -161,8 +162,8 @@ class SettingsWidget(QWidget):
         bot_layout.addWidget(self._bot_log)
 
         bot_log_ctrl = QHBoxLayout()
-        self._bot_clear_btn = QPushButton("Clear log")
-        self._bot_autoscroll_cb = QCheckBox("Auto-scroll")
+        self._bot_clear_btn = QPushButton(_("Clear log"))
+        self._bot_autoscroll_cb = QCheckBox(_("Auto-scroll"))
         self._bot_autoscroll_cb.setChecked(True)
         bot_log_ctrl.addWidget(self._bot_clear_btn)
         bot_log_ctrl.addWidget(self._bot_autoscroll_cb)
@@ -244,17 +245,17 @@ class SettingsWidget(QWidget):
 
     def _on_bot_state_changed(self, state: QProcess.ProcessState):
         if state == QProcess.ProcessState.NotRunning:
-            self._bot_status_lbl.setText("○ Stopped")
+            self._bot_status_lbl.setText(_("○ Stopped"))
             self._bot_status_lbl.setStyleSheet("font-weight: bold; color: #888;")
             self._bot_start_btn.setEnabled(True)
             self._bot_stop_btn.setEnabled(False)
         elif state == QProcess.ProcessState.Starting:
-            self._bot_status_lbl.setText("⏳ Starting…")
+            self._bot_status_lbl.setText(_("⏳ Starting…"))
             self._bot_status_lbl.setStyleSheet("font-weight: bold; color: #d4af37;")
             self._bot_start_btn.setEnabled(False)
             self._bot_stop_btn.setEnabled(False)
         elif state == QProcess.ProcessState.Running:
-            self._bot_status_lbl.setText("● Running")
+            self._bot_status_lbl.setText(_("● Running"))
             self._bot_status_lbl.setStyleSheet("font-weight: bold; color: #7ec8a0;")
             self._bot_start_btn.setEnabled(False)
             self._bot_stop_btn.setEnabled(True)
@@ -597,6 +598,29 @@ class SettingsWidget(QWidget):
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(16)
 
+        # ── Language picker ───────────────────────────────────────────────
+        lang_box = QGroupBox(_("Language"))
+        lang_form = QFormLayout(lang_box)
+        lang_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        self._lang_combo = QComboBox()
+        current_lang = _i18n_get_lang()
+        for code, display in _i18n_available():
+            self._lang_combo.addItem(display, code)
+            if code == current_lang:
+                self._lang_combo.setCurrentIndex(self._lang_combo.count() - 1)
+        self._lang_status = QLabel("")
+        self._lang_status.setStyleSheet("color: #888; font-size: 11px;")
+        lang_row = QHBoxLayout()
+        lang_row.addWidget(self._lang_combo)
+        lang_save_btn = QPushButton("Save")
+        lang_save_btn.setFixedWidth(60)
+        lang_save_btn.clicked.connect(self._on_save_language)
+        lang_row.addWidget(lang_save_btn)
+        lang_row.addWidget(self._lang_status)
+        lang_row.addStretch()
+        lang_form.addRow(_("App language"), lang_row)
+        layout.addWidget(lang_box)
+
         self._env_fields: dict[str, QLineEdit] = {}
 
         current = self._read_config_values()
@@ -673,6 +697,19 @@ class SettingsWidget(QWidget):
             for k, v in section.items():
                 flat[f"{section_key}.{k}"] = str(v) if v is not None else ""
         return flat
+
+    def _on_save_language(self):
+        import core.config as _cfg
+        code = self._lang_combo.currentData()
+        config = _cfg.load()
+        config.setdefault("app", {})["language"] = code
+        try:
+            _cfg.save(config)
+            self._lang_status.setText(_("Restart required to apply language change."))
+            self._lang_status.setStyleSheet("color: #d4af37; font-size: 11px;")
+        except Exception as exc:
+            self._lang_status.setText(f"Error: {exc}")
+            self._lang_status.setStyleSheet("color: #e94560; font-size: 11px;")
 
     def _on_save_config(self):
         import core.config as _cfg

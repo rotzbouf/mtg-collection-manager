@@ -39,13 +39,14 @@ from qasync import asyncSlot
 
 from desktop.utils import display_name, format_price, lang_flag, RARITY_COLORS
 from desktop.widgets.card_detail import CardDetailPanel
+from core.i18n import _
 
 _log = logging.getLogger(__name__)
 
 _CARD_ROLE  = Qt.ItemDataRole.UserRole
 _SCORE_ROLE = Qt.ItemDataRole.UserRole + 1   # raw float score for sorting
 
-_COLS = ["Name", "CMC", "Type", "Synergy", "Matched themes", "Container", "Price (EUR)"]
+_COLS = [_("Name"), _("CMC"), _("Type"), _("Synergy"), _("Matched themes"), _("Container"), _("Price (EUR)")]
 
 
 def _bg(coro):
@@ -304,27 +305,27 @@ class DeckCompleteWidget(QWidget):
         root.setSpacing(6)
 
         # ── Deck selector group ──────────────────────────────────────── #
-        top_box = QGroupBox("Deck to complete")
+        top_box = QGroupBox(_("Deck to complete"))
         top_layout = QVBoxLayout(top_box)
         top_layout.setSpacing(6)
 
         row1 = QHBoxLayout()
-        row1.addWidget(QLabel("Deck:"))
+        row1.addWidget(QLabel(_("Deck:")))
         self._deck_combo = QComboBox()
         self._deck_combo.setMinimumWidth(260)
         row1.addWidget(self._deck_combo, stretch=1)
         row1.addSpacing(16)
-        row1.addWidget(QLabel("Target size:"))
+        row1.addWidget(QLabel(_("Target size:")))
         self._target_sb = QSpinBox()
         self._target_sb.setRange(1, 250)
         self._target_sb.setValue(100)
         self._target_sb.setFixedWidth(72)
         self._target_sb.setToolTip(
-            "Total number of cards the deck should have.\n"
-            "60 for Standard/Modern, 100 for Commander."
+            _("Total number of cards the deck should have.\n"
+              "60 for Standard/Modern, 100 for Commander.")
         )
         row1.addWidget(self._target_sb)
-        self._analyze_btn = QPushButton("🔍  Analyze")
+        self._analyze_btn = QPushButton("🔍  " + _("Analyze"))
         self._analyze_btn.setStyleSheet(
             "QPushButton { background-color: #1e2a4a; border: 1px solid #4a6a9a; padding: 5px 14px; }"
             "QPushButton:hover { background-color: #2a3a6a; }"
@@ -333,7 +334,7 @@ class DeckCompleteWidget(QWidget):
         top_layout.addLayout(row1)
 
         row2 = QHBoxLayout()
-        self._deck_status = QLabel("Select a deck and click Analyze.")
+        self._deck_status = QLabel(_("Select a deck and click Analyze."))
         self._deck_status.setStyleSheet("color: #888; font-size: 12px;")
         row2.addWidget(self._deck_status, stretch=1)
         top_layout.addLayout(row2)
@@ -342,7 +343,7 @@ class DeckCompleteWidget(QWidget):
 
         # ── Filter bar ──────────────────────────────────────────────── #
         filter_row = QHBoxLayout()
-        filter_row.addWidget(QLabel("Min synergy:"))
+        filter_row.addWidget(QLabel(_("Min synergy:")))
         self._min_score_sb = QDoubleSpinBox()
         self._min_score_sb.setRange(0.0, 2.0)
         self._min_score_sb.setSingleStep(0.05)
@@ -350,20 +351,20 @@ class DeckCompleteWidget(QWidget):
         self._min_score_sb.setDecimals(2)
         self._min_score_sb.setFixedWidth(72)
         self._min_score_sb.setToolTip(
-            "Hide candidates whose synergy score is below this threshold.\n"
-            "0 = show everything; 0.10 = at least one strong shared theme."
+            _("Hide candidates whose synergy score is below this threshold.\n"
+              "0 = show everything; 0.10 = at least one strong shared theme.")
         )
         filter_row.addWidget(self._min_score_sb)
         filter_row.addSpacing(16)
-        self._color_filter_chk = QCheckBox("Color identity filter")
+        self._color_filter_chk = QCheckBox(_("Color identity filter"))
         self._color_filter_chk.setChecked(True)
         self._color_filter_chk.setToolTip(
-            "When checked, only suggest cards whose color identity is within\n"
-            "the deck's color identity (no off-color splashes)."
+            _("When checked, only suggest cards whose color identity is within\n"
+              "the deck's color identity (no off-color splashes).")
         )
         filter_row.addWidget(self._color_filter_chk)
         filter_row.addSpacing(16)
-        self._basic_filter_chk = QCheckBox("Hide basic lands")
+        self._basic_filter_chk = QCheckBox(_("Hide basic lands"))
         self._basic_filter_chk.setChecked(True)
         filter_row.addWidget(self._basic_filter_chk)
         filter_row.addStretch()
@@ -404,7 +405,7 @@ class DeckCompleteWidget(QWidget):
 
         # ── Bottom action bar ────────────────────────────────────────── #
         bottom = QHBoxLayout()
-        self._add_btn = QPushButton("➕  Add selected to deck")
+        self._add_btn = QPushButton("➕  " + _("Add selected to deck"))
         self._add_btn.setEnabled(False)
         self._add_btn.setStyleSheet(
             "QPushButton { background-color: #1e3a1e; border: 1px solid #4a8a4a; padding: 5px 14px; }"
@@ -483,8 +484,9 @@ class DeckCompleteWidget(QWidget):
         target     = self._target_sb.value()
         missing    = max(0, target - card_count)
         self._deck_status.setText(
-            f"{card_count} cards currently  ·  {missing} slot(s) to fill  ·  "
-            "click Analyze to get suggestions"
+            _("{count} cards currently  ·  {missing} slot(s) to fill  ·  "
+              "click Analyze to get suggestions").format(
+                count=card_count, missing=missing)
         )
         self._results = []
         self._table.setRowCount(0)
@@ -508,7 +510,7 @@ class DeckCompleteWidget(QWidget):
 
         self._loading = True
         self._analyze_btn.setEnabled(False)
-        self._deck_status.setText("Loading deck cards…")
+        self._deck_status.setText(_("Loading deck cards…"))
         self._table.setRowCount(0)
         self._results = []
         self._add_btn.setEnabled(False)
@@ -522,7 +524,7 @@ class DeckCompleteWidget(QWidget):
             )
 
             if not deck_cards:
-                self._deck_status.setText("⚠  Deck is empty — add some cards first.")
+                self._deck_status.setText(_("⚠  Deck is empty — add some cards first."))
                 return
 
             # ── Determine deck color identity ─────────────────────────
@@ -531,23 +533,23 @@ class DeckCompleteWidget(QWidget):
                 deck_colors |= _parse_ci(card)
 
             # ── Build theme profile ───────────────────────────────────
-            self._deck_status.setText("Building synergy profile…")
+            self._deck_status.setText(_("Building synergy profile…"))
             deck_profile = await asyncio.to_thread(_build_deck_profile, deck_cards)
             deck_names   = {(c.get("name_en") or "").strip().lower() for c in deck_cards}
 
             if not deck_profile:
                 self._deck_status.setText(
-                    "⚠  Could not extract themes — oracle text may be missing.\n"
-                    "Try 'Fix missing data' in Maintenance → Scryfall Data Sync first."
+                    _("⚠  Could not extract themes — oracle text may be missing.\n"
+                      "Try 'Fix missing data' in Maintenance → Scryfall Data Sync first.")
                 )
                 return
 
             # ── Fetch collection candidates ───────────────────────────
-            self._deck_status.setText("Fetching collection candidates…")
+            self._deck_status.setText(_("Fetching collection candidates…"))
             raw_candidates = await db.get_collection_candidates(container_id)
 
             # ── Score candidates ──────────────────────────────────────
-            self._deck_status.setText(f"Scoring {len(raw_candidates):,} candidate card(s)…")
+            self._deck_status.setText(_("Scoring {n:,} candidate card(s)…").format(n=len(raw_candidates)))
 
             def _score_all(cards, profile, n):
                 scored = []
@@ -581,7 +583,7 @@ class DeckCompleteWidget(QWidget):
 
         except Exception as exc:
             _log.exception("DeckComplete analysis error")
-            self._deck_status.setText(f"Error: {exc}")
+            self._deck_status.setText(_("Error: {exc}").format(exc=exc))
         finally:
             self._loading = False
             self._analyze_btn.setEnabled(True)
@@ -744,11 +746,11 @@ class DeckCompleteWidget(QWidget):
             moved = await db.move_cards_to_container(card_ids, container_id)
             QMessageBox.information(
                 self,
-                "Cards added",
-                f"✓  Added {moved} card(s) to the deck.",
+                _("Cards added"),
+                _("✓  Added {moved} card(s) to the deck.").format(moved=moved),
             )
             # Re-run analysis so the counts and suggestions refresh
             await self._load_decks()
             await self._analyze()
         except Exception as exc:
-            QMessageBox.critical(self, "Error", str(exc))
+            QMessageBox.critical(self, _("Error"), str(exc))

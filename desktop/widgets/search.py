@@ -16,6 +16,7 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor, QFont
 from qasync import asyncSlot
 
+from core.i18n import _
 from desktop.utils import CONDITIONS, display_name, lang_flag, format_price
 from desktop.widgets.card_detail import CardDetailPanel
 
@@ -44,6 +45,9 @@ _COLORS = [
 ]
 
 _RESULT_COLS = ["#", "Name", "Set", "CN", "Type", "Cond", "Foil", "Lang", "Ctr", "€"]
+
+def _result_cols():
+    return [_("#"), _("Name"), _("Set"), _("CN"), _("Type"), _("Cond"), _("Foil"), _("Lang"), _("Ctr"), _("€")]
 
 
 class SearchWidget(QWidget):
@@ -101,41 +105,41 @@ class SearchWidget(QWidget):
         layout.setContentsMargins(8, 8, 8, 4)
         layout.setSpacing(8)
 
-        layout.addWidget(QLabel("<h2>Search</h2>"))
+        layout.addWidget(QLabel(_("<h2>Search</h2>")))
 
         # ── Text filters ──────────────────────────────────────────────
-        text_box = QGroupBox("Text")
+        text_box = QGroupBox(_("Text"))
         text_layout = QVBoxLayout(text_box)
         text_layout.setSpacing(4)
 
-        text_layout.addWidget(QLabel("Name:"))
+        text_layout.addWidget(QLabel(_("Name:")))
         self._f_name = QLineEdit()
-        self._f_name.setPlaceholderText("full or partial…")
+        self._f_name.setPlaceholderText(_("full or partial…"))
         self._f_name.setClearButtonEnabled(True)
         text_layout.addWidget(self._f_name)
 
-        text_layout.addWidget(QLabel("Type line:"))
+        text_layout.addWidget(QLabel(_("Type line:")))
         self._f_type = QLineEdit()
-        self._f_type.setPlaceholderText("e.g. Creature, Instant…")
+        self._f_type.setPlaceholderText(_("e.g. Creature, Instant…"))
         self._f_type.setClearButtonEnabled(True)
         text_layout.addWidget(self._f_type)
 
-        text_layout.addWidget(QLabel("Oracle text:"))
+        text_layout.addWidget(QLabel(_("Oracle text:")))
         self._f_oracle = QLineEdit()
-        self._f_oracle.setPlaceholderText("contains…")
+        self._f_oracle.setPlaceholderText(_("contains…"))
         self._f_oracle.setClearButtonEnabled(True)
         text_layout.addWidget(self._f_oracle)
 
-        text_layout.addWidget(QLabel("Set code:"))
+        text_layout.addWidget(QLabel(_("Set code:")))
         self._f_set = QLineEdit()
-        self._f_set.setPlaceholderText("e.g. mh2")
+        self._f_set.setPlaceholderText(_("e.g. mh2"))
         self._f_set.setClearButtonEnabled(True)
         text_layout.addWidget(self._f_set)
 
         layout.addWidget(text_box)
 
         # ── Colors ───────────────────────────────────────────────────
-        color_box = QGroupBox("Colors")
+        color_box = QGroupBox(_("Colors"))
         color_layout = QVBoxLayout(color_box)
         color_layout.setSpacing(4)
 
@@ -155,18 +159,18 @@ class SearchWidget(QWidget):
         pip_row.addStretch()
         color_layout.addLayout(pip_row)
 
-        self._f_colors_exclusive = QCheckBox("Exact (no other colors)")
+        self._f_colors_exclusive = QCheckBox(_("Exact (no other colors)"))
         self._f_colors_exclusive.setStyleSheet("font-size: 11px; color: #888;")
         color_layout.addWidget(self._f_colors_exclusive)
 
         layout.addWidget(color_box)
 
         # ── Card properties ──────────────────────────────────────────
-        props_box = QGroupBox("Properties")
+        props_box = QGroupBox(_("Properties"))
         props_layout = QVBoxLayout(props_box)
         props_layout.setSpacing(6)
 
-        props_layout.addWidget(QLabel("Rarity:"))
+        props_layout.addWidget(QLabel(_("Rarity:")))
         rar_row = QHBoxLayout()
         rar_row.setSpacing(6)
         self._rarity_cbs: dict[str, QCheckBox] = {}
@@ -178,7 +182,7 @@ class SearchWidget(QWidget):
         rar_row.addStretch()
         props_layout.addLayout(rar_row)
 
-        props_layout.addWidget(QLabel("Mana Value:"))
+        props_layout.addWidget(QLabel(_("Mana Value:")))
         cmc_row = QHBoxLayout()
         cmc_row.setSpacing(4)
         self._f_cmc_min = QSpinBox()
@@ -198,46 +202,46 @@ class SearchWidget(QWidget):
         layout.addWidget(props_box)
 
         # ── Collection metadata ───────────────────────────────────────
-        coll_box = QGroupBox("Collection")
+        coll_box = QGroupBox(_("Collection"))
         coll_layout = QVBoxLayout(coll_box)
         coll_layout.setSpacing(4)
 
-        coll_layout.addWidget(QLabel("Condition:"))
+        coll_layout.addWidget(QLabel(_("Condition:")))
         self._f_condition = QComboBox()
-        self._f_condition.addItem("Any", "")
+        self._f_condition.addItem(_("Any"), "")
         for c in CONDITIONS:
             self._f_condition.addItem(c, c)
         coll_layout.addWidget(self._f_condition)
 
-        coll_layout.addWidget(QLabel("Language:"))
+        coll_layout.addWidget(QLabel(_("Language:")))
         self._f_language = QComboBox()
         for code, label in _LANGUAGES:
             self._f_language.addItem(label, code)
         coll_layout.addWidget(self._f_language)
 
-        coll_layout.addWidget(QLabel("Foil:"))
+        coll_layout.addWidget(QLabel(_("Foil:")))
         self._f_foil = QComboBox()
-        self._f_foil.addItem("Any", None)
-        self._f_foil.addItem("Foil only", 1)
-        self._f_foil.addItem("Non-foil only", 0)
+        self._f_foil.addItem(_("Any"), None)
+        self._f_foil.addItem(_("Foil only"), 1)
+        self._f_foil.addItem(_("Non-foil only"), 0)
         coll_layout.addWidget(self._f_foil)
 
-        coll_layout.addWidget(QLabel("Container:"))
+        coll_layout.addWidget(QLabel(_("Container:")))
         self._f_container = QComboBox()
-        self._f_container.addItem("Any", None)
-        self._f_container.addItem("(no container)", -1)
+        self._f_container.addItem(_("Any"), None)
+        self._f_container.addItem(_("(no container)"), -1)
         coll_layout.addWidget(self._f_container)
 
-        self._f_commander = QCheckBox("Commander only")
+        self._f_commander = QCheckBox(_("Commander only"))
         coll_layout.addWidget(self._f_commander)
 
         layout.addWidget(coll_box)
 
         # ── Price ─────────────────────────────────────────────────────
-        price_box = QGroupBox("Price (EUR)")
+        price_box = QGroupBox(_("Price (EUR)"))
         price_layout = QHBoxLayout(price_box)
         price_layout.setSpacing(4)
-        price_layout.addWidget(QLabel("Min:"))
+        price_layout.addWidget(QLabel(_("Min:")))
         self._f_price_min = QDoubleSpinBox()
         self._f_price_min.setRange(0, 9999)
         self._f_price_min.setDecimals(2)
@@ -245,7 +249,7 @@ class SearchWidget(QWidget):
         self._f_price_min.setValue(0)
         self._f_price_min.setMaximumWidth(80)
         price_layout.addWidget(self._f_price_min)
-        price_layout.addWidget(QLabel("Max:"))
+        price_layout.addWidget(QLabel(_("Max:")))
         self._f_price_max = QDoubleSpinBox()
         self._f_price_max.setRange(0, 9999)
         self._f_price_max.setDecimals(2)
@@ -265,11 +269,11 @@ class SearchWidget(QWidget):
         btn_layout = QHBoxLayout(btn_bar)
         btn_layout.setContentsMargins(8, 6, 8, 8)
         btn_layout.setSpacing(6)
-        self._search_btn = QPushButton("Search")
+        self._search_btn = QPushButton(_("Search"))
         self._search_btn.setStyleSheet(
             "padding: 7px; background: #0f3460; color: white; border-radius: 3px; font-size: 13px;"
         )
-        self._reset_btn = QPushButton("Reset")
+        self._reset_btn = QPushButton(_("Reset"))
         self._reset_btn.setStyleSheet("padding: 7px; font-size: 13px;")
         btn_layout.addWidget(self._search_btn, stretch=1)
         btn_layout.addWidget(self._reset_btn)
@@ -291,12 +295,12 @@ class SearchWidget(QWidget):
         layout.setContentsMargins(0, 8, 0, 0)
         layout.setSpacing(4)
 
-        self._status_lbl = QLabel("Enter filters and press Search.")
+        self._status_lbl = QLabel(_("Enter filters and press Search."))
         self._status_lbl.setStyleSheet("color: #888; font-size: 12px; padding: 0 8px;")
         layout.addWidget(self._status_lbl)
 
         self._table = QTableWidget(0, len(_RESULT_COLS))
-        self._table.setHorizontalHeaderLabels(_RESULT_COLS)
+        self._table.setHorizontalHeaderLabels(_result_cols())
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -356,7 +360,7 @@ class SearchWidget(QWidget):
         from desktop.db import db
 
         self._search_btn.setEnabled(False)
-        self._status_lbl.setText("Searching…")
+        self._status_lbl.setText(_("Searching…"))
         self._table.setRowCount(0)
         self._detail.clear()
         self._results = []
@@ -416,12 +420,12 @@ class SearchWidget(QWidget):
         self._results = cards
 
         if not cards:
-            self._status_lbl.setText("No results found.")
+            self._status_lbl.setText(_("No results found."))
             return
 
         self._status_lbl.setText(
-            f"{len(cards)} result(s)"
-            + (" — limit reached, refine your filters" if len(cards) == 300 else "")
+            _("{count} result(s)").format(count=len(cards))
+            + (" — " + _("limit reached, refine your filters") if len(cards) == 300 else "")
         )
         self._populate_table(cards)
 
@@ -526,23 +530,23 @@ class SearchWidget(QWidget):
         self._table.setRowCount(0)
         self._detail.clear()
         self._results = []
-        self._status_lbl.setText("Filters reset.")
+        self._status_lbl.setText(_("Filters reset."))
 
 
 class _MoveToContainerDialog(QDialog):
     def __init__(self, containers: list[dict], parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Move to container")
+        self.setWindowTitle(_("Move to container"))
         self.setMinimumWidth(300)
         layout = QVBoxLayout(self)
 
         self._combo = QComboBox()
-        self._combo.addItem("— Remove from container —", None)
+        self._combo.addItem(_("— Remove from container —"), None)
         for c in containers:
             self._combo.addItem(c["name"], c["id"])
 
         form = QFormLayout()
-        form.addRow("Container:", self._combo)
+        form.addRow(_("Container:"), self._combo)
         layout.addLayout(form)
 
         btns = QDialogButtonBox(

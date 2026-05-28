@@ -71,6 +71,7 @@ jobs:
             --enable-plugin=pyqt6 `
             --include-qt-plugins=sensible `
             --follow-import-to=core `
+            --follow-import-to=core.translations `
             --follow-import-to=desktop `
             --follow-import-to=server `
             --follow-import-to=cogs `
@@ -188,6 +189,7 @@ jobs:
             --enable-plugin=pyqt6 \
             --include-qt-plugins=sensible \
             --follow-import-to=core \
+            --follow-import-to=core.translations \
             --follow-import-to=desktop \
             --follow-import-to=server \
             --follow-import-to=cogs \
@@ -350,6 +352,7 @@ jobs:
             --enable-plugin=pyqt6 \
             --include-qt-plugins=sensible \
             --follow-import-to=core \
+            --follow-import-to=core.translations \
             --follow-import-to=desktop \
             --follow-import-to=server \
             --follow-import-to=cogs \
