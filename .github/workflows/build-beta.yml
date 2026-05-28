@@ -280,12 +280,15 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r deps/requirements.txt
-          pip install nuitka ordered-set zstandard
+          pip install nuitka ordered-set zstandard jsonschema
           # torch/easyocr intentionally excluded — Tesseract handles OCR and
           # avoids a ~1 GB download (torch + scipy + scikit-image + shapely cascade).
           # PyQt6-WebEngine is NOT installed: Nuitka fatally fails to locate the
           # QtWebEngine resources bundle on macOS.  The patch step below handles
           # any residual detection; --nofollow-import-to guards the import side.
+          # jsonschema: Nuitka needs it to validate its package config when it
+          # detects a PyQt6 checksum mismatch — pre-installing avoids a failed
+          # private pip download at build time.
 
       - name: Patch Nuitka PyQt6-on-macOS checks
         run: |
