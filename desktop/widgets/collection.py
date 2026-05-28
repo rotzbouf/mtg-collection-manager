@@ -11,14 +11,18 @@ from PyQt6.QtWidgets import (
     QApplication, QFrame,
 )
 from PyQt6.QtCore import Qt, QTimer
-from qasync import asyncSlot
+from qasync import asyncSlot, asyncWrap
 
+from core.i18n import _
 from desktop.utils import display_name, lang_flag, format_price
 from desktop.widgets.card_detail import CardDetailPanel
 
 PAGE_SIZE = 50
 
 _COLUMNS = ["#", "Name", "Set", "CN", "Cond", "Foil", "Lang", "Container", "Price (EUR)"]
+
+def _columns():
+    return [_("#"), _("Name"), _("Set"), _("CN"), _("Cond"), _("Foil"), _("Lang"), _("Container"), _("Price (EUR)")]
 
 
 class CollectionWidget(QWidget):
@@ -54,25 +58,25 @@ class CollectionWidget(QWidget):
         # Toolbar: search + filters
         toolbar = QHBoxLayout()
         self._search_edit = QLineEdit()
-        self._search_edit.setPlaceholderText("Search cards…")
+        self._search_edit.setPlaceholderText(_("Search cards…"))
         self._search_edit.setClearButtonEnabled(True)
         toolbar.addWidget(self._search_edit, stretch=1)
-        toolbar.addWidget(QLabel("ID:"))
+        toolbar.addWidget(QLabel(_("ID:")))
         self._id_edit = QLineEdit()
-        self._id_edit.setPlaceholderText("e.g. 42")
+        self._id_edit.setPlaceholderText(_("e.g. 42"))
         self._id_edit.setClearButtonEnabled(True)
         self._id_edit.setFixedWidth(90)
         toolbar.addWidget(self._id_edit)
-        self._no_container_btn = QPushButton("🗂 No container")
+        self._no_container_btn = QPushButton(_("🗂 No container"))
         self._no_container_btn.setCheckable(True)
-        self._no_container_btn.setToolTip("Show only cards not assigned to any container")
+        self._no_container_btn.setToolTip(_("Show only cards not assigned to any container"))
         self._no_container_btn.setFixedWidth(130)
         toolbar.addWidget(self._no_container_btn)
         left_layout.addLayout(toolbar)
 
         # Table
         self._table = QTableWidget(0, len(_COLUMNS))
-        self._table.setHorizontalHeaderLabels(_COLUMNS)
+        self._table.setHorizontalHeaderLabels(_columns())
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -87,9 +91,9 @@ class CollectionWidget(QWidget):
 
         # Pagination
         pagination = QHBoxLayout()
-        self._prev_btn = QPushButton("< Prev")
-        self._next_btn = QPushButton("Next >")
-        self._page_label = QLabel("Page 1 / 1 (0 cards)")
+        self._prev_btn = QPushButton(_("< Prev"))
+        self._next_btn = QPushButton(_("Next >"))
+        self._page_label = QLabel(_("Page 1 / 1 (0 cards)"))
         self._page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         pagination.addWidget(self._prev_btn)
         pagination.addWidget(self._page_label, stretch=1)
@@ -207,12 +211,14 @@ class CollectionWidget(QWidget):
             self._table.setItem(row_idx, 5, _item("★" if card.get("foil") else ""))
             self._table.setItem(row_idx, 6, _item(lang_flag(card)))
             self._table.setItem(row_idx, 7, _item(card.get("container_name") or ""))
-            self._table.setItem(row_idx, 8, _item(format_price(card.get("price_eur"))))
+            self._table.setItem(row_idx, 8, _item(format_price(card.get("price_eur"), card.get("price_approx", 0))))
 
     def _update_pagination(self):
         total_pages = max(1, (self._total + PAGE_SIZE - 1) // PAGE_SIZE)
         self._page_label.setText(
-            f"Page {self._page + 1} / {total_pages} ({self._total} cards)"
+            _("Page {page} / {total_pages} ({total} cards)").format(
+                page=self._page + 1, total_pages=total_pages, total=self._total
+            )
         )
         self._prev_btn.setEnabled(self._page > 0)
         self._next_btn.setEnabled(self._page + 1 < total_pages)
@@ -296,17 +302,20 @@ class CollectionWidget(QWidget):
         menu = QMenu(self)
 
         # Move to container (works for single or multi)
-        move_label = f"↗ Move {len(selected_ids)} cards to container…" if is_multi else "↗ Move to container…"
+        move_label = (
+            _("↗ Move {count} cards to container…").format(count=len(selected_ids))
+            if is_multi else _("↗ Move to container…")
+        )
         move_act = menu.addAction(move_label)
         move_act.triggered.connect(lambda: self._on_move_to_container(selected_ids))
 
         if not is_multi and card:
             menu.addSeparator()
-            resync_act = menu.addAction("↻ Resync from Scryfall")
+            resync_act = menu.addAction(_("↻ Resync from Scryfall"))
             resync_act.setEnabled(bool(card.get("scryfall_id")))
             resync_act.triggered.connect(lambda: self._do_resync_card(card))
 
-            history_act = menu.addAction("📈 Price history")
+            history_act = menu.addAction(_("📈 Price history"))
             history_act.setEnabled(bool(card.get("scryfall_id")))
             history_act.triggered.connect(lambda: self._show_price_history(card))
 
@@ -317,7 +326,7 @@ class CollectionWidget(QWidget):
         from desktop.db import db
 
         dlg = _MoveToContainerDialog(self._containers, len(card_ids), parent=self)
-        if dlg.exec() != QDialog.DialogCode.Accepted:
+        if await asyncWrap(dlg.exec) != QDialog.DialogCode.Accepted:
             return
 
         is_new, container_id, new_name, new_type = dlg.selected_result()
@@ -325,7 +334,7 @@ class CollectionWidget(QWidget):
             try:
                 container_id = await db.create_container(new_name, type=new_type)
             except Exception as exc:
-                QMessageBox.critical(self, "Error", f"Could not create container:\n{exc}")
+                QMessageBox.critical(self, _("Error"), _("Could not create container:\n{exc}").format(exc=exc))
                 return
 
         await db.move_cards_to_container(card_ids, container_id)
@@ -350,9 +359,9 @@ class CollectionWidget(QWidget):
                 if updated:
                     self._detail.set_card(updated)
             else:
-                QMessageBox.warning(self, "Resync", "Card not found on Scryfall.")
+                QMessageBox.warning(self, _("Resync"), _("Card not found on Scryfall."))
         except Exception as exc:
-            QMessageBox.warning(self, "Resync error", str(exc))
+            QMessageBox.warning(self, _("Resync error"), str(exc))
         finally:
             QApplication.restoreOverrideCursor()
 
@@ -383,8 +392,8 @@ class CollectionWidget(QWidget):
     def _on_delete_card(self, card: dict):
         name = display_name(card)
         reply = QMessageBox.question(
-            self, "Delete card",
-            f"Remove '{name}' from the collection?\nThis cannot be undone.",
+            self, _("Delete card"),
+            _("Remove '{name}' from the collection?\nThis cannot be undone.").format(name=name),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
@@ -413,15 +422,15 @@ class _MoveToContainerDialog(QDialog):
 
         self._new_containers: list[tuple[str, str]] = []
 
-        self.setWindowTitle("Move to container")
+        self.setWindowTitle(_("Move to container"))
         self.setMinimumWidth(400)
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
 
-        layout.addWidget(QLabel(f"Move <b>{card_count}</b> card(s) to:"))
+        layout.addWidget(QLabel(_("Move <b>{count}</b> card(s) to:").format(count=card_count)))
 
         self._combo = QComboBox()
-        self._combo.addItem("— Remove from container —", None)
+        self._combo.addItem(_("— Remove from container —"), None)
         for c in containers:
             self._combo.addItem(
                 f"{c['name']}  [{c.get('type', '')}]",
@@ -433,20 +442,20 @@ class _MoveToContainerDialog(QDialog):
         sep.setFrameShape(QFrame.Shape.HLine)
         layout.addWidget(sep)
 
-        layout.addWidget(QLabel("<b>Create new container:</b>"))
+        layout.addWidget(QLabel(_("<b>Create new container:</b>")))
 
         new_row = QHBoxLayout()
         new_row.setSpacing(6)
 
         self._new_name_edit = QLineEdit()
-        self._new_name_edit.setPlaceholderText("Container name…")
+        self._new_name_edit.setPlaceholderText(_("Container name…"))
         new_row.addWidget(self._new_name_edit, stretch=2)
 
         self._new_type_cb = QComboBox()
         self._new_type_cb.addItems(cfg.load().get("container_types", cfg.BUILTIN_TYPES))
         new_row.addWidget(self._new_type_cb, stretch=1)
 
-        add_btn = QPushButton("Add & Select")
+        add_btn = QPushButton(_("Add & Select"))
         add_btn.setStyleSheet(
             "padding: 4px 10px; background: #0f3460; color: white; border-radius: 3px;"
         )
@@ -459,9 +468,9 @@ class _MoveToContainerDialog(QDialog):
         layout.addWidget(sep2)
 
         btn_row = QHBoxLayout()
-        ok_btn = QPushButton("Move")
+        ok_btn = QPushButton(_("Move"))
         ok_btn.setDefault(True)
-        cancel_btn = QPushButton("Cancel")
+        cancel_btn = QPushButton(_("Cancel"))
         btn_row.addStretch()
         btn_row.addWidget(cancel_btn)
         btn_row.addWidget(ok_btn)

@@ -11,6 +11,8 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal, QObject
 from PyQt6.QtGui import QColor, QTextCharFormat, QTextCursor, QFont
 
+from core.i18n import _
+
 logger = logging.getLogger(__name__)
 
 _LEVEL_COLORS: dict[int, str] = {
@@ -67,7 +69,7 @@ class LogsWidget(QWidget):
         # ── Toolbar ──────────────────────────────────────────────────────────
         bar = QHBoxLayout()
 
-        bar.addWidget(QLabel("Level:"))
+        bar.addWidget(QLabel(_("Level:")))
         self._level_combo = QComboBox()
         for name, level in (
             ("DEBUG", logging.DEBUG),
@@ -83,11 +85,11 @@ class LogsWidget(QWidget):
 
         bar.addStretch()
 
-        self._autoscroll = QCheckBox("Auto-scroll")
+        self._autoscroll = QCheckBox(_("Auto-scroll"))
         self._autoscroll.setChecked(True)
         bar.addWidget(self._autoscroll)
 
-        clear_btn = QPushButton("Clear")
+        clear_btn = QPushButton(_("Clear"))
         clear_btn.setFixedWidth(60)
         clear_btn.clicked.connect(self._on_clear)
         bar.addWidget(clear_btn)

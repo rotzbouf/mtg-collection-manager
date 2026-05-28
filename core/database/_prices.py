@@ -30,7 +30,7 @@ class _PricesMixin:
         """Return distinct cards with no price in card_prices that have a known scryfall_id."""
         async with self._db.execute(
             """
-            SELECT DISTINCT c.scryfall_id, c.name_en
+            SELECT DISTINCT c.scryfall_id, c.oracle_id, c.name_en
             FROM collection c
             LEFT JOIN card_prices cp ON c.scryfall_id = cp.scryfall_id
             WHERE c.scryfall_id IS NOT NULL
@@ -45,19 +45,21 @@ class _PricesMixin:
         scryfall_id: str,
         price_eur: Optional[float],
         price_usd: Optional[float],
+        approx: int = 0,
     ) -> None:
         """Upsert price into card_prices. None values never overwrite an existing price."""
         async with self._write_lock:
             await self._db.execute(
                 """
-                INSERT INTO card_prices (scryfall_id, price_eur, price_usd, updated_at)
-                VALUES (?, ?, ?, datetime('now'))
+                INSERT INTO card_prices (scryfall_id, price_eur, price_usd, price_approx, updated_at)
+                VALUES (?, ?, ?, ?, datetime('now'))
                 ON CONFLICT(scryfall_id) DO UPDATE SET
-                    price_eur  = COALESCE(excluded.price_eur, price_eur),
-                    price_usd  = COALESCE(excluded.price_usd, price_usd),
-                    updated_at = datetime('now')
+                    price_eur    = COALESCE(excluded.price_eur, price_eur),
+                    price_usd    = COALESCE(excluded.price_usd, price_usd),
+                    price_approx = excluded.price_approx,
+                    updated_at   = datetime('now')
                 """,
-                (scryfall_id, price_eur, price_usd),
+                (scryfall_id, price_eur, price_usd, approx),
             )
             await self._db.commit()
 

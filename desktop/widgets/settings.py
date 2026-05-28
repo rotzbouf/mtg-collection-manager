@@ -11,12 +11,13 @@ from PyQt6.QtWidgets import (
     QHeaderView, QFileDialog, QMessageBox, QFrame,
     QProgressBar, QTabWidget, QLineEdit, QGroupBox,
     QFormLayout, QScrollArea, QCheckBox, QListWidget,
-    QListWidgetItem, QPlainTextEdit,
+    QListWidgetItem, QPlainTextEdit, QComboBox,
 )
 from PyQt6.QtCore import Qt, QProcess, QProcessEnvironment
 from qasync import asyncSlot
 
 import core.config as cfg
+from core.i18n import _, get_available as _i18n_available, get_lang as _i18n_get_lang
 
 _PROJECT_ROOT  = Path(__file__).parent.parent.parent
 _VENV_PYTHON   = _PROJECT_ROOT / "venv" / "bin" / "python"
@@ -37,17 +38,6 @@ def _bot_launch() -> tuple[str, list[str], str]:
     python = str(_VENV_PYTHON) if _VENV_PYTHON.exists() else sys.executable
     return python, [str(_BOT_SCRIPT)], str(_PROJECT_ROOT)
 
-
-def _webui_launch() -> tuple[str, list[str], str]:
-    """Return (program, args, cwd) for launching the Web UI subprocess."""
-    if _is_bundled():
-        cwd = str(Path(sys.executable).parent)
-        return sys.executable, ['--run-webui'], cwd
-    python = str(_VENV_PYTHON) if _VENV_PYTHON.exists() else sys.executable
-    return python, ['-m', 'server.ui.app'], str(_PROJECT_ROOT)
-
-_DEFAULT_UI_PORT = "8080"
-_DEFAULT_UI_HOST = "0.0.0.0"
 
 # (group_title, [(dotted_config_key, field_label, tooltip, is_secret)])
 # dotted_config_key format: "section.key"  e.g. "discord.token"
@@ -82,14 +72,6 @@ _CONFIG_GROUPS: list[tuple[str, list[tuple[str, str, str, bool]]]] = [
          "Set to 1 to send a debug preview image after each scan. Keep at 0 in production.",
          False),
     ]),
-    ("Web Server", [
-        ("app.ui_port", "Port",
-         "Port the web UI server listens on (default: 8080).",
-         False),
-        ("app.ui_host", "Host",
-         "Host/IP the web UI server binds to (default: 0.0.0.0).",
-         False),
-    ]),
 ]
 
 
@@ -100,7 +82,6 @@ class SettingsWidget(QWidget):
         self._import_format: str = ""
         self._sync_cancelled = False
         self._bot_process: QProcess | None = None
-        self._webui_process: QProcess | None = None
         self._build_ui()
 
     # ------------------------------------------------------------------ #
@@ -111,14 +92,14 @@ class SettingsWidget(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(8, 8, 8, 8)
 
-        root.addWidget(QLabel("<h2>Settings</h2>"))
+        root.addWidget(QLabel(_("<h2>Settings</h2>")))
 
         tabs = QTabWidget()
-        tabs.addTab(self._build_services_tab(), "Services")
-        tabs.addTab(self._build_maintenance_tab(), "Maintenance")
-        tabs.addTab(self._build_env_tab(), "Configuration")
-        tabs.addTab(self._build_containers_tab(), "Containers & Overcount")
-        tabs.addTab(self._build_buylists_tab(), "Buylists")
+        tabs.addTab(self._build_services_tab(), _("Services"))
+        tabs.addTab(self._build_maintenance_tab(), _("Maintenance"))
+        tabs.addTab(self._build_env_tab(), _("Configuration"))
+        tabs.addTab(self._build_containers_tab(), _("Containers & Overcount"))
+        tabs.addTab(self._build_buylists_tab(), _("Buylists"))
         root.addWidget(tabs)
 
         # Signals
@@ -145,13 +126,13 @@ class SettingsWidget(QWidget):
         layout.setSpacing(12)
 
         # ── Discord Bot ──────────────────────────────────────────────── #
-        bot_box = QGroupBox("Discord Bot")
+        bot_box = QGroupBox(_("Discord Bot"))
         bot_layout = QVBoxLayout(bot_box)
         bot_layout.setSpacing(8)
 
         bot_status_row = QHBoxLayout()
-        bot_status_row.addWidget(QLabel("Status:"))
-        self._bot_status_lbl = QLabel("○ Stopped")
+        bot_status_row.addWidget(QLabel(_("Status:")))
+        self._bot_status_lbl = QLabel(_("○ Stopped"))
         self._bot_status_lbl.setStyleSheet("font-weight: bold; color: #888;")
         bot_status_row.addWidget(self._bot_status_lbl)
         bot_status_row.addStretch()
@@ -163,8 +144,8 @@ class SettingsWidget(QWidget):
         bot_layout.addWidget(info)
 
         bot_btn_row = QHBoxLayout()
-        self._bot_start_btn = QPushButton("▶  Start bot")
-        self._bot_stop_btn  = QPushButton("■  Stop bot")
+        self._bot_start_btn = QPushButton(_("▶  Start bot"))
+        self._bot_stop_btn  = QPushButton(_("■  Stop bot"))
         self._bot_stop_btn.setEnabled(False)
         bot_btn_row.addWidget(self._bot_start_btn)
         bot_btn_row.addWidget(self._bot_stop_btn)
@@ -181,8 +162,8 @@ class SettingsWidget(QWidget):
         bot_layout.addWidget(self._bot_log)
 
         bot_log_ctrl = QHBoxLayout()
-        self._bot_clear_btn = QPushButton("Clear log")
-        self._bot_autoscroll_cb = QCheckBox("Auto-scroll")
+        self._bot_clear_btn = QPushButton(_("Clear log"))
+        self._bot_autoscroll_cb = QCheckBox(_("Auto-scroll"))
         self._bot_autoscroll_cb.setChecked(True)
         bot_log_ctrl.addWidget(self._bot_clear_btn)
         bot_log_ctrl.addWidget(self._bot_autoscroll_cb)
@@ -194,65 +175,6 @@ class SettingsWidget(QWidget):
         self._bot_clear_btn.clicked.connect(self._bot_log.clear)
 
         layout.addWidget(bot_box)
-
-        # ── Web UI Server ────────────────────────────────────────────── #
-        webui_box = QGroupBox("Web UI Server")
-        webui_layout = QVBoxLayout(webui_box)
-        webui_layout.setSpacing(8)
-
-        webui_status_row = QHBoxLayout()
-        webui_status_row.addWidget(QLabel("Status:"))
-        self._webui_status_lbl = QLabel("○ Stopped")
-        self._webui_status_lbl.setStyleSheet("font-weight: bold; color: #888;")
-        webui_status_row.addWidget(self._webui_status_lbl)
-        webui_status_row.addStretch()
-        webui_layout.addLayout(webui_status_row)
-
-        webui_url_row = QHBoxLayout()
-        webui_url_row.addWidget(QLabel("URL:"))
-        self._webui_url_lbl = QLabel("")
-        self._webui_url_lbl.setStyleSheet("color: #89b4fa;")
-        webui_url_row.addWidget(self._webui_url_lbl)
-        self._webui_copy_btn = QPushButton("Copy")
-        self._webui_copy_btn.setFixedWidth(54)
-        self._webui_copy_btn.setEnabled(False)
-        webui_url_row.addWidget(self._webui_copy_btn)
-        webui_url_row.addStretch()
-        webui_layout.addLayout(webui_url_row)
-
-        webui_btn_row = QHBoxLayout()
-        self._webui_start_btn = QPushButton("▶  Start server")
-        self._webui_stop_btn  = QPushButton("■  Stop server")
-        self._webui_stop_btn.setEnabled(False)
-        webui_btn_row.addWidget(self._webui_start_btn)
-        webui_btn_row.addWidget(self._webui_stop_btn)
-        webui_btn_row.addStretch()
-        webui_layout.addLayout(webui_btn_row)
-
-        self._webui_log = QPlainTextEdit()
-        self._webui_log.setReadOnly(True)
-        self._webui_log.setMaximumBlockCount(_MAX_LOG_LINES)
-        self._webui_log.setMaximumHeight(160)
-        self._webui_log.setStyleSheet(
-            "background: #0d0d1a; color: #cccccc; font-family: monospace; font-size: 11px;"
-        )
-        webui_layout.addWidget(self._webui_log)
-
-        webui_log_ctrl = QHBoxLayout()
-        self._webui_clear_btn = QPushButton("Clear log")
-        self._webui_autoscroll_cb = QCheckBox("Auto-scroll")
-        self._webui_autoscroll_cb.setChecked(True)
-        webui_log_ctrl.addWidget(self._webui_clear_btn)
-        webui_log_ctrl.addWidget(self._webui_autoscroll_cb)
-        webui_log_ctrl.addStretch()
-        webui_layout.addLayout(webui_log_ctrl)
-
-        self._webui_start_btn.clicked.connect(self._on_webui_start)
-        self._webui_stop_btn.clicked.connect(self._on_webui_stop)
-        self._webui_clear_btn.clicked.connect(self._webui_log.clear)
-        self._webui_copy_btn.clicked.connect(self._on_webui_copy_url)
-
-        layout.addWidget(webui_box)
         layout.addStretch()
 
         scroll.setWidget(inner)
@@ -323,17 +245,17 @@ class SettingsWidget(QWidget):
 
     def _on_bot_state_changed(self, state: QProcess.ProcessState):
         if state == QProcess.ProcessState.NotRunning:
-            self._bot_status_lbl.setText("○ Stopped")
+            self._bot_status_lbl.setText(_("○ Stopped"))
             self._bot_status_lbl.setStyleSheet("font-weight: bold; color: #888;")
             self._bot_start_btn.setEnabled(True)
             self._bot_stop_btn.setEnabled(False)
         elif state == QProcess.ProcessState.Starting:
-            self._bot_status_lbl.setText("⏳ Starting…")
+            self._bot_status_lbl.setText(_("⏳ Starting…"))
             self._bot_status_lbl.setStyleSheet("font-weight: bold; color: #d4af37;")
             self._bot_start_btn.setEnabled(False)
             self._bot_stop_btn.setEnabled(False)
         elif state == QProcess.ProcessState.Running:
-            self._bot_status_lbl.setText("● Running")
+            self._bot_status_lbl.setText(_("● Running"))
             self._bot_status_lbl.setStyleSheet("font-weight: bold; color: #7ec8a0;")
             self._bot_start_btn.setEnabled(False)
             self._bot_stop_btn.setEnabled(True)
@@ -345,113 +267,11 @@ class SettingsWidget(QWidget):
             self._append_log(f"[bot] Exited with code {exit_code}.")
 
     def bot_stop_for_close(self) -> bool:
-        """Called by MainWindow.closeEvent. Returns True if any service was running."""
-        stopped_any = False
+        """Called by MainWindow.closeEvent. Returns True if the bot was running."""
         if self._bot_process and self._bot_process.state() != QProcess.ProcessState.NotRunning:
             self._bot_process.terminate()
-            stopped_any = True
-        if self._webui_process and self._webui_process.state() != QProcess.ProcessState.NotRunning:
-            self._webui_process.terminate()
-            stopped_any = True
-        return stopped_any
-
-    # ------------------------------------------------------------------ #
-    # Web UI server process control                                         #
-    # ------------------------------------------------------------------ #
-
-    def _on_webui_start(self):
-        if self._webui_process and self._webui_process.state() != QProcess.ProcessState.NotRunning:
-            return
-
-        python, args, cwd = _webui_launch()
-
-        self._webui_process = QProcess(self)
-        self._webui_process.setProgram(python)
-        self._webui_process.setArguments(args)
-        self._webui_process.setWorkingDirectory(cwd)
-
-        env = QProcessEnvironment.systemEnvironment()
-        port_field = self._env_fields.get("app.ui_port")
-        host_field = self._env_fields.get("app.ui_host")
-        if port_field and port_field.text().strip():
-            env.insert("UI_PORT", port_field.text().strip())
-        if host_field and host_field.text().strip():
-            env.insert("UI_HOST", host_field.text().strip())
-        self._webui_process.setProcessEnvironment(env)
-
-        self._webui_process.readyReadStandardOutput.connect(self._on_webui_stdout)
-        self._webui_process.readyReadStandardError.connect(self._on_webui_stderr)
-        self._webui_process.stateChanged.connect(self._on_webui_state_changed)
-        self._webui_process.finished.connect(self._on_webui_finished)
-
-        self._webui_process.start()
-
-    def _on_webui_stop(self):
-        if self._webui_process is None:
-            return
-        state = self._webui_process.state()
-        if state == QProcess.ProcessState.Running:
-            self._webui_process.terminate()
-        elif state == QProcess.ProcessState.Starting:
-            self._webui_process.kill()
-
-    def _on_webui_stdout(self):
-        if self._webui_process is None:
-            return
-        raw = bytes(self._webui_process.readAllStandardOutput()).decode("utf-8", errors="replace")
-        self._append_webui_log(raw.rstrip())
-
-    def _on_webui_stderr(self):
-        if self._webui_process is None:
-            return
-        raw = bytes(self._webui_process.readAllStandardError()).decode("utf-8", errors="replace")
-        self._append_webui_log(raw.rstrip(), error=True)
-
-    def _append_webui_log(self, text: str, error: bool = False):
-        if not text:
-            return
-        for line in text.splitlines():
-            self._webui_log.appendPlainText(f"[err] {line}" if error else line)
-        if self._webui_autoscroll_cb.isChecked():
-            self._webui_log.verticalScrollBar().setValue(
-                self._webui_log.verticalScrollBar().maximum()
-            )
-
-    def _on_webui_state_changed(self, state: QProcess.ProcessState):
-        port_field = self._env_fields.get("app.ui_port") if hasattr(self, "_env_fields") else None
-        port = (port_field.text().strip() if port_field else "") or str(_DEFAULT_UI_PORT)
-
-        if state == QProcess.ProcessState.NotRunning:
-            self._webui_status_lbl.setText("○ Stopped")
-            self._webui_status_lbl.setStyleSheet("font-weight: bold; color: #888;")
-            self._webui_start_btn.setEnabled(True)
-            self._webui_stop_btn.setEnabled(False)
-            self._webui_url_lbl.setText("")
-            self._webui_copy_btn.setEnabled(False)
-        elif state == QProcess.ProcessState.Starting:
-            self._webui_status_lbl.setText("⏳ Starting…")
-            self._webui_status_lbl.setStyleSheet("font-weight: bold; color: #d4af37;")
-            self._webui_start_btn.setEnabled(False)
-            self._webui_stop_btn.setEnabled(False)
-        elif state == QProcess.ProcessState.Running:
-            self._webui_status_lbl.setText("● Running")
-            self._webui_status_lbl.setStyleSheet("font-weight: bold; color: #7ec8a0;")
-            self._webui_start_btn.setEnabled(False)
-            self._webui_stop_btn.setEnabled(True)
-            self._webui_url_lbl.setText(f"http://localhost:{port}")
-            self._webui_copy_btn.setEnabled(True)
-
-    def _on_webui_finished(self, exit_code: int, exit_status: QProcess.ExitStatus):
-        if exit_status == QProcess.ExitStatus.CrashExit:
-            self._append_webui_log("[webui] Process crashed.")
-        else:
-            self._append_webui_log(f"[webui] Exited with code {exit_code}.")
-
-    def _on_webui_copy_url(self):
-        from PyQt6.QtWidgets import QApplication
-        url = self._webui_url_lbl.text()
-        if url:
-            QApplication.clipboard().setText(url)
+            return True
+        return False
 
     def _build_maintenance_tab(self) -> QWidget:
         outer = QWidget()
@@ -778,6 +598,29 @@ class SettingsWidget(QWidget):
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(16)
 
+        # ── Language picker ───────────────────────────────────────────────
+        lang_box = QGroupBox(_("Language"))
+        lang_form = QFormLayout(lang_box)
+        lang_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        self._lang_combo = QComboBox()
+        current_lang = _i18n_get_lang()
+        for code, display in _i18n_available():
+            self._lang_combo.addItem(display, code)
+            if code == current_lang:
+                self._lang_combo.setCurrentIndex(self._lang_combo.count() - 1)
+        self._lang_status = QLabel("")
+        self._lang_status.setStyleSheet("color: #888; font-size: 11px;")
+        lang_row = QHBoxLayout()
+        lang_row.addWidget(self._lang_combo)
+        lang_save_btn = QPushButton("Save")
+        lang_save_btn.setFixedWidth(60)
+        lang_save_btn.clicked.connect(self._on_save_language)
+        lang_row.addWidget(lang_save_btn)
+        lang_row.addWidget(self._lang_status)
+        lang_row.addStretch()
+        lang_form.addRow(_("App language"), lang_row)
+        layout.addWidget(lang_box)
+
         self._env_fields: dict[str, QLineEdit] = {}
 
         current = self._read_config_values()
@@ -854,6 +697,19 @@ class SettingsWidget(QWidget):
             for k, v in section.items():
                 flat[f"{section_key}.{k}"] = str(v) if v is not None else ""
         return flat
+
+    def _on_save_language(self):
+        import core.config as _cfg
+        code = self._lang_combo.currentData()
+        config = _cfg.load()
+        config.setdefault("app", {})["language"] = code
+        try:
+            _cfg.save(config)
+            self._lang_status.setText(_("Restart required to apply language change."))
+            self._lang_status.setStyleSheet("color: #d4af37; font-size: 11px;")
+        except Exception as exc:
+            self._lang_status.setText(f"Error: {exc}")
+            self._lang_status.setStyleSheet("color: #e94560; font-size: 11px;")
 
     def _on_save_config(self):
         import core.config as _cfg

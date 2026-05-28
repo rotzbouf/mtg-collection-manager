@@ -7,7 +7,7 @@ from typing import Optional
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton,
-    QTableWidget, QTableWidgetItem,
+    QComboBox, QTableWidget, QTableWidgetItem,
     QHeaderView, QSplitter, QProgressBar,
     QAbstractItemView,
 )
@@ -15,6 +15,7 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor, QFont
 from qasync import asyncSlot
 
+from core.i18n import _
 from desktop.utils import format_price, display_name, RARITY_COLORS
 
 
@@ -44,17 +45,34 @@ class _SortableItem(QTableWidgetItem):
         return super().__lt__(other)
 
 
-def _num_item(value, decimals: int = 2) -> _SortableItem:
+def _num_item(value, decimals: int = 2, approx: int = 0) -> _SortableItem:
     """Right-aligned numeric table item that sorts by real value."""
     if value is None:
         item = _SortableItem("—")
         item.setData(Qt.ItemDataRole.UserRole, -1.0)
     else:
-        text = str(int(value)) if decimals == 0 else f"€{value:.{decimals}f}"
+        if decimals == 0:
+            text = str(int(value))
+        else:
+            prefix = "~" if approx else ""
+            text = f"{prefix}€{value:.{decimals}f}"
         item = _SortableItem(text)
         item.setData(Qt.ItemDataRole.UserRole, float(value))
     item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
     return item
+
+
+# Maps combo label → frozenset of Scryfall set_type values (None = catch-all "Other")
+_TYPE_FILTER_OPTIONS: list[tuple[str, object]] = [
+    (_("All types"),  "all"),
+    (_("Standard"),   frozenset({"expansion", "core"})),
+    (_("Masters"),    frozenset({"masters"})),
+    (_("Commander"),  frozenset({"commander"})),
+    (_("Other"),      "other"),   # everything not in the above named sets
+]
+_NAMED_TYPES: frozenset[str] = frozenset(
+    t for _, v in _TYPE_FILTER_OPTIONS if isinstance(v, frozenset) for t in v
+)
 
 
 # ── Main widget ───────────────────────────────────────────────────────────────
@@ -66,6 +84,7 @@ class SetCompletionWidget(QWidget):
         super().__init__(parent)
         self._db_ready = False
         self._sets: list[dict] = []
+        self._set_type_map: dict[str, str] = {}   # set_code → set_type from Scryfall
         self._current_cards: list[dict] = []
         self._current_set_code: str = ""
         self._build_ui()
@@ -95,23 +114,28 @@ class SetCompletionWidget(QWidget):
         left_lay.setContentsMargins(0, 0, 4, 0)
         left_lay.setSpacing(4)
 
-        # Toolbar
+        # Toolbar — type combo + text filter + refresh
         tb = QHBoxLayout()
+        self._type_combo = QComboBox()
+        for label, _ in _TYPE_FILTER_OPTIONS:
+            self._type_combo.addItem(label)
+        self._type_combo.currentIndexChanged.connect(self._apply_filter)
+        tb.addWidget(self._type_combo)
         self._filter_edit = QLineEdit()
-        self._filter_edit.setPlaceholderText("Filter sets…")
+        self._filter_edit.setPlaceholderText(_("Filter sets…"))
         self._filter_edit.setClearButtonEnabled(True)
         self._filter_edit.textChanged.connect(self._apply_filter)
         tb.addWidget(self._filter_edit)
         refresh_btn = QPushButton("↺")
         refresh_btn.setFixedWidth(28)
-        refresh_btn.setToolTip("Reload sets")
+        refresh_btn.setToolTip(_("Reload sets"))
         refresh_btn.clicked.connect(self._load_sets)
         tb.addWidget(refresh_btn)
         left_lay.addLayout(tb)
 
         self._set_table = QTableWidget(0, 5)
         self._set_table.setHorizontalHeaderLabels(
-            ["Code", "Set name", "Copies", "Distinct", "Value €"]
+            [_("Code"), _("Set name"), _("Copies"), _("Distinct"), _("Value €")]
         )
         hh = self._set_table.horizontalHeader()
         hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
@@ -144,7 +168,7 @@ class SetCompletionWidget(QWidget):
         right_lay.setSpacing(6)
 
         # Set header
-        self._set_name_lbl = QLabel("Select a set")
+        self._set_name_lbl = QLabel(_("Select a set"))
         f = QFont()
         f.setPointSize(13)
         f.setBold(True)
@@ -182,7 +206,7 @@ class SetCompletionWidget(QWidget):
         # Card table
         self._card_table = QTableWidget(0, 7)
         self._card_table.setHorizontalHeaderLabels(
-            ["#", "Card name", "Rarity", "Lang", "Cond", "Foil", "Price €"]
+            [_("#"), _("Card name"), _("Rarity"), _("Copies"), _("Foil"), _("Price €"), _("Containers")]
         )
         ch = self._card_table.horizontalHeader()
         ch.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
@@ -191,13 +215,13 @@ class SetCompletionWidget(QWidget):
         ch.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
         ch.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
         ch.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
-        ch.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)
+        ch.setSectionResizeMode(6, QHeaderView.ResizeMode.Interactive)
         self._card_table.setColumnWidth(0, 42)
         self._card_table.setColumnWidth(2, 72)
-        self._card_table.setColumnWidth(3, 38)
-        self._card_table.setColumnWidth(4, 40)
-        self._card_table.setColumnWidth(5, 32)
-        self._card_table.setColumnWidth(6, 72)
+        self._card_table.setColumnWidth(3, 50)
+        self._card_table.setColumnWidth(4, 38)
+        self._card_table.setColumnWidth(5, 72)
+        self._card_table.setColumnWidth(6, 180)
         self._card_table.setAlternatingRowColors(True)
         self._card_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._card_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -215,16 +239,27 @@ class SetCompletionWidget(QWidget):
 
     @asyncSlot()
     async def _load_sets(self):
-        from desktop.db import db
+        from desktop.db import db, scryfall
 
-        self._sets_status.setText("Loading…")
+        self._sets_status.setText(_("Loading…"))
         try:
             self._sets = await db.get_sets_summary()
         except Exception as exc:
             self._sets_status.setText(f"Error: {exc}")
             return
 
-        self._render_set_table(self._sets)
+        # Fetch set types from Scryfall (cached 24 h) and merge into set dicts
+        try:
+            all_sets = await scryfall.fetch_all_sets()
+            self._set_type_map = {s["code"].lower(): s.get("set_type", "") for s in all_sets}
+        except Exception:
+            pass  # type filter degrades gracefully if offline
+
+        for s in self._sets:
+            code = (s.get("set_code") or "").lower()
+            s["set_type"] = self._set_type_map.get(code, "")
+
+        self._apply_filter()
         total_sets = len(self._sets)
         total_copies = sum(s.get("card_count", 0) for s in self._sets)
         self._sets_status.setText(
@@ -254,14 +289,27 @@ class SetCompletionWidget(QWidget):
         self._set_table.setSortingEnabled(True)
         self._set_table.blockSignals(False)
 
-    def _apply_filter(self, text: str):
-        needle = text.lower().strip()
-        filtered = [
-            s for s in self._sets
-            if (not needle)
-            or needle in (s.get("set_code") or "").lower()
-            or needle in (s.get("set_name") or "").lower()
-        ]
+    def _apply_filter(self, *_):
+        needle = self._filter_edit.text().lower().strip()
+        _, type_val = _TYPE_FILTER_OPTIONS[self._type_combo.currentIndex()]
+
+        filtered = []
+        for s in self._sets:
+            # Text filter
+            if needle and needle not in (s.get("set_code") or "").lower() \
+                    and needle not in (s.get("set_name") or "").lower():
+                continue
+            # Type filter
+            if type_val != "all":
+                st = s.get("set_type") or ""
+                if isinstance(type_val, frozenset):
+                    if st not in type_val:
+                        continue
+                else:  # "other"
+                    if st in _NAMED_TYPES:
+                        continue
+            filtered.append(s)
+
         self._render_set_table(filtered)
 
     # ── Set selection ─────────────────────────────────────────────────────────
@@ -339,7 +387,7 @@ class SetCompletionWidget(QWidget):
             if total_in_set and total_in_set > 0:
                 pct = round(distinct / total_in_set * 100, 1)
                 self._owned_lbl.setText(
-                    f"{distinct} / {total_in_set} distinct cards owned"
+                    _("{distinct} / {total} distinct cards owned").format(distinct=distinct, total=total_in_set)
                 )
                 self._pct_lbl.setText(f"{pct}%")
                 self._progress.setValue(int(pct))
@@ -347,20 +395,34 @@ class SetCompletionWidget(QWidget):
             else:
                 self._owned_lbl.setText(f"{distinct} distinct cards owned")
         else:
-            self._owned_lbl.setText(f"{distinct} distinct cards owned")
+            self._owned_lbl.setText(_("{distinct} distinct cards owned").format(distinct=distinct))
 
     def _render_card_table(self, cards: list[dict]):
-        """Populate the card table, sorted by collector number."""
+        """Populate card table deduplicated by scryfall_id, sorted by collector number."""
+        from collections import defaultdict
+
+        # Group copies of the same card variant together
+        groups: dict[str, list[dict]] = defaultdict(list)
+        for c in cards:
+            key = c.get("scryfall_id") or c.get("name_en") or c.get("printed_name") or str(id(c))
+            groups[key].append(c)
+
+        deduped = []
+        for copies in groups.values():
+            first = copies[0]
+            foil_count = sum(1 for c in copies if c.get("foil"))
+            containers = sorted({c.get("container_name") for c in copies if c.get("container_name")})
+            deduped.append({**first, "_copy_count": len(copies), "_foil_count": foil_count, "_containers": containers})
+
         self._card_table.blockSignals(True)
         self._card_table.setSortingEnabled(False)
         self._card_table.setRowCount(0)
-        self._card_table.setRowCount(len(cards))
+        self._card_table.setRowCount(len(deduped))
 
-        for row_idx, c in enumerate(cards):
+        for row_idx, c in enumerate(deduped):
             rarity = (c.get("rarity") or "common").lower()
             color = QColor(RARITY_COLORS.get(rarity, "#aaaaaa"))
 
-            # Collector number — numeric sort key stored in UserRole
             cn_raw = c.get("collector_number") or ""
             try:
                 cn_num = int(cn_raw)
@@ -377,19 +439,24 @@ class SetCompletionWidget(QWidget):
             rarity_item.setForeground(color)
             rarity_item.setData(Qt.ItemDataRole.UserRole, _rarity_order(rarity))
 
-            lang_item = QTableWidgetItem(c.get("language") or "en")
-            cond_item = QTableWidgetItem(c.get("condition") or "—")
-            foil_item = QTableWidgetItem("✨" if c.get("foil") else "")
+            copies_item = _num_item(c["_copy_count"], decimals=0)
+
+            foil_count = c["_foil_count"]
+            foil_item = QTableWidgetItem(f"✨ {foil_count}" if foil_count else "")
             foil_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            price_item = _num_item(c.get("price_eur"))
+
+            price_item = _num_item(c.get("price_eur"), approx=c.get("price_approx", 0))
+
+            containers_str = ", ".join(c["_containers"]) if c["_containers"] else "—"
+            containers_item = QTableWidgetItem(containers_str)
+            containers_item.setToolTip(containers_str)
 
             for col, item in enumerate((
-                cn_item, name_item, rarity_item, lang_item,
-                cond_item, foil_item, price_item,
+                cn_item, name_item, rarity_item, copies_item,
+                foil_item, price_item, containers_item,
             )):
                 self._card_table.setItem(row_idx, col, item)
 
         self._card_table.setSortingEnabled(True)
-        # Default sort: collector number ascending
         self._card_table.sortItems(0, Qt.SortOrder.AscendingOrder)
         self._card_table.blockSignals(False)

@@ -68,6 +68,7 @@ _DEFAULTS: dict = {
         "ui_port":            8080,
         "ui_host":            "127.0.0.1",
         "debug_scan_preview": False,
+        "language":           "en",
     },
     "container_types":          list(BUILTIN_TYPES),
     "overcount_excluded_types": [],

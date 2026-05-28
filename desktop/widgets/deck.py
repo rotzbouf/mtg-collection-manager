@@ -15,6 +15,7 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QGuiApplication
 from desktop.utils import color_identity_icon
 from qasync import asyncSlot
+from core.i18n import _
 
 
 # ── Language code → display name ─────────────────────────────────────────────
@@ -188,12 +189,12 @@ def _decklist_html(result: dict, fmt: str) -> str:
 
 
 FORMATS = [
-    ("commander", "Commander (100-card EDH)"),
-    ("standard",  "60-card — Standard"),
-    ("modern",    "60-card — Modern"),
-    ("legacy",    "60-card — Legacy"),
-    ("vintage",   "60-card — Vintage"),
-    ("pauper",    "60-card — Pauper"),
+    ("commander", _("Commander (100-card EDH)")),
+    ("standard",  _("60-card — Standard")),
+    ("modern",    _("60-card — Modern")),
+    ("legacy",    _("60-card — Legacy")),
+    ("vintage",   _("60-card — Vintage")),
+    ("pauper",    _("60-card — Pauper")),
 ]
 
 # Internal format name → mtgtop8 format code (for meta score lookup)
@@ -231,11 +232,11 @@ class DeckWidget(QWidget):
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(10)
 
-        root.addWidget(QLabel("<h2>Deck Builder</h2>"))
+        root.addWidget(QLabel("<h2>" + _("Deck Builder") + "</h2>"))
 
         # Format selector
         fmt_row = QHBoxLayout()
-        fmt_row.addWidget(QLabel("Format:"))
+        fmt_row.addWidget(QLabel(_("Format:")))
         self._fmt_cb = QComboBox()
         for val, label in FORMATS:
             self._fmt_cb.addItem(label, val)
@@ -250,15 +251,15 @@ class DeckWidget(QWidget):
         cmd_layout.setSpacing(4)
 
         cmd_filter_row = QHBoxLayout()
-        cmd_filter_row.addWidget(QLabel("Commander:"))
+        cmd_filter_row.addWidget(QLabel(_("Commander:")))
         self._cmd_edit = QLineEdit()
-        self._cmd_edit.setPlaceholderText("Filter commanders…")
+        self._cmd_edit.setPlaceholderText(_("Filter commanders…"))
         self._cmd_edit.setClearButtonEnabled(True)
         cmd_filter_row.addWidget(self._cmd_edit)
         cmd_layout.addLayout(cmd_filter_row)
 
         self._cmd_combo = QComboBox()
-        self._cmd_combo.addItem("— Auto-pick best commander —", None)
+        self._cmd_combo.addItem(_("— Auto-pick best commander —"), None)
         self._cmd_combo.setMinimumWidth(400)
         cmd_layout.addWidget(self._cmd_combo)
 
@@ -273,9 +274,9 @@ class DeckWidget(QWidget):
         self._strategy_section = QWidget()
         strat_layout = QHBoxLayout(self._strategy_section)
         strat_layout.setContentsMargins(0, 0, 0, 0)
-        strat_layout.addWidget(QLabel("Strategy:"))
+        strat_layout.addWidget(QLabel(_("Strategy:")))
         self._strategy_cb = QComboBox()
-        self._strategy_cb.addItem("— Auto-detect —", None)
+        self._strategy_cb.addItem(_("— Auto-detect —"), None)
         self._strategy_cb.setMinimumWidth(200)
         strat_layout.addWidget(self._strategy_cb)
         strat_layout.addStretch()
@@ -283,40 +284,40 @@ class DeckWidget(QWidget):
 
         # ── Build options ─────────────────────────────────────────────────
         opts_row = QHBoxLayout()
-        opts_row.addWidget(QLabel("Power level:"))
+        opts_row.addWidget(QLabel(_("Power level:")))
         self._power_level_cb = QComboBox()
-        self._power_level_cb.addItem("Casual",    "casual")
-        self._power_level_cb.addItem("Focused",   "focused")
-        self._power_level_cb.addItem("Optimized", "optimized")
+        self._power_level_cb.addItem(_("Casual"),    "casual")
+        self._power_level_cb.addItem(_("Focused"),   "focused")
+        self._power_level_cb.addItem(_("Optimized"), "optimized")
         self._power_level_cb.setCurrentIndex(1)
         opts_row.addWidget(self._power_level_cb)
         opts_row.addSpacing(16)
-        opts_row.addWidget(QLabel("Max card price (€):"))
+        opts_row.addWidget(QLabel(_("Max card price (€):")))
         self._max_price_sb = QDoubleSpinBox()
         self._max_price_sb.setRange(0.0, 9999.0)
         self._max_price_sb.setSingleStep(0.5)
         self._max_price_sb.setDecimals(2)
-        self._max_price_sb.setSpecialValueText("No limit")
+        self._max_price_sb.setSpecialValueText(_("No limit"))
         self._max_price_sb.setFixedWidth(90)
         opts_row.addWidget(self._max_price_sb)
         opts_row.addSpacing(16)
-        opts_row.addWidget(QLabel("Preferred language:"))
+        opts_row.addWidget(QLabel(_("Preferred language:")))
         self._lang_cb = QComboBox()
         self._lang_cb.setToolTip(
-            "When a card is available in this language, that copy is used.\n"
-            "If a card only exists in another language, it is still included."
+            _("When a card is available in this language, that copy is used.\n"
+              "If a card only exists in another language, it is still included.")
         )
-        self._lang_cb.addItem("Any", None)
+        self._lang_cb.addItem(_("Any"), None)
         self._lang_cb.setMinimumWidth(140)
         opts_row.addWidget(self._lang_cb)
         opts_row.addSpacing(16)
-        self._refine_cb = QCheckBox("Iterative Refinement")
+        self._refine_cb = QCheckBox(_("Iterative Refinement"))
         self._refine_cb.setToolTip(
-            "After building, repeatedly swap low-fit cards for better ones until stable"
+            _("After building, repeatedly swap low-fit cards for better ones until stable")
         )
         opts_row.addWidget(self._refine_cb)
         opts_row.addSpacing(8)
-        opts_row.addWidget(QLabel("Max iterations:"))
+        opts_row.addWidget(QLabel(_("Max iterations:")))
         self._refine_iter_sb = QSpinBox()
         self._refine_iter_sb.setRange(1, 10)
         self._refine_iter_sb.setValue(5)
@@ -327,7 +328,7 @@ class DeckWidget(QWidget):
 
         # ── Build button ──────────────────────────────────────────────────
         build_row = QHBoxLayout()
-        self._build_btn = QPushButton("Build deck")
+        self._build_btn = QPushButton(_("Build deck"))
         self._build_btn.setFixedWidth(160)
         build_row.addWidget(self._build_btn)
         build_row.addStretch()
@@ -343,7 +344,7 @@ class DeckWidget(QWidget):
         variant_layout = QHBoxLayout(self._variant_widget)
         variant_layout.setContentsMargins(0, 0, 0, 0)
         variant_layout.setSpacing(6)
-        variant_layout.addWidget(QLabel("Variant:"))
+        variant_layout.addWidget(QLabel(_("Variant:")))
         self._variant_btns: list[QPushButton] = []
         for i in range(3):
             btn = QPushButton("")
@@ -363,7 +364,7 @@ class DeckWidget(QWidget):
         root.addWidget(self._curve_label)
 
         # Output — fancy HTML display
-        root.addWidget(QLabel("<b>Decklist:</b>"))
+        root.addWidget(QLabel("<b>" + _("Decklist:") + "</b>"))
         self._output = QTextEdit()
         self._output.setReadOnly(True)
         self._output.setFont(_monofont())
@@ -371,28 +372,28 @@ class DeckWidget(QWidget):
 
         # ── Action buttons ────────────────────────────────────────────────
         action_row = QHBoxLayout()
-        self._copy_btn = QPushButton("Copy to clipboard")
-        self._copy_btn.setToolTip("Copy plain-text decklist to clipboard")
+        self._copy_btn = QPushButton(_("Copy to clipboard"))
+        self._copy_btn.setToolTip(_("Copy plain-text decklist to clipboard"))
         self._copy_btn.setEnabled(False)
         action_row.addWidget(self._copy_btn)
 
-        self._export_full_btn = QPushButton("Export .txt")
-        self._export_full_btn.setToolTip("Save plain-text decklist (with container info)")
+        self._export_full_btn = QPushButton(_("Export .txt"))
+        self._export_full_btn.setToolTip(_("Save plain-text decklist (with container info)"))
         self._export_full_btn.setEnabled(False)
         action_row.addWidget(self._export_full_btn)
 
-        self._export_mtga_btn = QPushButton("Export MTGA/Moxfield")
-        self._export_mtga_btn.setToolTip("Save clean format importable into MTGA, Moxfield, etc.")
+        self._export_mtga_btn = QPushButton(_("Export MTGA/Moxfield"))
+        self._export_mtga_btn.setToolTip(_("Save clean format importable into MTGA, Moxfield, etc."))
         self._export_mtga_btn.setEnabled(False)
         action_row.addWidget(self._export_mtga_btn)
 
-        self._manifest_btn = QPushButton("📋 Location Manifest…")
-        self._manifest_btn.setToolTip("View, print, or export the card picking manifest sorted by container")
+        self._manifest_btn = QPushButton("📋 " + _("Location Manifest…"))
+        self._manifest_btn.setToolTip(_("View, print, or export the card picking manifest sorted by container"))
         self._manifest_btn.setEnabled(False)
         action_row.addWidget(self._manifest_btn)
 
-        self._save_btn = QPushButton("📦 Move to deck container…")
-        self._save_btn.setToolTip("Move all deck cards from their current containers into a new dedicated container")
+        self._save_btn = QPushButton("📦 " + _("Move to deck container…"))
+        self._save_btn.setToolTip(_("Move all deck cards from their current containers into a new dedicated container"))
         self._save_btn.setEnabled(False)
         action_row.addWidget(self._save_btn)
 
@@ -443,7 +444,7 @@ class DeckWidget(QWidget):
         strategies = get_available_strategies(pool)
         self._strategy_cb.blockSignals(True)
         self._strategy_cb.clear()
-        self._strategy_cb.addItem("— Auto-detect —", None)
+        self._strategy_cb.addItem(_("— Auto-detect —"), None)
         for key, display, count in strategies:
             self._strategy_cb.addItem(f"{display}  ({count} cards)", key)
         self._strategy_cb.blockSignals(False)
@@ -456,7 +457,7 @@ class DeckWidget(QWidget):
         prev_lang = self._lang_cb.currentData()
         self._lang_cb.blockSignals(True)
         self._lang_cb.clear()
-        self._lang_cb.addItem("Any", None)
+        self._lang_cb.addItem(_("Any"), None)
         for code, cnt in langs:
             label = f"{_LANG_NAMES.get(code, code.upper())}  ({cnt})"
             self._lang_cb.addItem(label, code)
@@ -476,7 +477,7 @@ class DeckWidget(QWidget):
 
         self._cmd_combo.blockSignals(True)
         self._cmd_combo.clear()
-        self._cmd_combo.addItem("— Auto-pick best commander —", None)
+        self._cmd_combo.addItem(_("— Auto-pick best commander —"), None)
         restore_idx = 0
         for i, cmd in enumerate(self._commanders):
             name = cmd.get("name_en") or ""
@@ -536,7 +537,7 @@ class DeckWidget(QWidget):
         max_price = raw_price if raw_price > 0.0 else None
 
         self._build_btn.setEnabled(False)
-        self._stats_label.setText("Loading collection…")
+        self._stats_label.setText(_("Loading collection…"))
         self._output.clear()
         self._plain_text = ""
         self._copy_btn.setEnabled(False)
@@ -550,7 +551,7 @@ class DeckWidget(QWidget):
         try:
             pool = await db.get_all(exclude_container_types=["deck", "commander"])
         except Exception as exc:
-            QMessageBox.critical(self, "Error", f"Failed to load collection:\n{exc}")
+            QMessageBox.critical(self, _("Error"), _("Failed to load collection:\n{exc}").format(exc=exc))
             self._build_btn.setEnabled(True)
             self._stats_label.setText("")
             return
@@ -595,9 +596,10 @@ class DeckWidget(QWidget):
                     )
                 if commander is None:
                     QMessageBox.warning(
-                        self, "Not in collection",
-                        f"'{combo_card.get('name_en', '?')}' was not found in your collection.\n"
-                        "Only cards you own can be used in the deck."
+                        self, _("Not in collection"),
+                        _("'{name}' was not found in your collection.\n"
+                          "Only cards you own can be used in the deck.").format(
+                            name=combo_card.get('name_en', '?'))
                     )
                     self._build_btn.setEnabled(True)
                     self._stats_label.setText("")
@@ -606,8 +608,8 @@ class DeckWidget(QWidget):
                 ranked = rank_commanders(pool)
                 if not ranked:
                     QMessageBox.warning(
-                        self, "No commanders",
-                        "No commander-eligible legendary creatures found in the collection."
+                        self, _("No commanders"),
+                        _("No commander-eligible legendary creatures found in the collection.")
                     )
                     self._build_btn.setEnabled(True)
                     self._stats_label.setText("")
@@ -870,14 +872,14 @@ class DeckWidget(QWidget):
             text = format_60_decklist_mtga(result) if mtga else format_60_decklist(result)
 
         path, _ = QFileDialog.getSaveFileName(
-            self, "Export Decklist", default_name,
-            "Text files (*.txt);;All files (*)",
+            self, _("Export Decklist"), default_name,
+            _("Text files (*.txt);;All files (*)"),
         )
         if path:
             try:
                 Path(path).write_text(text, encoding="utf-8")
             except OSError as exc:
-                QMessageBox.warning(self, "Export failed", str(exc))
+                QMessageBox.warning(self, _("Export failed"), str(exc))
 
     def _on_manifest(self):
         from core.deckbuilder import format_location_manifest
@@ -887,7 +889,7 @@ class DeckWidget(QWidget):
             return
         manifest_text = format_location_manifest(result, fmt)
         if not manifest_text:
-            QMessageBox.information(self, "Manifest", "No collection cards with container data.")
+            QMessageBox.information(self, _("Manifest"), _("No collection cards with container data."))
             return
         dlg = _ManifestDialog(manifest_text, parent=self)
         dlg.exec()
@@ -912,7 +914,7 @@ class DeckWidget(QWidget):
         fresh_pool = await db.get_all(exclude_container_types=["deck", "commander"])
         card_ids = self._collect_card_ids(pool_override=fresh_pool)
         if not card_ids:
-            QMessageBox.warning(self, "No cards", "No collection cards to move.")
+            QMessageBox.warning(self, _("No cards"), _("No collection cards to move."))
             return
 
         try:
@@ -933,14 +935,15 @@ class DeckWidget(QWidget):
                     await db.set_container_color_identity(container_id, _json.dumps(ci))
 
             QMessageBox.information(
-                self, "Saved",
-                f"Moved {len(card_ids)} card(s) to container '{name}'.\n\n"
-                "Use 'Location Manifest…' to see where each card originally was."
+                self, _("Saved"),
+                _("Moved {n} card(s) to container '{name}'.\n\n"
+                  "Use 'Location Manifest…' to see where each card originally was.").format(
+                    n=len(card_ids), name=name)
             )
             # Refresh pool metadata so commanders / strategies are up to date
             await self._load_pool_metadata()
         except Exception as exc:
-            QMessageBox.critical(self, "Error", str(exc))
+            QMessageBox.critical(self, _("Error"), str(exc))
 
     def _collect_card_ids(self, pool_override: list[dict] | None = None) -> list[int]:
         result = self._result
@@ -984,7 +987,7 @@ class _ManifestDialog(QDialog):
 
     def __init__(self, text: str, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Location Manifest")
+        self.setWindowTitle(_("Location Manifest"))
         self.setMinimumSize(600, 500)
         self._text = text
 
@@ -999,21 +1002,21 @@ class _ManifestDialog(QDialog):
 
         btn_row = QHBoxLayout()
 
-        print_btn = QPushButton("🖨 Print…")
+        print_btn = QPushButton("🖨 " + _("Print…"))
         print_btn.clicked.connect(self._on_print)
         btn_row.addWidget(print_btn)
 
-        save_btn = QPushButton("💾 Save as .txt…")
+        save_btn = QPushButton("💾 " + _("Save as .txt…"))
         save_btn.clicked.connect(self._on_save)
         btn_row.addWidget(save_btn)
 
-        copy_btn = QPushButton("Copy")
+        copy_btn = QPushButton(_("Copy"))
         copy_btn.clicked.connect(self._on_copy)
         btn_row.addWidget(copy_btn)
 
         btn_row.addStretch()
 
-        close_btn = QPushButton("Close")
+        close_btn = QPushButton(_("Close"))
         close_btn.clicked.connect(self.accept)
         btn_row.addWidget(close_btn)
 
@@ -1023,7 +1026,7 @@ class _ManifestDialog(QDialog):
         try:
             from PyQt6.QtPrintSupport import QPrinter, QPrintDialog
         except ImportError:
-            QMessageBox.warning(self, "Unavailable", "Printing support is not installed.")
+            QMessageBox.warning(self, _("Unavailable"), _("Printing support is not installed."))
             return
         printer = QPrinter()
         # QPrintDialog must be parented to None to avoid QTableWidget item
@@ -1037,13 +1040,13 @@ class _ManifestDialog(QDialog):
         from datetime import date
         default_name = f"manifest_{date.today()}.txt"
         path, _ = QFileDialog.getSaveFileName(
-            self, "Save Manifest", default_name, "Text files (*.txt);;All files (*)"
+            self, _("Save Manifest"), default_name, _("Text files (*.txt);;All files (*)")
         )
         if path:
             try:
                 Path(path).write_text(self._text, encoding="utf-8")
             except OSError as exc:
-                QMessageBox.warning(self, "Save failed", str(exc))
+                QMessageBox.warning(self, _("Save failed"), str(exc))
 
     def _on_copy(self):
         QGuiApplication.clipboard().setText(self._text)
@@ -1054,7 +1057,7 @@ class _ManifestDialog(QDialog):
 class _NewDeckContainerDialog(QDialog):
     def __init__(self, deck_format: str, result: dict, card_count: int, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Move deck to container")
+        self.setWindowTitle(_("Move deck to container"))
         self.setMinimumWidth(420)
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
@@ -1072,8 +1075,8 @@ class _NewDeckContainerDialog(QDialog):
         layout.addWidget(lbl)
 
         info = QLabel(
-            "Cards are moved from their current containers into the new one.\n"
-            "Use 'Location Manifest…' before moving to record where each card originally was."
+            _("Cards are moved from their current containers into the new one.\n"
+              "Use 'Location Manifest…' before moving to record where each card originally was.")
         )
         info.setStyleSheet("color: #666; font-size: 10px;")
         info.setWordWrap(True)
@@ -1083,7 +1086,7 @@ class _NewDeckContainerDialog(QDialog):
         form.setSpacing(8)
 
         self._name_edit = QLineEdit()
-        self._name_edit.setPlaceholderText("e.g. Atraxa Commander Deck")
+        self._name_edit.setPlaceholderText(_("e.g. Atraxa Commander Deck"))
         # Auto-populate name
         if deck_format == "commander":
             cmd_name = (result.get("commander") or {}).get("name_en") or ""
@@ -1093,7 +1096,7 @@ class _NewDeckContainerDialog(QDialog):
             strategy = result.get("strategy", "")
             if strategy:
                 self._name_edit.setText(f"{strategy.replace('tribal_', '').title()} {deck_format.title()}")
-        form.addRow("Name:", self._name_edit)
+        form.addRow(_("Name:"), self._name_edit)
 
         import core.config as cfg
         types = cfg.load().get("container_types", ["binder", "deck", "box"])
@@ -1104,34 +1107,34 @@ class _NewDeckContainerDialog(QDialog):
             self._type_cb.setCurrentText(preferred)
         elif "deck" in types:
             self._type_cb.setCurrentText("deck")
-        form.addRow("Type:", self._type_cb)
+        form.addRow(_("Type:"), self._type_cb)
 
         self._format_cb = QComboBox()
-        self._format_cb.addItem("— no format —", None)
-        self._format_cb.addItem("⚔ Commander", "commander")
-        self._format_cb.addItem("60-card Standard", "standard")
-        self._format_cb.addItem("60-card Modern", "modern")
-        self._format_cb.addItem("60-card Legacy", "legacy")
-        self._format_cb.addItem("60-card Vintage", "vintage")
-        self._format_cb.addItem("60-card Pauper", "pauper")
+        self._format_cb.addItem(_("— no format —"), None)
+        self._format_cb.addItem("⚔ " + _("Commander"), "commander")
+        self._format_cb.addItem(_("60-card Standard"), "standard")
+        self._format_cb.addItem(_("60-card Modern"), "modern")
+        self._format_cb.addItem(_("60-card Legacy"), "legacy")
+        self._format_cb.addItem(_("60-card Vintage"), "vintage")
+        self._format_cb.addItem(_("60-card Pauper"), "pauper")
         idx = self._format_cb.findData(deck_format)
         if idx >= 0:
             self._format_cb.setCurrentIndex(idx)
-        form.addRow("Format:", self._format_cb)
+        form.addRow(_("Format:"), self._format_cb)
 
         layout.addLayout(form)
 
         btns = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
-        btns.button(QDialogButtonBox.StandardButton.Ok).setText("Move cards")
+        btns.button(QDialogButtonBox.StandardButton.Ok).setText(_("Move cards"))
         btns.accepted.connect(self._on_accept)
         btns.rejected.connect(self.reject)
         layout.addWidget(btns)
 
     def _on_accept(self):
         if not self._name_edit.text().strip():
-            QMessageBox.warning(self, "Name required", "Please enter a name for the container.")
+            QMessageBox.warning(self, _("Name required"), _("Please enter a name for the container."))
             return
         self.accept()
 

@@ -1,4 +1,4 @@
-"""MTG Collection Manager — Discord bot (thin loader)."""
+"""MTG Collection Manager — Discord bot (autoscan only)."""
 
 import sys
 from pathlib import Path
@@ -22,14 +22,12 @@ import logging
 import logging.handlers
 
 import discord
-from discord import app_commands
-from discord.ext import commands, tasks
+from discord.ext import commands
 
 import aiohttp
 import core.image_cache as image_cache
 import core.scanner as scanner
 from core.database import Database
-from core.scryfall import ScryfallClient
 
 logger = logging.getLogger(__name__)
 
@@ -65,35 +63,10 @@ def _configure_logging(debug: bool = False) -> None:
     root.addHandler(file_handler)
 
 
-TOKEN    = os.environ["DISCORD_TOKEN"]
-GUILD_ID = os.getenv("DISCORD_GUILD_ID")
+TOKEN              = os.environ["DISCORD_TOKEN"]
 DEBUG_SCAN_PREVIEW = os.getenv("DEBUG_SCAN_PREVIEW", "0") == "1"
 
-ALL_COGS = [
-    "cogs.admin",
-    "cogs.import_export",
-    "cogs.backup",
-    "cogs.scan",
-]
-
-_READ_ONLY_COMMANDS = {"export"}
-
-SCAN_CHANNEL_ID   = int(os.getenv("DISCORD_SCAN_CHANNEL_ID", 0)) or None
-
-
-class MTGCommandTree(app_commands.CommandTree):
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        cmd = interaction.command
-        if cmd is None:
-            return True
-        name = cmd.qualified_name
-        if name not in _READ_ONLY_COMMANDS:
-            if SCAN_CHANNEL_ID and interaction.channel_id != SCAN_CHANNEL_ID:
-                await interaction.response.send_message(
-                    f"This command only works in <#{SCAN_CHANNEL_ID}>.", ephemeral=True
-                )
-                return False
-        return True
+ALL_COGS = ["cogs.scan"]
 
 
 class MTGBot(commands.Bot):
@@ -101,35 +74,16 @@ class MTGBot(commands.Bot):
         intents = discord.Intents.default()
         intents.message_content = True
         intents.members = True
-        super().__init__(command_prefix="!", intents=intents, tree_cls=MTGCommandTree)
+        super().__init__(command_prefix="!", intents=intents)
         self.db = Database()
-        self.scryfall = ScryfallClient()
 
     async def setup_hook(self):
         await self.db.initialize()
 
-        # Load all cogs
         for ext in ALL_COGS:
             await self.load_extension(ext)
 
-        # Sync commands before anything slow (OCR model load can take minutes on first run)
-        if GUILD_ID:
-            guild = discord.Object(id=int(GUILD_ID))
-            self.tree.copy_global_to(guild=guild)
-            try:
-                await self.tree.sync(guild=guild)
-                logger.info("Slash commands synced to guild %s", GUILD_ID)
-            except Exception as e:
-                logger.warning("Guild sync failed (%s) — falling back to global sync", e)
-                await self.tree.sync()
-                logger.info("Slash commands synced globally (may take up to 1 hour to appear)")
-        else:
-            await self.tree.sync()
-            logger.info("Slash commands synced globally (may take up to 1 hour to appear)")
-
-        record_prices_task.start()
-        refresh_null_prices_task.start()
-        # Load OCR models in background — slow on first run, must not block the sync
+        # Load OCR models in background — slow on first run, must not block startup
         asyncio.create_task(self._init_ocr())
         asyncio.create_task(self._cache_images())
 
@@ -140,6 +94,7 @@ class MTGBot(commands.Bot):
             logger.error("OCR init failed: %s", e)
 
     async def _cache_images(self):
+        """Download any missing card images to the local cache in the background."""
         await self.wait_until_ready()
         try:
             refs = await self.db.get_all_image_refs()
@@ -151,14 +106,13 @@ class MTGBot(commands.Bot):
             async with aiohttp.ClientSession(headers={"Accept": "image/webp,image/*,*/*;q=0.8"}) as session:
                 for scryfall_id, image_url in missing:
                     await image_cache.ensure_cached(scryfall_id, image_url, session=session)
-                    await asyncio.sleep(0.5)  # 2 req/s — leave headroom for API calls sharing Scryfall's rate budget
+                    await asyncio.sleep(0.5)  # 2 req/s — leave headroom for Scryfall rate limit
             logger.info("Image cache: done")
         except Exception as exc:
             logger.error("Image cache task failed: %s", exc)
 
     async def close(self):
         await self.db.close()
-        await self.scryfall.close()
         await super().close()
 
     async def on_ready(self):
@@ -167,58 +121,6 @@ class MTGBot(commands.Bot):
 
 
 bot = MTGBot()
-
-
-@tasks.loop(hours=24)
-async def record_prices_task():
-    try:
-        n = await bot.db.record_prices()
-        logger.info("Price snapshot recorded for %d unique cards", n)
-    except Exception as e:
-        logger.error("Price recording failed: %s", e)
-
-
-@record_prices_task.before_loop
-async def _before_record_prices():
-    await bot.wait_until_ready()
-
-
-@tasks.loop(hours=24)
-async def refresh_null_prices_task():
-    """Re-fetch prices from Scryfall for collection entries that have no EUR price."""
-    try:
-        cards = await bot.db.get_null_price_cards()
-        if not cards:
-            logger.info("Null-price refresh: all cards have a price, nothing to do")
-            return
-        logger.info("Null-price refresh: %d card(s) missing EUR price", len(cards))
-        updated = 0
-        for entry in cards:
-            scryfall_id = entry["scryfall_id"]
-            card = await bot.scryfall.get_by_id(scryfall_id)
-            price_eur = card.get("price_eur") if card else None
-            price_usd = card.get("price_usd") if card else None
-
-            # Fallback: look up the EN oracle card by name
-            if not price_eur and entry.get("name_en"):
-                en_card = await bot.scryfall.get_by_name(entry["name_en"], fuzzy=False)
-                if en_card:
-                    price_eur = price_eur or en_card.get("price_eur")
-                    price_usd = price_usd or en_card.get("price_usd")
-
-            if price_eur or price_usd:
-                await bot.db.update_card_prices(scryfall_id, price_eur, price_usd)
-                updated += 1
-
-        logger.info("Null-price refresh: updated %d/%d card(s)", updated, len(cards))
-    except Exception as e:
-        logger.error("Null-price refresh failed: %s", e)
-
-
-@refresh_null_prices_task.before_loop
-async def _before_refresh_null_prices():
-    await bot.wait_until_ready()
-    await asyncio.sleep(60)  # stagger after record_prices_task
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

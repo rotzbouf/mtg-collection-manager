@@ -23,6 +23,7 @@ from PyQt6.QtGui import QColor, QFont, QPixmap
 from qasync import asyncSlot
 
 from desktop.utils import display_name, async_pixmap
+from core.i18n import _
 
 logger = logging.getLogger(__name__)
 
@@ -251,12 +252,12 @@ class _CompactCardPanel(QWidget):
     async def _load_image(self, card: dict):
         scryfall_id = card.get("scryfall_id")
         if not scryfall_id:
-            self._img_lbl.setText("No image")
+            self._img_lbl.setText(_("No image"))
             return
         try:
             pixmap = await async_pixmap(scryfall_id, card.get("image_url"))
         except Exception:
-            self._img_lbl.setText("No image")
+            self._img_lbl.setText(_("No image"))
             return
         if pixmap and not pixmap.isNull():
             scaled = pixmap.scaled(
@@ -267,7 +268,7 @@ class _CompactCardPanel(QWidget):
             self._img_lbl.setPixmap(scaled)
             self._img_lbl.setText("")
         else:
-            self._img_lbl.setText("No image")
+            self._img_lbl.setText(_("No image"))
 
 
 # ── Widget ─────────────────────────────────────────────────────────────────────
@@ -321,7 +322,7 @@ class DeckImproveWidget(QWidget):
         # ── Header bar ────────────────────────────────────────────────── #
         header = QHBoxLayout()
 
-        header.addWidget(QLabel("Deck:"))
+        header.addWidget(QLabel(_("Deck:")))
         self._deck_combo = QComboBox()
         self._deck_combo.setMinimumWidth(200)
         self._deck_combo.currentIndexChanged.connect(self._on_deck_changed)
@@ -333,22 +334,22 @@ class DeckImproveWidget(QWidget):
 
         header.addStretch()
 
-        self._filter_colors_chk = QCheckBox("Color identity filter")
+        self._filter_colors_chk = QCheckBox(_("Color identity filter"))
         self._filter_colors_chk.setChecked(True)
         self._filter_colors_chk.setToolTip(
-            "Only suggest cards whose color identity fits the deck"
+            _("Only suggest cards whose color identity fits the deck")
         )
         self._filter_colors_chk.stateChanged.connect(self._on_filter_changed)
         header.addWidget(self._filter_colors_chk)
 
-        self._refresh_btn = QPushButton("↻  Refresh")
+        self._refresh_btn = QPushButton("↻  " + _("Refresh"))
         self._refresh_btn.clicked.connect(self._on_refresh)
         header.addWidget(self._refresh_btn)
 
         root.addLayout(header)
 
         # ── Status label ──────────────────────────────────────────────── #
-        self._status_lbl = QLabel("Select a deck to see improvement proposals.")
+        self._status_lbl = QLabel(_("Select a deck to see improvement proposals."))
         self._status_lbl.setStyleSheet("color: #888; font-size: 12px;")
         root.addWidget(self._status_lbl)
 
@@ -356,15 +357,15 @@ class DeckImproveWidget(QWidget):
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
         # Left: compact panel for the card being removed
-        self._remove_panel = _CompactCardPanel("Remove from deck")
+        self._remove_panel = _CompactCardPanel(_("Remove from deck"))
         splitter.addWidget(self._remove_panel)
 
         # Centre: proposals table
         self._table = QTableWidget(0, _N_COLS)
         self._table.setHorizontalHeaderLabels([
-            "Remove from deck", "Set / #", "Type", "Score",
+            _("Remove from deck"), _("Set / #"), _("Type"), _("Score"),
             "→",
-            "Swap in", "Set / #", "Location", "Score", "Δ Score",
+            _("Swap in"), _("Set / #"), _("Location"), _("Score"), _("Δ Score"),
             "",
         ])
         hh = self._table.horizontalHeader()
@@ -387,7 +388,7 @@ class DeckImproveWidget(QWidget):
         splitter.addWidget(self._table)
 
         # Right: compact panel for the swap-in candidate
-        self._candidate_panel = _CompactCardPanel("Swap in")
+        self._candidate_panel = _CompactCardPanel(_("Swap in"))
         splitter.addWidget(self._candidate_panel)
 
         splitter.setStretchFactor(0, 1)   # removal panel
@@ -398,8 +399,8 @@ class DeckImproveWidget(QWidget):
 
         # ── Legend ────────────────────────────────────────────────────── #
         legend = QHBoxLayout()
-        for color, text in [(_TIER1_BG, "■ Strong (score 0 → ≥5)"),
-                             (_TIER2_BG, "■ Moderate (≥2× better)")]:
+        for color, text in [(_TIER1_BG, "■ " + _("Strong (score 0 → ≥5)")),
+                             (_TIER2_BG, "■ " + _("Moderate (≥2× better)"))]:
             lbl = QLabel(text)
             lbl.setStyleSheet(
                 f"background: {color.name()}; color: #ccc; font-size: 11px;"
@@ -481,14 +482,14 @@ class DeckImproveWidget(QWidget):
 
         if not meta_fmt:
             self._status_lbl.setText(
-                f"⚠  Unknown format '{deck_format}' — cannot map to meta data."
+                _("⚠  Unknown format '{fmt}' — cannot map to meta data.").format(fmt=deck_format)
             )
             self._table.setRowCount(0)
             self._proposals = []
             return
 
         self._format_lbl.setText(_META_LABELS.get(meta_fmt, meta_fmt))
-        self._status_lbl.setText("Loading…")
+        self._status_lbl.setText(_("Loading…"))
         self._loading = True
         self._refresh_btn.setEnabled(False)
 
@@ -505,15 +506,16 @@ class DeckImproveWidget(QWidget):
             self._refresh_btn.setEnabled(True)
 
         if not deck_cards:
-            self._status_lbl.setText("No (non-land) cards found in this deck.")
+            self._status_lbl.setText(_("No (non-land) cards found in this deck."))
             self._table.setRowCount(0)
             self._proposals = []
             return
 
         if not candidates:
             self._status_lbl.setText(
-                f"No binder/box cards have meta scores for {_META_LABELS.get(meta_fmt, meta_fmt)}. "
-                "Try running a meta crawl first."
+                _("No binder/box cards have meta scores for {fmt}. "
+                  "Try running a meta crawl first.").format(
+                    fmt=_META_LABELS.get(meta_fmt, meta_fmt))
             )
             self._table.setRowCount(0)
             self._proposals = []
@@ -554,7 +556,7 @@ class DeckImproveWidget(QWidget):
             )
         else:
             self._status_lbl.setText(
-                "No improvements found — your binder has no better-scoring cards of the same types."
+                _("No improvements found — your binder has no better-scoring cards of the same types.")
             )
 
         self._table.blockSignals(True)
@@ -606,7 +608,7 @@ class DeckImproveWidget(QWidget):
             # Accept button (embedded as a push-button via a widget).
             # Capture *prop* by identity so the closure stays correct even
             # after other rows are removed and row indices shift.
-            accept_btn = QPushButton("Accept")
+            accept_btn = QPushButton(_("Accept"))
             accept_btn.setStyleSheet(
                 "QPushButton { font-size: 11px; padding: 2px 8px; }"
                 "QPushButton:hover { background: #2e7d32; }"
@@ -648,13 +650,15 @@ class DeckImproveWidget(QWidget):
         deck_loc   = dc.get("container_name") or "deck"
 
         reply = QMessageBox.question(
-            self, "Confirm swap",
-            f"Swap cards physically?\n\n"
-            f"  Remove:  {deck_name}\n"
-            f"    from:  {deck_loc}\n\n"
-            f"  Add:     {cand_name}\n"
-            f"    from:  {cand_loc}\n\n"
-            f"The two cards will exchange containers.",
+            self, _("Confirm swap"),
+            _("Swap cards physically?\n\n"
+              "  Remove:  {deck_name}\n"
+              "    from:  {deck_loc}\n\n"
+              "  Add:     {cand_name}\n"
+              "    from:  {cand_loc}\n\n"
+              "The two cards will exchange containers.").format(
+                deck_name=deck_name, deck_loc=deck_loc,
+                cand_name=cand_name, cand_loc=cand_loc),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:
@@ -668,7 +672,7 @@ class DeckImproveWidget(QWidget):
         try:
             await db.swap_card_containers(card_id_deck, card_id_cand)
         except Exception as exc:
-            QMessageBox.critical(self, "Swap failed", str(exc))
+            QMessageBox.critical(self, _("Swap failed"), str(exc))
             return
 
         # Re-locate the row by identity — indices may have shifted since the

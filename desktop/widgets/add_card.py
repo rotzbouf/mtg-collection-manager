@@ -14,6 +14,7 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QPixmap
 from qasync import asyncSlot
 
+from core.i18n import _
 from desktop.utils import CONDITIONS, display_name, lang_flag, format_price, scale_pixmap, async_pixmap
 from desktop.widgets.card_detail import ManaWidget
 
@@ -76,12 +77,12 @@ class AddCardWidget(QWidget):
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(10)
 
-        layout.addWidget(QLabel("<h2>Add Card</h2>"))
+        layout.addWidget(QLabel(_("<h2>Add Card</h2>")))
 
         hint = QLabel(
-            "Fill in any combination of fields. "
-            "Set + collector number gives a direct lookup; "
-            "name (partial or full) triggers a search."
+            _("Fill in any combination of fields. "
+              "Set + collector number gives a direct lookup; "
+              "name (partial or full) triggers a search.")
         )
         hint.setWordWrap(True)
         hint.setStyleSheet("color: #888; font-size: 11px;")
@@ -92,9 +93,9 @@ class AddCardWidget(QWidget):
         layout.addWidget(sep)
 
         # ---- Fields ----
-        layout.addWidget(QLabel("Name (full or partial):"))
+        layout.addWidget(QLabel(_("Name (full or partial):")))
         self._name_edit = QLineEdit()
-        self._name_edit.setPlaceholderText("e.g. Lightning Bolt  or  Blitz")
+        self._name_edit.setPlaceholderText(_("e.g. Lightning Bolt  or  Blitz"))
         self._name_edit.setClearButtonEnabled(True)
         layout.addWidget(self._name_edit)
 
@@ -104,29 +105,29 @@ class AddCardWidget(QWidget):
 
         set_col = QVBoxLayout()
         set_col.setSpacing(3)
-        set_col.addWidget(QLabel("Set code:"))
+        set_col.addWidget(QLabel(_("Set code:")))
         self._set_edit = QLineEdit()
-        self._set_edit.setPlaceholderText("e.g. mh2")
+        self._set_edit.setPlaceholderText(_("e.g. mh2"))
         set_col.addWidget(self._set_edit)
         sc_row.addLayout(set_col)
 
         cn_col = QVBoxLayout()
         cn_col.setSpacing(3)
-        cn_col.addWidget(QLabel("Collector no.:"))
+        cn_col.addWidget(QLabel(_("Collector no.:")))
         self._cn_edit = QLineEdit()
-        self._cn_edit.setPlaceholderText("e.g. 227")
+        self._cn_edit.setPlaceholderText(_("e.g. 227"))
         cn_col.addWidget(self._cn_edit)
         sc_row.addLayout(cn_col)
 
         layout.addLayout(sc_row)
 
-        layout.addWidget(QLabel("Language:"))
+        layout.addWidget(QLabel(_("Language:")))
         self._search_lang_cb = QComboBox()
         for code, label in _LANGUAGES:
             self._search_lang_cb.addItem(label, code)
         layout.addWidget(self._search_lang_cb)
 
-        self._search_btn = QPushButton("Search")
+        self._search_btn = QPushButton(_("Search"))
         self._search_btn.setDefault(True)
         layout.addWidget(self._search_btn)
 
@@ -136,9 +137,9 @@ class AddCardWidget(QWidget):
 
         # Log area
         log_hdr = QHBoxLayout()
-        log_hdr.addWidget(QLabel("<b>Log</b>"))
+        log_hdr.addWidget(QLabel(_("<b>Log</b>")))
         log_hdr.addStretch()
-        clear_btn = QPushButton("Clear")
+        clear_btn = QPushButton(_("Clear"))
         clear_btn.setFixedWidth(50)
         clear_btn.setStyleSheet("font-size: 11px; padding: 2px 6px;")
         log_hdr.addWidget(clear_btn)
@@ -150,14 +151,14 @@ class AddCardWidget(QWidget):
         self._log_view.setStyleSheet(
             "font-size: 11px; font-family: monospace; background: #0d1117; color: #8b949e;"
         )
-        self._log_view.setPlaceholderText("Search activity will appear here…")
+        self._log_view.setPlaceholderText(_("Search activity will appear here…"))
         layout.addWidget(self._log_view)
 
         sep3 = QFrame()
         sep3.setFrameShape(QFrame.Shape.HLine)
         layout.addWidget(sep3)
 
-        layout.addWidget(QLabel("<b>Results</b>"))
+        layout.addWidget(QLabel(_("<b>Results</b>")))
         self._results_list = QListWidget()
         self._results_list.setAlternatingRowColors(True)
         self._results_list.setStyleSheet("font-size: 12px;")
@@ -181,7 +182,7 @@ class AddCardWidget(QWidget):
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(0)
 
-        self._empty_lbl = QLabel("Search for a card\nto see a preview here.")
+        self._empty_lbl = QLabel(_("Search for a card\nto see a preview here."))
         self._empty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty_lbl.setStyleSheet("color: #444; font-size: 15px;")
         self._empty_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -224,17 +225,17 @@ class AddCardWidget(QWidget):
             info_layout.addWidget(lbl)
             return lbl
 
-        self._lbl_name  = _row("Name")
-        self._lbl_set   = _row("Set")
-        self._lbl_type  = _row("Type")
+        self._lbl_name  = _row(_("Name"))
+        self._lbl_set   = _row(_("Set"))
+        self._lbl_type  = _row(_("Type"))
 
-        mana_hdr = QLabel("<b>Mana cost</b>")
+        mana_hdr = QLabel(_("<b>Mana cost</b>"))
         mana_hdr.setStyleSheet("font-size: 11px; color: #888;")
         info_layout.addWidget(mana_hdr)
         self._mana_widget = ManaWidget()
         info_layout.addWidget(self._mana_widget)
 
-        self._lbl_price = _row("Price")
+        self._lbl_price = _row(_("Price"))
         info_layout.addStretch()
         scroll.setWidget(info_w)
         right.addWidget(scroll)
@@ -243,23 +244,23 @@ class AddCardWidget(QWidget):
         sep.setFrameShape(QFrame.Shape.HLine)
         right.addWidget(sep)
 
-        right.addWidget(QLabel("<b>Collection details</b>"))
+        right.addWidget(QLabel(_("<b>Collection details</b>")))
 
         cl_row = QHBoxLayout()
         cond_col = QVBoxLayout()
-        cond_col.addWidget(QLabel("Condition:"))
+        cond_col.addWidget(QLabel(_("Condition:")))
         self._condition_cb = QComboBox()
         self._condition_cb.addItems(CONDITIONS)
         cond_col.addWidget(self._condition_cb)
         cl_row.addLayout(cond_col)
 
         lang_col = QVBoxLayout()
-        lang_col.addWidget(QLabel("Language:"))
+        lang_col.addWidget(QLabel(_("Language:")))
         self._lang_lbl = QLabel()
         self._lang_lbl.setStyleSheet(
             "font-size: 13px; color: #aaa; padding: 3px 0; font-style: italic;"
         )
-        self._lang_lbl.setToolTip("Matches the search language selected on the left")
+        self._lang_lbl.setToolTip(_("Matches the search language selected on the left"))
         lang_col.addWidget(self._lang_lbl)
         cl_row.addLayout(lang_col)
         right.addLayout(cl_row)
@@ -279,13 +280,13 @@ class AddCardWidget(QWidget):
         """)
         right.addWidget(self._foil_cb)
 
-        right.addWidget(QLabel("Container:"))
+        right.addWidget(QLabel(_("Container:")))
         container_row = QHBoxLayout()
         self._container_cb = QComboBox()
-        self._container_cb.addItem("(no container)", None)
+        self._container_cb.addItem(_("(no container)"), None)
         container_row.addWidget(self._container_cb, stretch=1)
-        self._new_container_btn = QPushButton("+ New")
-        self._new_container_btn.setToolTip("Create new container")
+        self._new_container_btn = QPushButton(_("+ New"))
+        self._new_container_btn.setToolTip(_("Create new container"))
         self._new_container_btn.setStyleSheet(
             "font-size: 11px; padding: 4px 8px;"
             " background: #0f3460; color: white; border-radius: 3px;"
@@ -294,7 +295,7 @@ class AddCardWidget(QWidget):
         right.addLayout(container_row)
 
         right.addSpacing(8)
-        self._add_btn = QPushButton("Add to Collection")
+        self._add_btn = QPushButton(_("Add to Collection"))
         self._add_btn.setStyleSheet(
             "font-size: 14px; padding: 10px; background: #0f3460; color: white; border-radius: 4px;"
         )
@@ -350,7 +351,7 @@ class AddCardWidget(QWidget):
         self._container_cb.blockSignals(True)
         current_data = self._container_cb.currentData()
         self._container_cb.clear()
-        self._container_cb.addItem("(no container)", None)
+        self._container_cb.addItem(_("(no container)"), None)
         for c in self._containers:
             self._container_cb.addItem(c["name"], c["id"])
         for i in range(self._container_cb.count()):
@@ -371,7 +372,7 @@ class AddCardWidget(QWidget):
         try:
             new_id = await db.create_container(name, type=ctype)
         except Exception as exc:
-            QMessageBox.critical(self, "Error", f"Could not create container:\n{exc}")
+            QMessageBox.critical(self, _("Error"), _("Could not create container:\n{exc}").format(exc=exc))
             return
         await self._load_containers()
         for i in range(self._container_cb.count()):
@@ -514,7 +515,7 @@ class AddCardWidget(QWidget):
                 self._img_label.setPixmap(scale_pixmap(pixmap, 280, 390))
                 self._img_label.setText("")
             else:
-                self._img_label.setText("No image\navailable")
+                self._img_label.setText(_("No image\navailable"))
 
     @asyncSlot()
     async def _on_add(self):
@@ -533,7 +534,7 @@ class AddCardWidget(QWidget):
         try:
             new_id = await db.add_card(card, added_by="desktop")
         except Exception as exc:
-            QMessageBox.critical(self, "Error", f"Could not add card:\n{exc}")
+            QMessageBox.critical(self, _("Error"), _("Could not add card:\n{exc}").format(exc=exc))
             return
 
         name = display_name(self._selected_card)

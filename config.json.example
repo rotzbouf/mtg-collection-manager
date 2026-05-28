@@ -3,15 +3,12 @@
     "token": "YOUR_DISCORD_BOT_TOKEN",
     "guild_id": "",
     "scan_channel_id": "",
-    "showcase_channel_id": "",
     "guest_role": "",
     "collector_role": "",
     "admin_role": ""
   },
   "app": {
     "backup_dir": "backups",
-    "ui_port": 8080,
-    "ui_host": "127.0.0.1",
     "debug_scan_preview": false
   },
   "container_types": [

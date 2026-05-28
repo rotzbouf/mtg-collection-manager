@@ -14,12 +14,16 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QTimer, QMimeData, QByteArray, QEvent
 from PyQt6.QtGui import QColor, QDrag
-from qasync import asyncSlot
+from qasync import asyncSlot, asyncWrap
 
+from core.i18n import _
 from desktop.utils import display_name, lang_flag, format_price
 from desktop.widgets.card_detail import CardDetailPanel
 
 _COLUMNS = ["#", "Name", "Set", "CN", "Cond", "Foil", "Lang", "Price (EUR)"]
+
+def _columns():
+    return [_("#"), _("Name"), _("Set"), _("CN"), _("Cond"), _("Foil"), _("Lang"), _("Price (EUR)")]
 
 
 def _cn_sort_key(cn: str) -> float:
@@ -78,17 +82,17 @@ class ContainersWidget(QWidget):
         left_layout.setContentsMargins(4, 4, 4, 4)
 
         top_row = QHBoxLayout()
-        top_row.addWidget(QLabel("<b>Containers</b>"))
+        top_row.addWidget(QLabel(_("<b>Containers</b>")))
         top_row.addStretch()
-        self._new_btn = QPushButton("+ New container")
+        self._new_btn = QPushButton(_("+ New container"))
         top_row.addWidget(self._new_btn)
         left_layout.addLayout(top_row)
 
         # Type filter
         filter_row = QHBoxLayout()
-        filter_row.addWidget(QLabel("Type:"))
+        filter_row.addWidget(QLabel(_("Type:")))
         self._type_filter_combo = QComboBox()
-        self._type_filter_combo.addItem("— All types —", None)
+        self._type_filter_combo.addItem(_("— All types —"), None)
         self._type_filter_combo.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
         )
@@ -97,11 +101,11 @@ class ContainersWidget(QWidget):
 
         # Container sort
         sort_row = QHBoxLayout()
-        sort_row.addWidget(QLabel("Sort:"))
+        sort_row.addWidget(QLabel(_("Sort:")))
         self._sort_combo = QComboBox()
-        self._sort_combo.addItem("Name A→Z", "name_asc")
-        self._sort_combo.addItem("Cards ↓", "count_desc")
-        self._sort_combo.addItem("Value € ↓", "value_desc")
+        self._sort_combo.addItem(_("Name A→Z"), "name_asc")
+        self._sort_combo.addItem(_("Cards ↓"), "count_desc")
+        self._sort_combo.addItem(_("Value € ↓"), "value_desc")
         self._sort_combo.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
         )
@@ -128,38 +132,38 @@ class ContainersWidget(QWidget):
 
         # Container action buttons
         action_row = QHBoxLayout()
-        self._rename_btn = QPushButton("Rename")
-        self._delete_btn = QPushButton("Delete")
+        self._rename_btn = QPushButton(_("Rename"))
+        self._delete_btn = QPushButton(_("Delete"))
         self._delete_btn.setStyleSheet("color: #e05c5c;")
         self._rename_btn.setEnabled(False)
         self._delete_btn.setEnabled(False)
         action_row.addWidget(self._rename_btn)
         action_row.addWidget(self._delete_btn)
         action_row.addStretch()
-        self._check_deck_btn = QPushButton("⚖ Check deck")
-        self._check_deck_btn.setToolTip("Check deck legality for the selected format")
+        self._check_deck_btn = QPushButton(_("⚖ Check deck"))
+        self._check_deck_btn.setToolTip(_("Check deck legality for the selected format"))
         self._check_deck_btn.setVisible(False)
         action_row.addWidget(self._check_deck_btn)
-        self._export_deck_btn = QPushButton("↓ Export deck")
-        self._export_deck_btn.setToolTip("Export decklist as MTGA/Moxfield-compatible text file")
+        self._export_deck_btn = QPushButton(_("↓ Export deck"))
+        self._export_deck_btn.setToolTip(_("Export decklist as MTGA/Moxfield-compatible text file"))
         self._export_deck_btn.setVisible(False)
         action_row.addWidget(self._export_deck_btn)
-        action_row.addWidget(QLabel("Format:"))
+        action_row.addWidget(QLabel(_("Format:")))
         self._format_combo = QComboBox()
-        self._format_combo.addItem("— no format —", None)
-        self._format_combo.addItem("⚔  Commander / EDH", "commander")
-        self._format_combo.addItem("Modern", "modern")
-        self._format_combo.addItem("Pioneer", "pioneer")
-        self._format_combo.addItem("Standard", "standard")
-        self._format_combo.addItem("Legacy", "legacy")
-        self._format_combo.addItem("Vintage", "vintage")
-        self._format_combo.addItem("Pauper", "pauper")
-        self._format_combo.addItem("Timeless", "timeless")
-        self._format_combo.addItem("Historic", "historic")
+        self._format_combo.addItem(_("— no format —"), None)
+        self._format_combo.addItem(_("⚔  Commander / EDH"), "commander")
+        self._format_combo.addItem(_("Modern"), "modern")
+        self._format_combo.addItem(_("Pioneer"), "pioneer")
+        self._format_combo.addItem(_("Standard"), "standard")
+        self._format_combo.addItem(_("Legacy"), "legacy")
+        self._format_combo.addItem(_("Vintage"), "vintage")
+        self._format_combo.addItem(_("Pauper"), "pauper")
+        self._format_combo.addItem(_("Timeless"), "timeless")
+        self._format_combo.addItem(_("Historic"), "historic")
         self._format_combo.setMinimumWidth(160)
         self._format_combo.setEnabled(False)
         action_row.addWidget(self._format_combo)
-        action_row.addWidget(QLabel("Type:"))
+        action_row.addWidget(QLabel(_("Type:")))
         self._type_combo = QComboBox()
         self._type_combo.setMinimumWidth(100)
         self._type_combo.setEnabled(False)
@@ -175,7 +179,7 @@ class ContainersWidget(QWidget):
 
         # Card table
         self._table = QTableWidget(0, len(_COLUMNS))
-        self._table.setHorizontalHeaderLabels(_COLUMNS)
+        self._table.setHorizontalHeaderLabels(_columns())
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -240,7 +244,7 @@ class ContainersWidget(QWidget):
         prev_filter = self._type_filter_combo.currentData()
         self._type_filter_combo.blockSignals(True)
         self._type_filter_combo.clear()
-        self._type_filter_combo.addItem("— All types —", None)
+        self._type_filter_combo.addItem(_("— All types —"), None)
         for t in types:
             self._type_filter_combo.addItem(t.capitalize(), t)
         idx = self._type_filter_combo.findData(prev_filter)
@@ -364,7 +368,7 @@ class ContainersWidget(QWidget):
             self._table.setItem(row_idx, 4, _item(card.get("condition") or ""))
             self._table.setItem(row_idx, 5, _item("★" if card.get("foil") else ""))
             self._table.setItem(row_idx, 6, _item(lang_flag(card)))
-            self._table.setItem(row_idx, 7, _item(format_price(price), sort_val=float(price if price is not None else -1.0)))
+            self._table.setItem(row_idx, 7, _item(format_price(price, card.get("price_approx", 0)), sort_val=float(price if price is not None else -1.0)))
         self._table.setSortingEnabled(True)
 
     # ------------------------------------------------------------------ #
@@ -546,9 +550,9 @@ class ContainersWidget(QWidget):
         # Offer both export formats via two filter choices
         path, selected_filter = QFileDialog.getSaveFileName(
             self,
-            "Export Deck",
+            _("Export Deck"),
             f"{safe_name}_{date.today()}.txt",
-            "MTGA/Moxfield (*.txt);;Full with locations (*.txt);;All files (*)",
+            _("MTGA/Moxfield (*.txt);;Full with locations (*.txt);;All files (*)"),
         )
         if not path:
             return
@@ -558,7 +562,7 @@ class ContainersWidget(QWidget):
         try:
             Path(path).write_text(text, encoding="utf-8")
         except OSError as exc:
-            QMessageBox.warning(self, "Export failed", str(exc))
+            QMessageBox.warning(self, _("Export failed"), str(exc))
 
     def _selected_card_ids(self) -> list[int]:
         seen: set[int] = set()
@@ -584,9 +588,9 @@ class ContainersWidget(QWidget):
         menu = QMenu(self)
 
         # Multi-card actions (always shown)
-        menu.addAction(f"↗ Move {noun} to container…",
+        menu.addAction(_("↗ Move {noun} to container…").format(noun=noun),
                        lambda: self._on_move_to_container(selected_ids))
-        menu.addAction(f"✕ Remove {noun} from container",
+        menu.addAction(_("✕ Remove {noun} from container").format(noun=noun),
                        lambda: asyncio.ensure_future(
                            self._do_move_cards(selected_ids, None)))
 
@@ -598,17 +602,17 @@ class ContainersWidget(QWidget):
                 menu.addSeparator()
                 if deck_format == "commander":
                     if card.get("is_commander"):
-                        act = menu.addAction("Remove Commander mark")
+                        act = menu.addAction(_("Remove Commander mark"))
                     else:
-                        act = menu.addAction("👑 Mark as Commander")
+                        act = menu.addAction(_("👑 Mark as Commander"))
                     act.triggered.connect(lambda: self._do_toggle_commander(card))
                     menu.addSeparator()
 
-                resync_act = menu.addAction("↻ Resync from Scryfall")
+                resync_act = menu.addAction(_("↻ Resync from Scryfall"))
                 resync_act.setEnabled(bool(card.get("scryfall_id")))
                 resync_act.triggered.connect(lambda: self._do_resync_card(card))
 
-                history_act = menu.addAction("📈 Price history")
+                history_act = menu.addAction(_("📈 Price history"))
                 history_act.setEnabled(bool(card.get("scryfall_id")))
                 history_act.triggered.connect(lambda: self._show_price_history(card))
 
@@ -640,7 +644,7 @@ class ContainersWidget(QWidget):
         new_value = not bool(card.get("is_commander"))
         ok, err = await db.set_commander(card["id"], new_value, container_id)
         if not ok:
-            QMessageBox.warning(self, "Commander limit", err)
+            QMessageBox.warning(self, _("Commander limit"), err)
             return
 
         await self._load_container_cards(container_id)
@@ -670,9 +674,9 @@ class ContainersWidget(QWidget):
                 if updated:
                     self._detail.set_card(updated)
             else:
-                QMessageBox.warning(self, "Resync", "Card not found on Scryfall.")
+                QMessageBox.warning(self, _("Resync"), _("Card not found on Scryfall."))
         except Exception as exc:
-            QMessageBox.warning(self, "Resync error", str(exc))
+            QMessageBox.warning(self, _("Resync error"), str(exc))
         finally:
             QApplication.restoreOverrideCursor()
 
@@ -742,8 +746,8 @@ class ContainersWidget(QWidget):
 
         if card_count == 0:
             reply = QMessageBox.question(
-                self, "Delete container",
-                f"Delete empty container '{name}'?",
+                self, _("Delete container"),
+                _("Delete empty container '{name}'?").format(name=name),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
             if reply == QMessageBox.StandardButton.Yes:
@@ -755,27 +759,27 @@ class ContainersWidget(QWidget):
 
         # Non-empty container — show choice dialog
         dlg = _DeleteContainerDialog(name, card_count, parent=self)
-        if dlg.exec() != QDialog.DialogCode.Accepted:
+        if await asyncWrap(dlg.exec) != QDialog.DialogCode.Accepted:
             return
 
         delete_cards = dlg.delete_cards()
 
         # Second confirmation
         if delete_cards:
-            confirm_msg = (
-                f"Really delete container '{name}' and permanently remove "
-                f"all {card_count} card(s) from the collection?\n\n"
-                f"This cannot be undone."
-            )
+            confirm_msg = _(
+                "Really delete container '{name}' and permanently remove "
+                "all {count} card(s) from the collection?\n\n"
+                "This cannot be undone."
+            ).format(name=name, count=card_count)
         else:
-            confirm_msg = (
-                f"Really delete container '{name}'?\n"
-                f"The {card_count} card(s) inside will be kept in the collection "
-                f"without a container."
-            )
+            confirm_msg = _(
+                "Really delete container '{name}'?\n"
+                "The {count} card(s) inside will be kept in the collection "
+                "without a container."
+            ).format(name=name, count=card_count)
 
         reply = QMessageBox.warning(
-            self, "Confirm deletion",
+            self, _("Confirm deletion"),
             confirm_msg,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
@@ -814,8 +818,8 @@ class ContainersWidget(QWidget):
     def _on_delete_card(self, card: dict):
         name = display_name(card)
         reply = QMessageBox.question(
-            self, "Delete card",
-            f"Remove '{name}' from the collection?",
+            self, _("Delete card"),
+            _("Remove '{name}' from the collection?").format(name=name),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
@@ -839,15 +843,15 @@ class ContainersWidget(QWidget):
 class _MoveToContainerDialog(QDialog):
     def __init__(self, containers: list[dict], parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Move to container")
+        self.setWindowTitle(_("Move to container"))
         self.setMinimumWidth(300)
         layout = QVBoxLayout(self)
         self._combo = QComboBox()
-        self._combo.addItem("— Remove from container —", None)
+        self._combo.addItem(_("— Remove from container —"), None)
         for c in containers:
             self._combo.addItem(c["name"], c["id"])
         form = QFormLayout()
-        form.addRow("Container:", self._combo)
+        form.addRow(_("Container:"), self._combo)
         layout.addLayout(form)
         btns = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -1045,15 +1049,15 @@ class _DeleteContainerDialog(QDialog):
 
     def __init__(self, container_name: str, card_count: int, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Delete container")
+        self.setWindowTitle(_("Delete container"))
         self.setMinimumWidth(420)
 
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
 
         warn = QLabel(
-            f"<b>'{container_name}'</b> contains <b>{card_count} card(s)</b>.<br>"
-            "What should happen to them?"
+            _("<b>'{name}'</b> contains <b>{count} card(s)</b>.<br>"
+              "What should happen to them?").format(name=container_name, count=card_count)
         )
         warn.setWordWrap(True)
         warn.setTextFormat(Qt.TextFormat.RichText)
@@ -1062,11 +1066,11 @@ class _DeleteContainerDialog(QDialog):
         self._group = QButtonGroup(self)
 
         self._keep_rb = QRadioButton(
-            f"Keep cards in collection  (unassign from container)"
+            _("Keep cards in collection  (unassign from container)")
         )
         self._keep_rb.setChecked(True)
         self._delete_rb = QRadioButton(
-            f"Delete cards too  (remove {card_count} card(s) from the collection permanently)"
+            _("Delete cards too  (remove {count} card(s) from the collection permanently)").format(count=card_count)
         )
         self._delete_rb.setStyleSheet("color: #e05c5c;")
         self._group.addButton(self._keep_rb)

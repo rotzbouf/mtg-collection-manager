@@ -75,6 +75,15 @@ class _SchemaMixin:
                 """)
                 logger.info("Migrated: created card_prices table")
 
+            async with self._db.execute("PRAGMA table_info(card_prices)") as cur:
+                cp_cols = {row[1] for row in await cur.fetchall()}
+
+            if "price_approx" not in cp_cols:
+                await self._db.execute(
+                    "ALTER TABLE card_prices ADD COLUMN price_approx INTEGER DEFAULT 0"
+                )
+                logger.info("Migrated: added price_approx to card_prices")
+
             if "cardmarket_id" not in cols:
                 await self._db.execute(
                     "ALTER TABLE collection ADD COLUMN cardmarket_id INTEGER"
@@ -136,6 +145,7 @@ class _SchemaMixin:
                     c.power, c.toughness, c.loyalty, c.keywords, c.legalities,
                     COALESCE(cp.price_eur, c.price_eur) AS price_eur,
                     COALESCE(cp.price_usd, c.price_usd) AS price_usd,
+                    COALESCE(cp.price_approx, 0)        AS price_approx,
                     c.price_tix, c.image_url, c.image_url_back,
                     c.language, c.condition, c.foil, c.quantity, c.notes,
                     c.added_by, c.added_at, c.updated_at,

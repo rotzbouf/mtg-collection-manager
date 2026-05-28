@@ -29,6 +29,7 @@ from desktop.widgets.set_completion import SetCompletionWidget
 from desktop.widgets.logs_page import LogsWidget, QtLogHandler
 
 from core.version import __version__
+from core.i18n import _
 
 logger = logging.getLogger(__name__)
 
@@ -140,7 +141,7 @@ class MainWindow(QMainWindow):
 
         self._nav_buttons: dict[str, QPushButton] = {}
         for label, key in _NAV_ITEMS:
-            btn = QPushButton(label)
+            btn = QPushButton(_(label))
             btn.setProperty("active", False)
             btn.clicked.connect(lambda checked, k=key: self._navigate(k))
             sidebar_layout.addWidget(btn)
@@ -149,7 +150,7 @@ class MainWindow(QMainWindow):
         sidebar_layout.addStretch()
 
         # Settings button — pinned to the bottom
-        settings_btn = QPushButton("⚙  Settings")
+        settings_btn = QPushButton(_("⚙  Settings"))
         settings_btn.setProperty("active", False)
         settings_btn.clicked.connect(lambda: self._navigate("settings"))
         sidebar_layout.addWidget(settings_btn)
@@ -196,16 +197,16 @@ class MainWindow(QMainWindow):
     def _create_page(self, key: str) -> QWidget:
         if key == "collection":
             return _TabbedPage([
-                ("Collection", CollectionWidget()),
-                ("Containers", ContainersWidget()),
-                ("Overcount",  OvercountWidget()),
-                ("Bans",       FormatBansWidget()),
+                (_("Collection"), CollectionWidget()),
+                (_("Containers"), ContainersWidget()),
+                (_("Overcount"),  OvercountWidget()),
+                (_("Bans"),       FormatBansWidget()),
             ])
         if key == "search":
             return SearchWidget()
         if key == "add_scan":
             scan = ScanWidget()
-            page = _TabbedPage([("Add Card", AddCardWidget()), ("Scanner", scan)])
+            page = _TabbedPage([(_("Add Card"), AddCardWidget()), (_("Scanner"), scan)])
             from core.desktop_bridge import bridge
             bridge.register_scan_widget(scan)
             bridge.set_navigate_callback(lambda: self._navigate_to_scanner())
@@ -218,10 +219,10 @@ class MainWindow(QMainWindow):
             return StatsWidget()
         if key == "decks":
             return _TabbedPage([
-                ("Deck Builder",   DeckWidget()),
-                ("Deck Analysis",  DeckAnalysisWidget()),
-                ("Improve Deck",   DeckImproveWidget()),
-                ("Complete Deck",  DeckCompleteWidget()),
+                (_("Deck Builder"),   DeckWidget()),
+                (_("Deck Analysis"),  DeckAnalysisWidget()),
+                (_("Improve Deck"),   DeckImproveWidget()),
+                (_("Complete Deck"),  DeckCompleteWidget()),
             ])
         if key == "settings":
             return SettingsWidget()
@@ -262,8 +263,8 @@ class MainWindow(QMainWindow):
             if settings.bot_stop_for_close():
                 from PyQt6.QtWidgets import QMessageBox
                 QMessageBox.information(
-                    self, "Discord Bot",
-                    "The Discord bot has been stopped."
+                    self, _("Discord Bot"),
+                    _("The Discord bot has been stopped.")
                 )
         event.accept()
 
@@ -276,6 +277,7 @@ class MainWindow(QMainWindow):
 
     async def _refresh_all_prices(self):
         from desktop.db import db, scryfall
+        from core.fx import get_usd_eur_rate, usd_to_eur
 
         try:
             ids = await db.get_distinct_scryfall_ids()
@@ -287,20 +289,44 @@ class MainWindow(QMainWindow):
         total = len(to_refresh)
         if total == 0:
             logger.info("Price refresh: all %d cards already priced today, skipping", len(ids))
-            self._sync_lbl.setText("✓ Prices up to date")
+            self._sync_lbl.setText(_("✓ Prices up to date"))
             QTimer.singleShot(4000, lambda: self._sync_lbl.setText(""))
             return
 
         logger.info("Refreshing prices for %d/%d cards not yet priced today", total, len(ids))
-        self._sync_lbl.setText(f"Prices 0 / {total}…")
+        self._sync_lbl.setText(_("Prices 0 / {total}…").format(total=total))
+        fx_rate: float | None = None
         updated = 0
         for i, sid in enumerate(to_refresh, 1):
             try:
                 data = await scryfall.get_by_id(sid)
                 if data:
-                    await db.update_card_prices(
-                        sid, data.get("price_eur"), data.get("price_usd")
-                    )
+                    eur = data.get("price_eur")
+                    usd = data.get("price_usd")
+                    approx = 0
+
+                    if eur is None and usd is not None:
+                        # Level 2: convert USD → EUR
+                        if fx_rate is None:
+                            fx_rate = await get_usd_eur_rate()
+                        eur = usd_to_eur(usd, fx_rate)
+                        approx = 1
+
+                    if eur is None:
+                        # Level 3: use English card price as reference
+                        oracle_id = data.get("oracle_id")
+                        if oracle_id:
+                            en = await scryfall.get_en_price_by_oracle_id(oracle_id)
+                            if en:
+                                eur = en.get("price_eur")
+                                if eur is None and en.get("price_usd") is not None:
+                                    if fx_rate is None:
+                                        fx_rate = await get_usd_eur_rate()
+                                    eur = usd_to_eur(en["price_usd"], fx_rate)
+                                if eur is not None:
+                                    approx = 1
+
+                    await db.update_card_prices(sid, eur, usd, approx)
                     if data.get("legalities"):
                         await db.update_card_legalities(sid, data["legalities"])
                     if data.get("cardmarket_id"):
@@ -309,7 +335,7 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
             if i % 5 == 0 or i == total:
-                self._sync_lbl.setText(f"Prices {i} / {total}…")
+                self._sync_lbl.setText(_("Prices {i} / {total}…").format(i=i, total=total))
 
         try:
             await db.record_prices()
@@ -318,13 +344,13 @@ class MainWindow(QMainWindow):
 
         # Rebuild format ban table from fresh legality data
         try:
-            self._sync_lbl.setText("Rebuilding ban lists…")
+            self._sync_lbl.setText(_("Rebuilding ban lists…"))
             ban_count = await db.rebuild_format_bans()
             logger.info("Format bans rebuilt: %d entries", ban_count)
         except Exception:
             pass
 
-        self._sync_lbl.setText(f"✓ {updated} prices updated")
+        self._sync_lbl.setText(_("✓ {updated} prices updated").format(updated=updated))
         QTimer.singleShot(6000, lambda: self._sync_lbl.setText(""))
 
     @asyncSlot()
@@ -336,8 +362,8 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             from PyQt6.QtWidgets import QMessageBox
             QMessageBox.critical(
-                self, "Database error",
-                f"Failed to initialize database:\n{exc}"
+                self, _("Database error"),
+                _("Failed to initialize database:\n{exc}").format(exc=exc)
             )
             return
 

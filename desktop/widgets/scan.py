@@ -16,6 +16,7 @@ from PyQt6.QtCore import Qt, QTimer, QMimeData, pyqtSignal
 from PyQt6.QtGui import QPixmap, QDragEnterEvent, QDropEvent, QImage, QKeySequence
 from qasync import asyncSlot
 
+from core.i18n import _
 from desktop.utils import display_name, lang_flag, format_price
 from desktop.widgets.card_detail import CardDetailPanel
 
@@ -57,7 +58,7 @@ class _DropZone(QLabel):
         self._reset()
 
     def _reset(self):
-        self.setText("Drop card image here\nor click Browse / press Ctrl+V")
+        self.setText(_("Drop card image here\nor click Browse / press Ctrl+V"))
         self.setStyleSheet(self._IDLE_STYLE)
         self.setPixmap(QPixmap())
 
@@ -76,8 +77,8 @@ class _DropZone(QLabel):
         self.setPixmap(pm)
         self.setStyleSheet(self._BUSY_STYLE)
 
-    def set_busy(self, text: str = "Scanning…"):
-        self.setText(text)
+    def set_busy(self, text: str = ""):
+        self.setText(text or _("Scanning…"))
         self.setPixmap(QPixmap())
         self.setStyleSheet(self._BUSY_STYLE)
 
@@ -168,10 +169,10 @@ class ScanWidget(QWidget):
 
         # Header + Browse button
         header_row = QHBoxLayout()
-        header_row.addWidget(QLabel("<h2>Card Scanner</h2>"))
+        header_row.addWidget(QLabel(_("<h2>Card Scanner</h2>")))
         header_row.addStretch()
-        self._browse_btn = QPushButton("Browse…")
-        self._browse_btn.setToolTip("Open an image file")
+        self._browse_btn = QPushButton(_("Browse…"))
+        self._browse_btn.setToolTip(_("Open an image file"))
         header_row.addWidget(self._browse_btn)
         left_layout.addLayout(header_row)
 
@@ -187,7 +188,7 @@ class ScanWidget(QWidget):
 
         # OCR availability notice (shown if neither engine is installed)
         self._ocr_warn = QLabel(
-            "⚠ No OCR engine installed.  Install easyocr or pytesseract to enable scanning."
+            _("⚠ No OCR engine installed.  Install easyocr or pytesseract to enable scanning.")
         )
         self._ocr_warn.setWordWrap(True)
         self._ocr_warn.setStyleSheet("color: #e07070; font-size: 12px; padding: 4px;")
@@ -195,7 +196,7 @@ class ScanWidget(QWidget):
         left_layout.addWidget(self._ocr_warn)
 
         # EasyOCR init notice
-        self._ocr_init_lbl = QLabel("⏳ Loading OCR engine…")
+        self._ocr_init_lbl = QLabel(_("⏳ Loading OCR engine…"))
         self._ocr_init_lbl.setStyleSheet("color: #aaa; font-size: 12px;")
         self._ocr_init_lbl.setVisible(False)
         left_layout.addWidget(self._ocr_init_lbl)
@@ -225,20 +226,20 @@ class ScanWidget(QWidget):
 
         # Language selector (auto-populated from scan; can be overridden)
         lang_row = QHBoxLayout()
-        lang_row.addWidget(QLabel("Language:"))
+        lang_row.addWidget(QLabel(_("Language:")))
         self._lang_cb = QComboBox()
         from desktop.widgets.add_card import _LANGUAGES
         for code, label in _LANGUAGES:
             self._lang_cb.addItem(label, code)
         self._lang_cb.setToolTip(
-            "Auto-detected from scan — override if the detected language is wrong"
+            _("Auto-detected from scan — override if the detected language is wrong")
         )
         lang_row.addWidget(self._lang_cb, stretch=1)
         left_layout.addLayout(lang_row)
 
         # Container selector
         cont_row = QHBoxLayout()
-        cont_row.addWidget(QLabel("Container:"))
+        cont_row.addWidget(QLabel(_("Container:")))
         self._container_cb = QComboBox()
         self._container_cb.setMinimumWidth(180)
         cont_row.addWidget(self._container_cb, stretch=1)
@@ -246,11 +247,11 @@ class ScanWidget(QWidget):
 
         # Action buttons
         btn_row = QHBoxLayout()
-        self._add_btn = QPushButton("✅ Add")
+        self._add_btn = QPushButton(_("✅ Add"))
         self._add_btn.setEnabled(False)
-        self._foil_btn = QPushButton("✨ Add as foil")
+        self._foil_btn = QPushButton(_("✨ Add as foil"))
         self._foil_btn.setEnabled(False)
-        self._skip_btn = QPushButton("✖ Skip")
+        self._skip_btn = QPushButton(_("✖ Skip"))
         self._skip_btn.setEnabled(False)
         btn_row.addWidget(self._add_btn)
         btn_row.addWidget(self._foil_btn)
@@ -263,9 +264,9 @@ class ScanWidget(QWidget):
         manual_layout.setContentsMargins(0, 0, 0, 0)
         manual_layout.setSpacing(4)
         self._manual_edit = QLineEdit()
-        self._manual_edit.setPlaceholderText("Correct card name…")
-        self._manual_search_btn = QPushButton("Search")
-        manual_layout.addWidget(QLabel("Name:"))
+        self._manual_edit.setPlaceholderText(_("Correct card name…"))
+        self._manual_search_btn = QPushButton(_("Search"))
+        manual_layout.addWidget(QLabel(_("Name:")))
         manual_layout.addWidget(self._manual_edit, stretch=1)
         manual_layout.addWidget(self._manual_search_btn)
         self._manual_frame.setVisible(False)
@@ -344,7 +345,7 @@ class ScanWidget(QWidget):
             else self._last_container_id
         )
         self._container_cb.clear()
-        self._container_cb.addItem("(no container)", None)
+        self._container_cb.addItem(_("(no container)"), None)
         for c in self._containers:
             self._container_cb.addItem(f"{c['name']}  ({c.get('type', '')})", c["id"])
         # Restore previous selection
@@ -381,15 +382,15 @@ class ScanWidget(QWidget):
 
     def _on_browse(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Open card image",
-            "", "Images (*.jpg *.jpeg *.png *.gif *.webp *.bmp *.tiff *.heic)"
+            self, _("Open card image"),
+            "", _("Images (*.jpg *.jpeg *.png *.gif *.webp *.bmp *.tiff *.heic)")
         )
         if path:
             try:
                 with open(path, "rb") as fh:
                     self._on_image(fh.read())
             except OSError as exc:
-                QMessageBox.warning(self, "File error", str(exc))
+                QMessageBox.warning(self, _("File error"), str(exc))
 
     # ── Scan pipeline ──────────────────────────────────────────────────────────
 
@@ -397,13 +398,13 @@ class ScanWidget(QWidget):
         from core.scanner import MAX_INPUT_BYTES
         if len(image_bytes) > MAX_INPUT_BYTES:
             QMessageBox.warning(
-                self, "Image too large",
-                f"Maximum scan image size is {MAX_INPUT_BYTES // (1024 * 1024)} MB.",
+                self, _("Image too large"),
+                _("Maximum scan image size is {size} MB.").format(size=MAX_INPUT_BYTES // (1024 * 1024)),
             )
             return
         self._pending_card = None
         self._clear_result()
-        self._drop_zone.set_busy("Scanning…")
+        self._drop_zone.set_busy(_("Scanning…"))
         self._run_scan(image_bytes)
 
     @asyncSlot()
@@ -558,7 +559,7 @@ class ScanWidget(QWidget):
         try:
             row_id = await db.add_card(card, added_by="desktop")
         except Exception as exc:
-            QMessageBox.critical(self, "Save error", str(exc))
+            QMessageBox.critical(self, _("Save error"), str(exc))
             self._add_btn.setEnabled(True)
             self._foil_btn.setEnabled(True)
             return
