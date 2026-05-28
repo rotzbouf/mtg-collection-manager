@@ -71,7 +71,7 @@ _TYPE_FILTER_OPTIONS: list[tuple[str, object]] = [
     (_("Other"),      "other"),   # everything not in the above named sets
 ]
 _NAMED_TYPES: frozenset[str] = frozenset(
-    t for _, v in _TYPE_FILTER_OPTIONS if isinstance(v, frozenset) for t in v
+    t for _lbl, v in _TYPE_FILTER_OPTIONS if isinstance(v, frozenset) for t in v
 )
 
 
