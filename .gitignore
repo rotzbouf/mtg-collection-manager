@@ -32,4 +32,9 @@ dist/
 
 # Claude Code internal workspaces
 .claude/
-images/
+images/*
+!images/mana/
+!images/mana/**
+!images/app_icon.png
+!images/app_icon_256.png
+!images/app_icon.ico

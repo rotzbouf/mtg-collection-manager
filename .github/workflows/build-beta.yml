@@ -101,7 +101,10 @@ jobs:
             --nofollow-import-to=matplotlib.sphinxext `
             --nofollow-import-to=matplotlib.testing `
             "--include-data-dir=images/mana=images/mana" `
+            "--include-data-files=images/app_icon.png=images/app_icon.png" `
+            "--include-data-files=images/app_icon.ico=images/app_icon.ico" `
             "--include-data-files=config.json=config.json" `
+            "--windows-icon-from-ico=images/app_icon.ico" `
             --standalone `
             --lto=no `
             "--jobs=$env:NUMBER_OF_PROCESSORS" `
@@ -219,6 +222,7 @@ jobs:
             --nofollow-import-to=matplotlib.sphinxext \
             --nofollow-import-to=matplotlib.testing \
             "--include-data-dir=images/mana=images/mana" \
+            "--include-data-files=images/app_icon.png=images/app_icon.png" \
             "--include-data-files=config.json=config.json" \
             --standalone \
             --lto=yes \
@@ -388,6 +392,7 @@ jobs:
             --nofollow-import-to=matplotlib.sphinxext \
             --nofollow-import-to=matplotlib.testing \
             "--include-data-dir=images/mana=images/mana" \
+            "--include-data-files=images/app_icon.png=images/app_icon.png" \
             "--include-data-files=config.json=config.json" \
             --standalone \
             --lto=yes \

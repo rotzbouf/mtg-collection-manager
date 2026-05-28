@@ -14,6 +14,7 @@ import sys
 # Ensure the project root is on the path so ``core`` is importable.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication
 
 # qasync must be imported BEFORE the event loop is created.
@@ -84,6 +85,12 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName("MTG Collection Manager")
     app.setOrganizationName("MTGBot")
+
+    # App icon — resolved relative to this file so it works both from source and
+    # from a Nuitka onefile bundle (which unpacks into a temp dir at runtime).
+    _icon_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "images", "app_icon.png")
+    if os.path.exists(_icon_path):
+        app.setWindowIcon(QIcon(_icon_path))
 
     # Apply a dark palette
     _apply_dark_style(app)
