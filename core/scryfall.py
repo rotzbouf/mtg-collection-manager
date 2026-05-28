@@ -400,6 +400,34 @@ class ScryfallClient:
 
         return None, "unknown"
 
+    async def get_en_price_by_oracle_id(self, oracle_id: str) -> Optional[dict]:
+        """Return {price_eur, price_usd} for the most-recently-released English printing.
+
+        Used as a last-resort price fallback when a non-English card has no own EUR/USD price.
+        Result is cached for 24 h (price TTL).
+        """
+        key = ("en_oracle_price", oracle_id)
+        hit, cached = self._ncache_get(key, _PRICE_TTL)
+        if hit:
+            return cached
+        data = await self._get(
+            f"{BASE}/cards/search",
+            q=f"oracleid:{oracle_id} lang:en",
+            order="released",
+            dir="desc",
+            unique="prints",
+        )
+        if data and data.get("data"):
+            prices = data["data"][0].get("prices", {})
+            result = {
+                "price_eur": _safe_float(prices.get("eur")),
+                "price_usd": _safe_float(prices.get("usd")),
+            }
+            self._ncache_set(key, result)
+            return result
+        self._ncache_set(key, None)
+        return None
+
     async def get_set_info(self, set_code: str) -> Optional[dict]:
         """Fetch set metadata from Scryfall /sets/{code}.
 

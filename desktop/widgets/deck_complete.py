@@ -689,7 +689,7 @@ class DeckCompleteWidget(QWidget):
             # 6 — Price (sort numerically)
             price = card.get("price_eur")
             price_item = _item(
-                format_price(price),
+                format_price(price, card.get("price_approx", 0)),
                 Qt.AlignmentFlag.AlignRight,
                 sort_key=float(price or 0),
             )

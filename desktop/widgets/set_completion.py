@@ -45,13 +45,17 @@ class _SortableItem(QTableWidgetItem):
         return super().__lt__(other)
 
 
-def _num_item(value, decimals: int = 2) -> _SortableItem:
+def _num_item(value, decimals: int = 2, approx: int = 0) -> _SortableItem:
     """Right-aligned numeric table item that sorts by real value."""
     if value is None:
         item = _SortableItem("—")
         item.setData(Qt.ItemDataRole.UserRole, -1.0)
     else:
-        text = str(int(value)) if decimals == 0 else f"€{value:.{decimals}f}"
+        if decimals == 0:
+            text = str(int(value))
+        else:
+            prefix = "~" if approx else ""
+            text = f"{prefix}€{value:.{decimals}f}"
         item = _SortableItem(text)
         item.setData(Qt.ItemDataRole.UserRole, float(value))
     item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -441,7 +445,7 @@ class SetCompletionWidget(QWidget):
             foil_item = QTableWidgetItem(f"✨ {foil_count}" if foil_count else "")
             foil_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
 
-            price_item = _num_item(c.get("price_eur"))
+            price_item = _num_item(c.get("price_eur"), approx=c.get("price_approx", 0))
 
             containers_str = ", ".join(c["_containers"]) if c["_containers"] else "—"
             containers_item = QTableWidgetItem(containers_str)

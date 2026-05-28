@@ -223,7 +223,7 @@ class OvercountWidget(QWidget):
                     "★" if entry.get("foil") else "",
                     lang_flag(entry),
                     entry.get("container_name") or "—",
-                    format_price(entry.get("price_eur")),
+                    format_price(entry.get("price_eur"), entry.get("price_approx", 0)),
                 ])
                 child.setData(0, _ENTRY_ROLE, entry.get("id"))
                 child.setData(0, _CARD_ROLE,  entry)
@@ -289,7 +289,7 @@ class OvercountWidget(QWidget):
                     "★" if entry.get("foil") else "",
                     lang_flag(entry),
                     f"×{card_total}",   # total copies of this card name
-                    format_price(entry.get("price_eur")),
+                    format_price(entry.get("price_eur"), entry.get("price_approx", 0)),
                 ])
                 child.setData(0, _ENTRY_ROLE, entry.get("id"))
                 child.setData(0, _CARD_ROLE,  entry)
@@ -468,7 +468,7 @@ class OvercountWidget(QWidget):
             tbl.setItem(row, 4, _item(card.get("condition") or ""))
             tbl.setItem(row, 5, _item(lang_flag(card)))
             tbl.setItem(row, 6, _item(card.get("container_name") or "—"))
-            price_item = _item(format_price(card.get("price_eur")), Qt.AlignmentFlag.AlignRight)
+            price_item = _item(format_price(card.get("price_eur"), card.get("price_approx", 0)), Qt.AlignmentFlag.AlignRight)
             tbl.setItem(row, 7, price_item)
 
         tbl.setSortingEnabled(True)
@@ -811,7 +811,7 @@ class OvercountWidget(QWidget):
                 rarity.capitalize(),
                 lang_flag(card),
                 card.get("container_name") or "—",
-                format_price(card.get("price_eur")),
+                format_price(card.get("price_eur"), card.get("price_approx", 0)),
             ])
             child.setForeground(2, col)
             child.setData(0, _CARD_ROLE, card)
@@ -938,7 +938,7 @@ class OvercountWidget(QWidget):
                 rarity.capitalize(),
                 lang_flag(card),
                 card.get("container_name") or "—",
-                format_price(card.get("price_eur")),
+                format_price(card.get("price_eur"), card.get("price_approx", 0)),
             ])
             it.setForeground(2, _rarity_color(rarity))
             it.setData(0, _CARD_ROLE,  card)

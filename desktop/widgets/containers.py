@@ -368,7 +368,7 @@ class ContainersWidget(QWidget):
             self._table.setItem(row_idx, 4, _item(card.get("condition") or ""))
             self._table.setItem(row_idx, 5, _item("★" if card.get("foil") else ""))
             self._table.setItem(row_idx, 6, _item(lang_flag(card)))
-            self._table.setItem(row_idx, 7, _item(format_price(price), sort_val=float(price if price is not None else -1.0)))
+            self._table.setItem(row_idx, 7, _item(format_price(price, card.get("price_approx", 0)), sort_val=float(price if price is not None else -1.0)))
         self._table.setSortingEnabled(True)
 
     # ------------------------------------------------------------------ #

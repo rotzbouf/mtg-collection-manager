@@ -211,7 +211,7 @@ class CollectionWidget(QWidget):
             self._table.setItem(row_idx, 5, _item("★" if card.get("foil") else ""))
             self._table.setItem(row_idx, 6, _item(lang_flag(card)))
             self._table.setItem(row_idx, 7, _item(card.get("container_name") or ""))
-            self._table.setItem(row_idx, 8, _item(format_price(card.get("price_eur"))))
+            self._table.setItem(row_idx, 8, _item(format_price(card.get("price_eur"), card.get("price_approx", 0))))
 
     def _update_pagination(self):
         total_pages = max(1, (self._total + PAGE_SIZE - 1) // PAGE_SIZE)

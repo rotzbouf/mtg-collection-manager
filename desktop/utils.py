@@ -101,12 +101,17 @@ def lang_flag(card: dict) -> str:
     return LANG_FLAGS.get(lang, lang.upper())
 
 
-def format_price(value) -> str:
-    """Format a price value as '€1.23' or '—' if absent."""
+def format_price(value, approx=0) -> str:
+    """Format a price value as '€1.23' or '—' if absent.
+
+    Pass approx=1 to prefix with '~' indicating the price is derived
+    (USD-converted or from the English card version).
+    """
     if value is None:
         return "—"
     try:
-        return f"€{float(value):.2f}"
+        prefix = "~" if approx else ""
+        return f"{prefix}€{float(value):.2f}"
     except (TypeError, ValueError):
         return "—"
 

@@ -277,6 +277,7 @@ class MainWindow(QMainWindow):
 
     async def _refresh_all_prices(self):
         from desktop.db import db, scryfall
+        from core.fx import get_usd_eur_rate, usd_to_eur
 
         try:
             ids = await db.get_distinct_scryfall_ids()
@@ -294,14 +295,38 @@ class MainWindow(QMainWindow):
 
         logger.info("Refreshing prices for %d/%d cards not yet priced today", total, len(ids))
         self._sync_lbl.setText(_("Prices 0 / {total}…").format(total=total))
+        fx_rate: float | None = None
         updated = 0
         for i, sid in enumerate(to_refresh, 1):
             try:
                 data = await scryfall.get_by_id(sid)
                 if data:
-                    await db.update_card_prices(
-                        sid, data.get("price_eur"), data.get("price_usd")
-                    )
+                    eur = data.get("price_eur")
+                    usd = data.get("price_usd")
+                    approx = 0
+
+                    if eur is None and usd is not None:
+                        # Level 2: convert USD → EUR
+                        if fx_rate is None:
+                            fx_rate = await get_usd_eur_rate()
+                        eur = usd_to_eur(usd, fx_rate)
+                        approx = 1
+
+                    if eur is None:
+                        # Level 3: use English card price as reference
+                        oracle_id = data.get("oracle_id")
+                        if oracle_id:
+                            en = await scryfall.get_en_price_by_oracle_id(oracle_id)
+                            if en:
+                                eur = en.get("price_eur")
+                                if eur is None and en.get("price_usd") is not None:
+                                    if fx_rate is None:
+                                        fx_rate = await get_usd_eur_rate()
+                                    eur = usd_to_eur(en["price_usd"], fx_rate)
+                                if eur is not None:
+                                    approx = 1
+
+                    await db.update_card_prices(sid, eur, usd, approx)
                     if data.get("legalities"):
                         await db.update_card_legalities(sid, data["legalities"])
                     if data.get("cardmarket_id"):

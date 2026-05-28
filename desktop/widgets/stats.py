@@ -132,7 +132,8 @@ class _CardEmbed(QFrame):
         lay.addWidget(name_lbl)
 
         eur = card.get("price_eur")
-        price_lbl = QLabel(f"€{float(eur):.2f}" if eur else "—")
+        approx = card.get("price_approx", 0)
+        price_lbl = QLabel((f"~€{float(eur):.2f}" if approx else f"€{float(eur):.2f}") if eur else "—")
         price_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         price_lbl.setStyleSheet("font-size:14px; color:#4CAF50; font-weight:bold;")
         lay.addWidget(price_lbl)

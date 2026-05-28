@@ -271,7 +271,7 @@ class CardDetailPanel(QWidget):
         flag = lang_flag(card)
         self._lbl_lang.setText(f"{flag} ({lang})")
         self._lbl_cond.setText(card.get("condition") or "")
-        self._lbl_price_eur.setText(format_price(card.get("price_eur")))
+        self._lbl_price_eur.setText(format_price(card.get("price_eur"), card.get("price_approx", 0)))
         cm_trend = card.get("cm_trend")
         self._lbl_cm_price.setText(f"€{float(cm_trend):.2f}" if cm_trend else "—")
         usd = card.get("price_usd")

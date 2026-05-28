@@ -351,9 +351,10 @@ class DeckAnalysisWidget(QWidget):
             self._table.setItem(row, 2, QTableWidgetItem(_type_group(card)))
             self._table.setItem(row, 3, QTableWidgetItem(cont))
 
+            approx = card.get("price_approx", 0)
             price_item = QTableWidgetItem()
             price_item.setData(Qt.ItemDataRole.DisplayRole, float(price) if price else 0.0)
-            price_item.setText(f"€{price:.2f}" if price else "—")
+            price_item.setText((f"~€{price:.2f}" if approx else f"€{price:.2f}") if price else "—")
             self._table.setItem(row, 4, price_item)
 
         self._table.setSortingEnabled(True)
