@@ -117,7 +117,7 @@ class SetCompletionWidget(QWidget):
         # Toolbar — type combo + text filter + refresh
         tb = QHBoxLayout()
         self._type_combo = QComboBox()
-        for label, _ in _TYPE_FILTER_OPTIONS:
+        for label, _type_val in _TYPE_FILTER_OPTIONS:
             self._type_combo.addItem(label)
         self._type_combo.currentIndexChanged.connect(self._apply_filter)
         tb.addWidget(self._type_combo)
