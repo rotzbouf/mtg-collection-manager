@@ -164,7 +164,7 @@ class _CardPreview(QFrame):
         self._info_lbl = QLabel()
         self._info_lbl.setWordWrap(True)
         self._info_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._info_lbl.setStyleSheet("font-size: 10px; color: #aaa;")
+        self._info_lbl.setStyleSheet("font-size: 11px; color: #aaa;")
         lay.addWidget(self._info_lbl)
 
         lay.addStretch()

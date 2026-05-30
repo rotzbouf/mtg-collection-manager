@@ -98,7 +98,7 @@ class AddCardWidget(QWidget):
               "Focus returns to collector no. after each add.")
         )
         kb_hint.setWordWrap(True)
-        kb_hint.setStyleSheet("color: #7f849c; font-size: 10px;")
+        kb_hint.setStyleSheet("color: #7f849c; font-size: 11px;")
         layout.addWidget(kb_hint)
 
         sep = QFrame()

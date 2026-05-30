@@ -160,20 +160,20 @@ class MainWindow(QMainWindow):
         self._sync_lbl = QLabel("")
         self._sync_lbl.setWordWrap(True)
         self._sync_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._sync_lbl.setStyleSheet("color: #a6adc8; font-size: 9px; padding: 2px 8px;")
+        self._sync_lbl.setStyleSheet("color: #a6adc8; font-size: 11px; padding: 2px 8px;")
         sidebar_layout.addWidget(self._sync_lbl)
 
         # DB path indicator
         from desktop.db import db
         db_lbl = QLabel(f"DB: {db.path}")
         db_lbl.setWordWrap(True)
-        db_lbl.setStyleSheet("color: #7f849c; font-size: 9px; padding: 4px 8px;")
+        db_lbl.setStyleSheet("color: #7f849c; font-size: 11px; padding: 4px 8px;")
         sidebar_layout.addWidget(db_lbl)
 
         # Version label
         ver_lbl = QLabel(f"v{__version__}")
         ver_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        ver_lbl.setStyleSheet("color: #7f849c; font-size: 9px; padding: 0 8px 6px;")
+        ver_lbl.setStyleSheet("color: #7f849c; font-size: 11px; padding: 0 8px 6px;")
         sidebar_layout.addWidget(ver_lbl)
 
         root.addWidget(sidebar)

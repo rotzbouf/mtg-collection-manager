@@ -359,7 +359,7 @@ class DeckWidget(QWidget):
 
         self._curve_label = QLabel("")
         self._curve_label.setFont(_monofont())
-        self._curve_label.setStyleSheet("color: #9399b2; font-size: 9px;")
+        self._curve_label.setStyleSheet("color: #9399b2; font-size: 11px;")
         self._curve_label.setWordWrap(False)
         root.addWidget(self._curve_label)
 
@@ -1078,7 +1078,7 @@ class _NewDeckContainerDialog(QDialog):
             _("Cards are moved from their current containers into the new one.\n"
               "Use 'Location Manifest…' before moving to record where each card originally was.")
         )
-        info.setStyleSheet("color: #9399b2; font-size: 10px;")
+        info.setStyleSheet("color: #9399b2; font-size: 11px;")
         info.setWordWrap(True)
         layout.addWidget(info)
 
