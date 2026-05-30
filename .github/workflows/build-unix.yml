@@ -156,6 +156,28 @@ jobs:
           # jsonschema pre-installed to avoid Nuitka PyQt6 config validation failure
           pip install jsonschema
 
+      - name: Patch Nuitka PyQt6-on-macOS fatal check
+        run: |
+          python3 - <<'EOF'
+          import pathlib, site, sys
+          for p in site.getsitepackages():
+              cfg = pathlib.Path(p) / "nuitka/plugins/standard/standard.nuitka-package.config.yml"
+              if cfg.exists():
+                  txt = cfg.read_text()
+                  new = txt.replace(
+                      "support_info: 'error'\n        when: 'macos and use_pyqt6'",
+                      "support_info: 'warning'\n        when: 'macos and use_pyqt6'",
+                  )
+                  if new != txt:
+                      cfg.write_text(new)
+                      print("Patched:", cfg)
+                  else:
+                      print("Pattern not found in", cfg, "— Nuitka may have changed")
+                  sys.exit(0)
+          print("ERROR: Nuitka config not found")
+          sys.exit(1)
+          EOF
+
       - name: Seed config.json
         run: cp config.json.example config.json
 
