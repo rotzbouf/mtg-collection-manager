@@ -15,7 +15,15 @@ import aiohttp
 logger = logging.getLogger(__name__)
 
 BASE = "https://api.scryfall.com"
-_HEADERS = {"Accept": "application/json;q=0.9,*/*;q=0.8"}
+
+def _build_headers() -> dict:
+    from core.version import __version__
+    return {
+        "Accept": "application/json;q=0.9,*/*;q=0.8",
+        "User-Agent": f"MTGCollectionManager/{__version__} (rotzbouf@gmail.com)",
+    }
+
+_HEADERS = _build_headers()
 _REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=30)
 _SET_CODE_RE = re.compile(r"^[a-zA-Z0-9]{1,10}$")
 
