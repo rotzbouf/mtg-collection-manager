@@ -11,6 +11,8 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer
 from qasync import asyncSlot
 
+from core.scryfall import ScryfallRateLimited
+
 from desktop.widgets.add_card import AddCardWidget
 from desktop.widgets.collection import CollectionWidget
 from desktop.widgets.search import SearchWidget
@@ -303,6 +305,11 @@ class MainWindow(QMainWindow):
             batch = to_refresh[batch_start:batch_start + _BATCH]
             try:
                 cards = await scryfall.get_cards_batch(batch)
+            except ScryfallRateLimited:
+                logger.warning("Price sync aborted: Scryfall rate limit hit — will retry tomorrow")
+                self._sync_lbl.setText(_("⚠ Price sync rate-limited — retry tomorrow"))
+                QTimer.singleShot(10000, lambda: self._sync_lbl.setText(""))
+                return
             except Exception:
                 cards = []
 

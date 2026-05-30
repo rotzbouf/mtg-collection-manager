@@ -14,6 +14,11 @@ import aiohttp
 
 logger = logging.getLogger(__name__)
 
+
+class ScryfallRateLimited(Exception):
+    """Raised when Scryfall returns 429 and the caller requested no retry."""
+
+
 BASE = "https://api.scryfall.com"
 
 def _build_headers() -> dict:
@@ -212,7 +217,7 @@ class ScryfallClient:
             logger.error("Scryfall %s — gave up after %d attempts", url, _MAX_ATTEMPTS)
             return None
 
-    async def _post(self, url: str, payload: dict) -> Optional[dict]:
+    async def _post(self, url: str, payload: dict, raise_on_429: bool = False) -> Optional[dict]:
         _MAX_ATTEMPTS = 5
         async with self._semaphore:
             loop = asyncio.get_running_loop()
@@ -225,6 +230,8 @@ class ScryfallClient:
                         if resp.status == 200:
                             return await resp.json()
                         if resp.status == 429:
+                            if raise_on_429:
+                                raise ScryfallRateLimited()
                             retry_after = float(resp.headers.get("Retry-After", 0) or 0)
                             wait = max(retry_after, 2.0 ** attempt) + random.uniform(0, 0.5)
                             logger.warning(
@@ -271,7 +278,7 @@ class ScryfallClient:
         """
         ids = scryfall_ids[:75]
         payload = {"identifiers": [{"id": sid} for sid in ids]}
-        data = await self._post(f"{BASE}/cards/collection", payload)
+        data = await self._post(f"{BASE}/cards/collection", payload, raise_on_429=True)
         if not data:
             return []
         cards = []
