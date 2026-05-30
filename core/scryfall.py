@@ -142,6 +142,7 @@ class ScryfallClient:
         self._session: Optional[aiohttp.ClientSession] = None
         self._last_request = 0.0
         self._semaphore = asyncio.Semaphore(1)
+        self._rate_limited = False   # set on first 429; cleared only on restart
         # (card_dict, data_fetched_at, price_fetched_at)
         self._id_cache: dict[str, tuple[dict, float, float]] = {}
         # name/autocomplete result cache: arg-tuple → (result, fetched_at)
@@ -167,6 +168,7 @@ class ScryfallClient:
                         if resp.status == 404:
                             return None
                         if resp.status == 429:
+                            self._rate_limited = True
                             # Respect Retry-After header; fall back to exponential backoff
                             retry_after = float(resp.headers.get("Retry-After", 0) or 0)
                             wait = max(retry_after, 2.0 ** attempt) + random.uniform(0, 0.5)
@@ -230,6 +232,7 @@ class ScryfallClient:
                         if resp.status == 200:
                             return await resp.json()
                         if resp.status == 429:
+                            self._rate_limited = True
                             if raise_on_429:
                                 raise ScryfallRateLimited()
                             retry_after = float(resp.headers.get("Retry-After", 0) or 0)
@@ -276,6 +279,8 @@ class ScryfallClient:
         Returns a list of normalized card dicts. Cards not found by Scryfall are silently
         omitted. Batch size is capped at 75 per the API contract.
         """
+        if self._rate_limited:
+            raise ScryfallRateLimited()
         ids = scryfall_ids[:75]
         payload = {"identifiers": [{"id": sid} for sid in ids]}
         data = await self._post(f"{BASE}/cards/collection", payload, raise_on_429=True)
@@ -489,6 +494,8 @@ class ScryfallClient:
         Used as a last-resort price fallback when a non-English card has no own EUR/USD price.
         Result is cached for 24 h (price TTL).
         """
+        if self._rate_limited:
+            return None
         key = ("en_oracle_price", oracle_id)
         hit, cached = self._ncache_get(key, _PRICE_TTL)
         if hit:
