@@ -99,6 +99,7 @@ jobs:
             --nofollow-import-to=matplotlib.testing `
             --nofollow-import-to=sympy `
             "--include-data-dir=images/mana=images/mana" `
+            "--include-data-files=images/app_icon.png=images/app_icon.png" `
             "--include-data-files=config.json=config.json" `
             --standalone `
             --lto=no `
