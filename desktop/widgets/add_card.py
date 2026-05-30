@@ -33,7 +33,7 @@ _LANGUAGES = [
     ("ph",  "Phyrexian"),
 ]
 
-_PLACEHOLDER_STYLE = "background: #1e1e2e; border-radius: 8px; color: #555; font-size: 12px;"
+_PLACEHOLDER_STYLE = "background: #1e1e2e; border-radius: 8px; color: #7f849c; font-size: 12px;"
 
 
 class AddCardWidget(QWidget):
@@ -89,7 +89,7 @@ class AddCardWidget(QWidget):
               "name (partial or full) triggers a search.")
         )
         hint.setWordWrap(True)
-        hint.setStyleSheet("color: #888; font-size: 11px;")
+        hint.setStyleSheet("color: #a6adc8; font-size: 11px;")
         layout.addWidget(hint)
 
         kb_hint = QLabel(
@@ -98,7 +98,7 @@ class AddCardWidget(QWidget):
               "Focus returns to collector no. after each add.")
         )
         kb_hint.setWordWrap(True)
-        kb_hint.setStyleSheet("color: #555; font-size: 10px;")
+        kb_hint.setStyleSheet("color: #7f849c; font-size: 10px;")
         layout.addWidget(kb_hint)
 
         sep = QFrame()
@@ -163,7 +163,7 @@ class AddCardWidget(QWidget):
         self._log_view.setReadOnly(True)
         self._log_view.setMaximumHeight(80)
         self._log_view.setStyleSheet(
-            "font-size: 11px; font-family: monospace; background: #0d1117; color: #8b949e;"
+            "font-size: 11px; font-family: monospace; background: #0d1117; color: #a6adc8;"
         )
         self._log_view.setPlaceholderText(_("Search activity will appear here…"))
         layout.addWidget(self._log_view)
@@ -198,7 +198,7 @@ class AddCardWidget(QWidget):
 
         self._empty_lbl = QLabel(_("Search for a card\nto see a preview here."))
         self._empty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._empty_lbl.setStyleSheet("color: #444; font-size: 15px;")
+        self._empty_lbl.setStyleSheet("color: #7f849c; font-size: 15px;")
         self._empty_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         layout.addWidget(self._empty_lbl)
 
@@ -230,7 +230,7 @@ class AddCardWidget(QWidget):
 
         def _row(label: str) -> QLabel:
             hdr = QLabel(f"<b>{label}</b>")
-            hdr.setStyleSheet("font-size: 11px; color: #888;")
+            hdr.setStyleSheet("font-size: 11px; color: #a6adc8;")
             lbl = QLabel()
             lbl.setWordWrap(True)
             lbl.setStyleSheet("font-size: 13px;")
@@ -244,7 +244,7 @@ class AddCardWidget(QWidget):
         self._lbl_type  = _row(_("Type"))
 
         mana_hdr = QLabel(_("<b>Mana cost</b>"))
-        mana_hdr.setStyleSheet("font-size: 11px; color: #888;")
+        mana_hdr.setStyleSheet("font-size: 11px; color: #a6adc8;")
         info_layout.addWidget(mana_hdr)
         self._mana_widget = ManaWidget()
         info_layout.addWidget(self._mana_widget)

@@ -134,14 +134,14 @@ class SettingsWidget(QWidget):
         bot_status_row = QHBoxLayout()
         bot_status_row.addWidget(QLabel(_("Status:")))
         self._bot_status_lbl = QLabel(_("○ Stopped"))
-        self._bot_status_lbl.setStyleSheet("font-weight: bold; color: #888;")
+        self._bot_status_lbl.setStyleSheet("font-weight: bold; color: #a6adc8;")
         bot_status_row.addWidget(self._bot_status_lbl)
         bot_status_row.addStretch()
         bot_layout.addLayout(bot_status_row)
 
         _py, _args, _unused = _bot_launch()
         info = QLabel(f"<small>{_py}  ·  {' '.join(_args)}</small>")
-        info.setStyleSheet("color: #555;")
+        info.setStyleSheet("color: #7f849c;")
         bot_layout.addWidget(info)
 
         bot_btn_row = QHBoxLayout()
@@ -247,7 +247,7 @@ class SettingsWidget(QWidget):
     def _on_bot_state_changed(self, state: QProcess.ProcessState):
         if state == QProcess.ProcessState.NotRunning:
             self._bot_status_lbl.setText(_("○ Stopped"))
-            self._bot_status_lbl.setStyleSheet("font-weight: bold; color: #888;")
+            self._bot_status_lbl.setStyleSheet("font-weight: bold; color: #a6adc8;")
             self._bot_start_btn.setEnabled(True)
             self._bot_stop_btn.setEnabled(False)
         elif state == QProcess.ProcessState.Starting:
@@ -327,7 +327,7 @@ class SettingsWidget(QWidget):
 
         sync_status_row = QHBoxLayout()
         self._sync_status = QLabel("")
-        self._sync_status.setStyleSheet("color: #888; font-size: 12px;")
+        self._sync_status.setStyleSheet("color: #a6adc8; font-size: 12px;")
         self._sync_cancel_btn = QPushButton("Cancel")
         self._sync_cancel_btn.setFixedWidth(70)
         self._sync_cancel_btn.setVisible(False)
@@ -354,7 +354,7 @@ class SettingsWidget(QWidget):
         price_row.addStretch()
         layout.addLayout(price_row)
         self._price_status = QLabel("")
-        self._price_status.setStyleSheet("color: #888; font-size: 12px;")
+        self._price_status.setStyleSheet("color: #a6adc8; font-size: 12px;")
         layout.addWidget(self._price_status)
 
         layout.addSpacing(4)
@@ -378,7 +378,7 @@ class SettingsWidget(QWidget):
         cm_row.addStretch()
         layout.addLayout(cm_row)
         self._cm_status = QLabel("")
-        self._cm_status.setStyleSheet("color: #888; font-size: 12px;")
+        self._cm_status.setStyleSheet("color: #a6adc8; font-size: 12px;")
         layout.addWidget(self._cm_status)
 
         self._cm_sync_btn.clicked.connect(self._on_sync_cm)
@@ -445,7 +445,7 @@ class SettingsWidget(QWidget):
         layout.addWidget(self._meta_progress)
 
         self._meta_status = QLabel("")
-        self._meta_status.setStyleSheet("color: #888; font-size: 12px;")
+        self._meta_status.setStyleSheet("color: #a6adc8; font-size: 12px;")
         layout.addWidget(self._meta_status)
 
         self._meta_crawl_btn.clicked.connect(self._on_meta_crawl)
@@ -470,7 +470,7 @@ class SettingsWidget(QWidget):
         export_row.addStretch()
         layout.addLayout(export_row)
         self._exp_status = QLabel("")
-        self._exp_status.setStyleSheet("color: #888;")
+        self._exp_status.setStyleSheet("color: #a6adc8;")
         layout.addWidget(self._exp_status)
 
         layout.addSpacing(4)
@@ -489,7 +489,7 @@ class SettingsWidget(QWidget):
         layout.addLayout(import_row)
 
         self._imp_status = QLabel("No file selected.")
-        self._imp_status.setStyleSheet("color: #888;")
+        self._imp_status.setStyleSheet("color: #a6adc8;")
         layout.addWidget(self._imp_status)
 
         self._preview_table = QTableWidget(0, 5)
@@ -538,7 +538,7 @@ class SettingsWidget(QWidget):
         dir_row.addWidget(self._backup_dir_save_btn)
         layout.addLayout(dir_row)
         self._backup_dir_status = QLabel("")
-        self._backup_dir_status.setStyleSheet("color: #888; font-size: 11px;")
+        self._backup_dir_status.setStyleSheet("color: #a6adc8; font-size: 11px;")
         layout.addWidget(self._backup_dir_status)
 
         backup_row = QHBoxLayout()
@@ -563,7 +563,7 @@ class SettingsWidget(QWidget):
         layout.addLayout(restore_row)
 
         self._backup_status = QLabel("")
-        self._backup_status.setStyleSheet("color: #888;")
+        self._backup_status.setStyleSheet("color: #a6adc8;")
         layout.addWidget(self._backup_status)
 
         layout.addStretch()
@@ -610,7 +610,7 @@ class SettingsWidget(QWidget):
             if code == current_lang:
                 self._lang_combo.setCurrentIndex(self._lang_combo.count() - 1)
         self._lang_status = QLabel("")
-        self._lang_status.setStyleSheet("color: #888; font-size: 11px;")
+        self._lang_status.setStyleSheet("color: #a6adc8; font-size: 11px;")
         lang_row = QHBoxLayout()
         lang_row.addWidget(self._lang_combo)
         lang_save_btn = QPushButton("Save")
@@ -674,7 +674,7 @@ class SettingsWidget(QWidget):
         self._env_save_btn = QPushButton("Save config.json")
         self._env_save_btn.setFixedWidth(140)
         self._env_status = QLabel("")
-        self._env_status.setStyleSheet("color: #888;")
+        self._env_status.setStyleSheet("color: #a6adc8;")
         save_row.addWidget(self._env_save_btn)
         save_row.addWidget(self._env_status)
         save_row.addStretch()
@@ -794,7 +794,7 @@ class SettingsWidget(QWidget):
         self._ct_save_btn = QPushButton("Save")
         self._ct_save_btn.setFixedWidth(100)
         self._ct_status = QLabel("")
-        self._ct_status.setStyleSheet("color: #888;")
+        self._ct_status.setStyleSheet("color: #a6adc8;")
         save_row.addWidget(self._ct_save_btn)
         save_row.addWidget(self._ct_status)
         save_row.addStretch()
@@ -923,7 +923,7 @@ class SettingsWidget(QWidget):
         self._bl_save_btn = QPushButton("Save")
         self._bl_save_btn.setFixedWidth(90)
         self._bl_status   = QLabel("")
-        self._bl_status.setStyleSheet("color: #888;")
+        self._bl_status.setStyleSheet("color: #a6adc8;")
         save_row.addWidget(self._bl_save_btn)
         save_row.addWidget(self._bl_status)
         save_row.addStretch()
@@ -976,7 +976,7 @@ class SettingsWidget(QWidget):
         self._brave_save_btn = QPushButton("Save")
         self._brave_save_btn.setFixedWidth(90)
         self._brave_status = QLabel("")
-        self._brave_status.setStyleSheet("color: #888;")
+        self._brave_status.setStyleSheet("color: #a6adc8;")
         brave_save_row.addWidget(self._brave_save_btn)
         brave_save_row.addWidget(self._brave_status)
         brave_save_row.addStretch()
@@ -1024,7 +1024,7 @@ class SettingsWidget(QWidget):
         self._creds_save_btn   = QPushButton("Save")
         self._creds_save_btn.setFixedWidth(90)
         self._creds_status     = QLabel("")
-        self._creds_status.setStyleSheet("color: #888;")
+        self._creds_status.setStyleSheet("color: #a6adc8;")
         creds_btn_row.addWidget(self._creds_remove_btn)
         creds_btn_row.addWidget(self._creds_save_btn)
         creds_btn_row.addWidget(self._creds_status)
@@ -1154,7 +1154,7 @@ class SettingsWidget(QWidget):
     def _divider() -> QFrame:
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("color: #333;")
+        sep.setStyleSheet("color: #45475a;")
         return sep
 
     # ------------------------------------------------------------------ #

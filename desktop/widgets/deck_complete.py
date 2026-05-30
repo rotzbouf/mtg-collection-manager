@@ -335,7 +335,7 @@ class DeckCompleteWidget(QWidget):
 
         row2 = QHBoxLayout()
         self._deck_status = QLabel(_("Select a deck and click Analyze."))
-        self._deck_status.setStyleSheet("color: #888; font-size: 12px;")
+        self._deck_status.setStyleSheet("color: #a6adc8; font-size: 12px;")
         row2.addWidget(self._deck_status, stretch=1)
         top_layout.addLayout(row2)
 
@@ -369,7 +369,7 @@ class DeckCompleteWidget(QWidget):
         filter_row.addWidget(self._basic_filter_chk)
         filter_row.addStretch()
         self._result_count_lbl = QLabel("")
-        self._result_count_lbl.setStyleSheet("color: #888; font-size: 12px;")
+        self._result_count_lbl.setStyleSheet("color: #a6adc8; font-size: 12px;")
         filter_row.addWidget(self._result_count_lbl)
         root.addLayout(filter_row)
 
@@ -410,7 +410,7 @@ class DeckCompleteWidget(QWidget):
         self._add_btn.setStyleSheet(
             "QPushButton { background-color: #1e3a1e; border: 1px solid #4a8a4a; padding: 5px 14px; }"
             "QPushButton:hover { background-color: #2a5a2a; }"
-            "QPushButton:disabled { color: #555; border-color: #333; }"
+            "QPushButton:disabled { color: #7f849c; border-color: #45475a; }"
         )
         bottom.addWidget(self._add_btn)
         bottom.addStretch()

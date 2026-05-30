@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 _ACCEPTED_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tiff", ".heic"}
 
-_OCR_STATUS_STYLE = "font-size: 12px; color: #888; padding: 2px 0;"
+_OCR_STATUS_STYLE = "font-size: 12px; color: #a6adc8; padding: 2px 0;"
 _MATCH_OK_STYLE   = "font-size: 12px; color: #7ec8a0; padding: 2px 0;"
 _MATCH_FAIL_STYLE = "font-size: 12px; color: #e07070; padding: 2px 0;"
 
@@ -38,7 +38,7 @@ class _DropZone(QLabel):
 
     _IDLE_STYLE = (
         "background: #1a1a2e; border: 2px dashed #444; border-radius: 10px;"
-        "color: #666; font-size: 13px;"
+        "color: #9399b2; font-size: 13px;"
     )
     _HOVER_STYLE = (
         "background: #1e2a3e; border: 2px dashed #5588cc; border-radius: 10px;"
@@ -221,7 +221,7 @@ class ScanWidget(QWidget):
 
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("color: #333;")
+        sep.setStyleSheet("color: #45475a;")
         left_layout.addWidget(sep)
 
         # Language selector (auto-populated from scan; can be overridden)

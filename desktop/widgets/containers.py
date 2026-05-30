@@ -933,7 +933,7 @@ def _deck_check_dialog(parent, deck_name: str, issues: list[str],
     if issues:
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("color: #333;")
+        sep.setStyleSheet("color: #45475a;")
         layout.addWidget(sep)
 
         scroll = QScrollArea()

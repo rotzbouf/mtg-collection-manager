@@ -116,7 +116,7 @@ class OvercountWidget(QWidget):
         root.addLayout(toolbar)
 
         self._oc_status = QLabel("")
-        self._oc_status.setStyleSheet("color: #888; font-size: 12px;")
+        self._oc_status.setStyleSheet("color: #a6adc8; font-size: 12px;")
         root.addWidget(self._oc_status)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -381,7 +381,7 @@ class OvercountWidget(QWidget):
         root.addLayout(toolbar)
 
         self._sell_status = QLabel("")
-        self._sell_status.setStyleSheet("color: #888; font-size: 12px;")
+        self._sell_status.setStyleSheet("color: #a6adc8; font-size: 12px;")
         root.addWidget(self._sell_status)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -611,7 +611,7 @@ class OvercountWidget(QWidget):
 
         # ── Preview ─────────────────────────────────────────────────────
         self._bundle_status = QLabel(_("Select a preset to preview the bundle."))
-        self._bundle_status.setStyleSheet("color: #888; font-size: 12px;")
+        self._bundle_status.setStyleSheet("color: #a6adc8; font-size: 12px;")
         root.addWidget(self._bundle_status)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -648,7 +648,7 @@ class OvercountWidget(QWidget):
         _btn_style = (
             "QPushButton {{ background-color: {bg}; border: 1px solid {br}; padding: 5px 12px; }}"
             "QPushButton:hover {{ background-color: {hv}; }}"
-            "QPushButton:disabled {{ color: #555; border-color: #333; }}"
+            "QPushButton:disabled {{ color: #7f849c; border-color: #45475a; }}"
         )
         self._bundle_add_btn = QPushButton(_("＋  Add to Queue"))
         self._bundle_add_btn.setEnabled(False)

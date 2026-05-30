@@ -396,7 +396,7 @@ class StatsWidget(QWidget):
                 _("Not enough price history yet.\n"
                   "Run a price sync daily to build up the chart.")
             )
-            no_data.setStyleSheet("color: #666; font-size: 12px; padding: 8px 0;")
+            no_data.setStyleSheet("color: #9399b2; font-size: 12px; padding: 8px 0;")
             lay.addWidget(no_data)
         else:
             dates = [datetime.fromisoformat(r["recorded_at"]) for r in value_history]

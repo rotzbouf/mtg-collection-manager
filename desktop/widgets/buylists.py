@@ -151,7 +151,7 @@ class _CardPreview(QFrame):
         self._img_lbl.setFixedSize(_IMG_W, _IMG_H)
         self._img_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._img_lbl.setStyleSheet(
-            "background: #1e1e2e; border-radius: 10px; color: #555; font-size: 11px;"
+            "background: #1e1e2e; border-radius: 10px; color: #7f849c; font-size: 11px;"
         )
         lay.addWidget(self._img_lbl, alignment=Qt.AlignmentFlag.AlignHCenter)
 
@@ -299,7 +299,7 @@ class BuylistsWidget(QWidget):
         action_row.addWidget(self._match_btn)
         action_row.addStretch()
         self._status_lbl = QLabel("")
-        self._status_lbl.setStyleSheet("color: #888; font-size: 11px;")
+        self._status_lbl.setStyleSheet("color: #a6adc8; font-size: 11px;")
         action_row.addWidget(self._status_lbl)
         root.addLayout(action_row)
 
@@ -413,7 +413,7 @@ class BuylistsWidget(QWidget):
         root.addWidget(self._search_progress)
 
         self._search_status = QLabel("")
-        self._search_status.setStyleSheet("color: #888; font-size: 11px;")
+        self._search_status.setStyleSheet("color: #a6adc8; font-size: 11px;")
         root.addWidget(self._search_status)
 
         # ── Splitter: store ranking | card detail ─────────────────────────────
@@ -456,7 +456,7 @@ class BuylistsWidget(QWidget):
         right_lay.setSpacing(4)
 
         self._detail_header = QLabel(_("Select a store to view card matches"))
-        self._detail_header.setStyleSheet("color: #888; font-size: 11px;")
+        self._detail_header.setStyleSheet("color: #a6adc8; font-size: 11px;")
         right_lay.addWidget(self._detail_header)
 
         self._detail_table = _make_card_table()
@@ -1533,7 +1533,7 @@ class _CredentialsDialog(QDialog):
             "If login still fails, try setting the exact login URL above.</small>"
         )
         note.setWordWrap(True)
-        note.setStyleSheet("color: #888;")
+        note.setStyleSheet("color: #a6adc8;")
         layout.addWidget(note)
 
         btns = QDialogButtonBox(

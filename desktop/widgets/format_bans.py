@@ -55,7 +55,7 @@ class FormatBansWidget(QWidget):
         bar.addSpacing(16)
 
         self._status_lbl = QLabel("")
-        self._status_lbl.setStyleSheet("color: #888; font-size: 11px;")
+        self._status_lbl.setStyleSheet("color: #a6adc8; font-size: 11px;")
         bar.addWidget(self._status_lbl)
 
         bar.addStretch()

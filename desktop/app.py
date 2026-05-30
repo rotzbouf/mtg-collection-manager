@@ -173,7 +173,7 @@ def _apply_dark_style(app: QApplication):
             background-color: #585b70;
         }
         QPushButton:disabled {
-            color: #585b70;
+            color: #6c7086;
         }
         QScrollArea {
             border: none;

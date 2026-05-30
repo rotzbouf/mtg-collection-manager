@@ -172,7 +172,7 @@ class _CompactCardPanel(QWidget):
     and the collector number to physically locate the card.
     """
 
-    _PLACEHOLDER = "color: #444; border: 1px solid #333; border-radius: 6px;"
+    _PLACEHOLDER = "color: #7f849c; border: 1px solid #333; border-radius: 6px;"
 
     def __init__(self, title: str, parent=None):
         super().__init__(parent)
@@ -189,7 +189,7 @@ class _CompactCardPanel(QWidget):
         # Section title
         self._title_lbl = QLabel(title)
         self._title_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._title_lbl.setStyleSheet("font-size: 11px; color: #888;")
+        self._title_lbl.setStyleSheet("font-size: 11px; color: #a6adc8;")
         root.addWidget(self._title_lbl)
 
         # Card name
@@ -329,7 +329,7 @@ class DeckImproveWidget(QWidget):
         header.addWidget(self._deck_combo)
 
         self._format_lbl = QLabel("")
-        self._format_lbl.setStyleSheet("color: #888; font-size: 12px; margin-left: 8px;")
+        self._format_lbl.setStyleSheet("color: #a6adc8; font-size: 12px; margin-left: 8px;")
         header.addWidget(self._format_lbl)
 
         header.addStretch()
@@ -350,7 +350,7 @@ class DeckImproveWidget(QWidget):
 
         # ── Status label ──────────────────────────────────────────────── #
         self._status_lbl = QLabel(_("Select a deck to see improvement proposals."))
-        self._status_lbl.setStyleSheet("color: #888; font-size: 12px;")
+        self._status_lbl.setStyleSheet("color: #a6adc8; font-size: 12px;")
         root.addWidget(self._status_lbl)
 
         # ── Main split: removal panel | table | candidate panel ──────────── #

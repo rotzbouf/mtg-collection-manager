@@ -17,7 +17,7 @@ from qasync import asyncSlot
 from desktop.utils import display_name, lang_flag, format_price, scale_pixmap, async_pixmap, async_pixmap_back
 from core.i18n import _
 
-_PLACEHOLDER_STYLE = "background: #1e1e2e; border-radius: 8px; color: #555; font-size: 12px;"
+_PLACEHOLDER_STYLE = "background: #1e1e2e; border-radius: 8px; color: #7f849c; font-size: 12px;"
 
 _MANA_DIR = Path(__file__).parent.parent.parent / "images" / "mana"
 _MANA_DIR.mkdir(parents=True, exist_ok=True)
@@ -190,7 +190,7 @@ class CardDetailPanel(QWidget):
             lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             lbl.setStyleSheet("font-size: 13px;")
             header = QLabel(f"<b>{label}</b>")
-            header.setStyleSheet("font-size: 11px; color: #888;")
+            header.setStyleSheet("font-size: 11px; color: #a6adc8;")
             info.addWidget(header)
             info.addWidget(lbl)
             return lbl
@@ -201,7 +201,7 @@ class CardDetailPanel(QWidget):
 
         # Mana cost — icon row
         mana_header = QLabel("<b>" + _("Mana cost") + "</b>")
-        mana_header.setStyleSheet("font-size: 11px; color: #888;")
+        mana_header.setStyleSheet("font-size: 11px; color: #a6adc8;")
         info.addWidget(mana_header)
         self._mana_widget = ManaWidget()
         info.addWidget(self._mana_widget)

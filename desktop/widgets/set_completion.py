@@ -156,7 +156,7 @@ class SetCompletionWidget(QWidget):
         left_lay.addWidget(self._set_table)
 
         self._sets_status = QLabel("")
-        self._sets_status.setStyleSheet("color: #888; font-size: 10px;")
+        self._sets_status.setStyleSheet("color: #a6adc8; font-size: 10px;")
         left_lay.addWidget(self._sets_status)
 
         splitter.addWidget(left)
@@ -176,7 +176,7 @@ class SetCompletionWidget(QWidget):
         right_lay.addWidget(self._set_name_lbl)
 
         self._set_meta_lbl = QLabel("")
-        self._set_meta_lbl.setStyleSheet("color: #888; font-size: 10px;")
+        self._set_meta_lbl.setStyleSheet("color: #a6adc8; font-size: 10px;")
         self._set_meta_lbl.setWordWrap(True)
         right_lay.addWidget(self._set_meta_lbl)
 
@@ -200,7 +200,7 @@ class SetCompletionWidget(QWidget):
 
         # Summary row
         self._value_lbl = QLabel("")
-        self._value_lbl.setStyleSheet("color: #888; font-size: 10px;")
+        self._value_lbl.setStyleSheet("color: #a6adc8; font-size: 10px;")
         right_lay.addWidget(self._value_lbl)
 
         # Card table

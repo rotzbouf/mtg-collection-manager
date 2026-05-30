@@ -160,7 +160,7 @@ class SearchWidget(QWidget):
         color_layout.addLayout(pip_row)
 
         self._f_colors_exclusive = QCheckBox(_("Exact (no other colors)"))
-        self._f_colors_exclusive.setStyleSheet("font-size: 11px; color: #888;")
+        self._f_colors_exclusive.setStyleSheet("font-size: 11px; color: #a6adc8;")
         color_layout.addWidget(self._f_colors_exclusive)
 
         layout.addWidget(color_box)
@@ -296,7 +296,7 @@ class SearchWidget(QWidget):
         layout.setSpacing(4)
 
         self._status_lbl = QLabel(_("Enter filters and press Search."))
-        self._status_lbl.setStyleSheet("color: #888; font-size: 12px; padding: 0 8px;")
+        self._status_lbl.setStyleSheet("color: #a6adc8; font-size: 12px; padding: 0 8px;")
         layout.addWidget(self._status_lbl)
 
         self._table = QTableWidget(0, len(_RESULT_COLS))
