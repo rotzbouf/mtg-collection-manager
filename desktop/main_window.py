@@ -299,7 +299,7 @@ class MainWindow(QMainWindow):
         self._sync_lbl.setText(_("Prices 0 / {total}…").format(total=total))
         fx_rate: float | None = None
         updated = 0
-        _BATCH = 75
+        _BATCH = 50
         _BATCH_DELAY = 1.0  # seconds between batch requests — background job, be polite
 
         for batch_start in range(0, total, _BATCH):
