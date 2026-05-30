@@ -297,10 +297,22 @@ class MainWindow(QMainWindow):
         self._sync_lbl.setText(_("Prices 0 / {total}…").format(total=total))
         fx_rate: float | None = None
         updated = 0
-        for i, sid in enumerate(to_refresh, 1):
+        _BATCH = 75
+
+        for batch_start in range(0, total, _BATCH):
+            batch = to_refresh[batch_start:batch_start + _BATCH]
             try:
-                data = await scryfall.get_by_id(sid)
-                if data:
+                cards = await scryfall.get_cards_batch(batch)
+            except Exception:
+                cards = []
+
+            found = {c["scryfall_id"]: c for c in cards if c.get("scryfall_id")}
+
+            for sid in batch:
+                data = found.get(sid)
+                if not data:
+                    continue
+                try:
                     eur = data.get("price_eur")
                     usd = data.get("price_usd")
                     approx = 0
@@ -332,10 +344,11 @@ class MainWindow(QMainWindow):
                     if data.get("cardmarket_id"):
                         await db.update_card_cm_id(sid, data["cardmarket_id"])
                     updated += 1
-            except Exception:
-                pass
-            if i % 5 == 0 or i == total:
-                self._sync_lbl.setText(_("Prices {i} / {total}…").format(i=i, total=total))
+                except Exception:
+                    pass
+
+            done = min(batch_start + _BATCH, total)
+            self._sync_lbl.setText(_("Prices {i} / {total}…").format(i=done, total=total))
 
         try:
             await db.record_prices()

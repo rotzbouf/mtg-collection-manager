@@ -204,6 +204,74 @@ class ScryfallClient:
             logger.error("Scryfall %s — gave up after %d attempts", url, _MAX_ATTEMPTS)
             return None
 
+    async def _post(self, url: str, payload: dict) -> Optional[dict]:
+        _MAX_ATTEMPTS = 5
+        async with self._semaphore:
+            loop = asyncio.get_running_loop()
+            await asyncio.sleep(max(0, 0.1 - (loop.time() - self._last_request)))
+            session = await self._session_get()
+            for attempt in range(_MAX_ATTEMPTS):
+                try:
+                    async with session.post(url, json=payload, timeout=_REQUEST_TIMEOUT) as resp:
+                        self._last_request = loop.time()
+                        if resp.status == 200:
+                            return await resp.json()
+                        if resp.status == 429:
+                            retry_after = float(resp.headers.get("Retry-After", 0) or 0)
+                            wait = max(retry_after, 2.0 ** attempt) + random.uniform(0, 0.5)
+                            logger.warning(
+                                "Scryfall 429 — retrying in %.1fs (attempt %d/%d)",
+                                wait, attempt + 1, _MAX_ATTEMPTS,
+                            )
+                            await asyncio.sleep(wait)
+                            continue
+                        if resp.status in (500, 502, 503, 504):
+                            retry_after = float(resp.headers.get("Retry-After", 0) or 0)
+                            wait = max(retry_after, 2.0 ** attempt) + random.uniform(0, 0.5)
+                            logger.warning(
+                                "Scryfall POST %s → %d — retrying in %.1fs (attempt %d/%d)",
+                                url, resp.status, wait, attempt + 1, _MAX_ATTEMPTS,
+                            )
+                            await asyncio.sleep(wait)
+                            continue
+                        logger.warning("Scryfall POST %s → %d (not retrying)", url, resp.status)
+                        return None
+                except asyncio.TimeoutError:
+                    wait = 2.0 ** attempt + random.uniform(0, 0.5)
+                    logger.warning(
+                        "Scryfall POST timed out (attempt %d/%d) — retrying in %.1fs",
+                        attempt + 1, _MAX_ATTEMPTS, wait,
+                    )
+                    if attempt < _MAX_ATTEMPTS - 1:
+                        await asyncio.sleep(wait)
+                except aiohttp.ClientError as exc:
+                    wait = 2.0 ** attempt + random.uniform(0, 0.5)
+                    logger.warning(
+                        "Scryfall POST error (attempt %d/%d): %s — retrying in %.1fs",
+                        attempt + 1, _MAX_ATTEMPTS, exc, wait,
+                    )
+                    if attempt < _MAX_ATTEMPTS - 1:
+                        await asyncio.sleep(wait)
+            logger.error("Scryfall POST %s — gave up after %d attempts", url, _MAX_ATTEMPTS)
+            return None
+
+    async def get_cards_batch(self, scryfall_ids: list[str]) -> list[dict]:
+        """Fetch up to 75 cards by Scryfall ID using the /cards/collection batch endpoint.
+
+        Returns a list of normalized card dicts. Cards not found by Scryfall are silently
+        omitted. Batch size is capped at 75 per the API contract.
+        """
+        ids = scryfall_ids[:75]
+        payload = {"identifiers": [{"id": sid} for sid in ids]}
+        data = await self._post(f"{BASE}/cards/collection", payload)
+        if not data:
+            return []
+        cards = []
+        for raw in data.get("data", []):
+            if raw.get("object") == "card":
+                cards.append(_extract_card(raw))
+        return cards
+
     async def close(self):
         if self._session and not self._session.closed:
             await self._session.close()
