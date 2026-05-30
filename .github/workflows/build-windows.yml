@@ -24,19 +24,13 @@ jobs:
         with:
           python-version: '3.12'
 
-      # Keyed on requirements.txt; torch/easyocr are not installed on Windows
-      # (Tesseract handles OCR instead), so there is no large ML download.
       - name: Cache pip packages
         uses: actions/cache@v4
         with:
           path: ~\AppData\Local\pip\Cache
-          key: pip-win-${{ hashFiles('deps/requirements.txt') }}-notorch
-          restore-keys: |
-            pip-win-${{ hashFiles('deps/requirements.txt') }}-
-            pip-win-
+          key: pip-win-${{ hashFiles('deps/requirements.txt') }}
+          restore-keys: pip-win-
 
-      # Nuitka stores per-module C compilation results here.  On rebuilds only
-      # modules whose Python source changed are recompiled — huge time saving.
       - name: Cache Nuitka
         uses: actions/cache@v4
         with:
@@ -56,9 +50,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r deps/requirements.txt
           pip install nuitka ordered-set zstandard
-          pip install PyQt6-WebEngine
-          # torch/easyocr intentionally excluded on Windows — Tesseract handles
-          # OCR and avoids a ~2 GB download that causes build timeouts.
 
       - name: Seed config.json
         shell: pwsh
@@ -77,24 +68,18 @@ jobs:
             --enable-plugin=pyqt6 `
             --include-qt-plugins=sensible `
             --follow-import-to=core `
+            --follow-import-to=core.translations `
             --follow-import-to=desktop `
             --follow-import-to=server `
             --follow-import-to=cogs `
             --include-package=cv2 `
             --include-package=PIL `
-            --include-package=PyQt6.QtWebEngineCore `
-            --include-package=PyQt6.QtWebEngineWidgets `
             --include-package=discord `
             --include-package=aiohttp `
             --include-package=aiosqlite `
             --include-package=qasync `
             --include-package=matplotlib `
-            --include-package=fastapi `
-            --include-package=uvicorn `
-            --include-package=starlette `
             --include-package=pytesseract `
-            --include-package=anyio `
-            --include-package=scipy `
             --nofollow-import-to=tkinter `
             --nofollow-import-to=_tkinter `
             --nofollow-import-to=tornado `
@@ -113,42 +98,7 @@ jobs:
             --nofollow-import-to=matplotlib.sphinxext `
             --nofollow-import-to=matplotlib.testing `
             --nofollow-import-to=sympy `
-            --nofollow-import-to=scipy._lib.tests `
-            --nofollow-import-to=scipy.cluster.tests `
-            --nofollow-import-to=scipy.constants.tests `
-            --nofollow-import-to=scipy.datasets.tests `
-            --nofollow-import-to=scipy.differentiate.tests `
-            --nofollow-import-to=scipy.fft._pocketfft.tests `
-            --nofollow-import-to=scipy.fft.tests `
-            --nofollow-import-to=scipy.fftpack.tests `
-            --nofollow-import-to=scipy.integrate._ivp.tests `
-            --nofollow-import-to=scipy.integrate.tests `
-            --nofollow-import-to=scipy.interpolate.tests `
-            --nofollow-import-to=scipy.io._harwell_boeing.tests `
-            --nofollow-import-to=scipy.io.arff.tests `
-            --nofollow-import-to=scipy.io.matlab.tests `
-            --nofollow-import-to=scipy.io.tests `
-            --nofollow-import-to=scipy.linalg.tests `
-            --nofollow-import-to=scipy.ndimage.tests `
-            --nofollow-import-to=scipy.odr.tests `
-            --nofollow-import-to=scipy.optimize._trustregion_constr.tests `
-            --nofollow-import-to=scipy.optimize.tests `
-            --nofollow-import-to=scipy.signal.tests `
-            --nofollow-import-to=scipy.sparse.csgraph.tests `
-            --nofollow-import-to=scipy.sparse.linalg._dsolve.tests `
-            --nofollow-import-to=scipy.sparse.linalg._eigen.arpack.tests `
-            --nofollow-import-to=scipy.sparse.linalg._eigen.lobpcg.tests `
-            --nofollow-import-to=scipy.sparse.linalg._eigen.tests `
-            --nofollow-import-to=scipy.sparse.linalg._isolve.tests `
-            --nofollow-import-to=scipy.sparse.linalg.tests `
-            --nofollow-import-to=scipy.sparse.tests `
-            --nofollow-import-to=scipy.spatial.tests `
-            --nofollow-import-to=scipy.spatial.transform.tests `
-            --nofollow-import-to=scipy.special.tests `
-            --nofollow-import-to=scipy.stats.tests `
             "--include-data-dir=images/mana=images/mana" `
-            "--include-data-dir=server/ui/templates=server/ui/templates" `
-            "--include-data-dir=server/ui/static=server/ui/static" `
             "--include-data-files=config.json=config.json" `
             --standalone `
             --lto=no `
@@ -156,6 +106,7 @@ jobs:
             --no-progressbar `
             --python-flag=no_site `
             --windows-console-mode=disable `
+            --windows-icon-from-ico=images/app_icon.ico `
             desktop/app.py
 
       - name: Upload to release
