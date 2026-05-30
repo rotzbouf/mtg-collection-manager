@@ -157,7 +157,7 @@ class ScryfallClient:
         _MAX_ATTEMPTS = 5
         async with self._semaphore:
             loop = asyncio.get_running_loop()
-            await asyncio.sleep(max(0, 0.1 - (loop.time() - self._last_request)))
+            await asyncio.sleep(max(0, 0.5 - (loop.time() - self._last_request)))
             session = await self._session_get()
             for attempt in range(_MAX_ATTEMPTS):
                 try:
@@ -223,7 +223,7 @@ class ScryfallClient:
         _MAX_ATTEMPTS = 5
         async with self._semaphore:
             loop = asyncio.get_running_loop()
-            await asyncio.sleep(max(0, 0.1 - (loop.time() - self._last_request)))
+            await asyncio.sleep(max(0, 0.5 - (loop.time() - self._last_request)))
             session = await self._session_get()
             for attempt in range(_MAX_ATTEMPTS):
                 try:

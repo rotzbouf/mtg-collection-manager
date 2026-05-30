@@ -300,8 +300,11 @@ class MainWindow(QMainWindow):
         fx_rate: float | None = None
         updated = 0
         _BATCH = 75
+        _BATCH_DELAY = 1.0  # seconds between batch requests — background job, be polite
 
         for batch_start in range(0, total, _BATCH):
+            if batch_start > 0:
+                await asyncio.sleep(_BATCH_DELAY)
             batch = to_refresh[batch_start:batch_start + _BATCH]
             try:
                 cards = await scryfall.get_cards_batch(batch)
