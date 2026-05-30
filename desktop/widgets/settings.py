@@ -14,7 +14,8 @@ from PyQt6.QtWidgets import (
     QListWidgetItem, QPlainTextEdit, QComboBox,
 )
 from PyQt6.QtCore import Qt, QProcess, QProcessEnvironment
-from qasync import asyncSlot
+from PyQt6.QtWidgets import QDialog
+from qasync import asyncSlot, asyncWrap
 
 import core.config as cfg
 from core.i18n import _, get_available as _i18n_available, get_lang as _i18n_get_lang
@@ -1780,10 +1781,14 @@ class SettingsWidget(QWidget):
         import lzma
         from desktop.db import db
 
-        path, _unused = QFileDialog.getOpenFileName(
-            self, "Open backup", "",
-            "Backup files (*.db *.db.gz *.db.xz);;All files (*)"
-        )
+        dlg_file = QFileDialog(self, "Open backup", "",
+                               "Backup files (*.db *.db.gz *.db.xz);;All files (*)")
+        dlg_file.setAcceptMode(QFileDialog.AcceptMode.AcceptOpen)
+        dlg_file.setFileMode(QFileDialog.FileMode.ExistingFile)
+        if await asyncWrap(dlg_file.exec) != QDialog.DialogCode.Accepted:
+            return
+        files = dlg_file.selectedFiles()
+        path = files[0] if files else ""
         if not path:
             return
 
@@ -1800,21 +1805,27 @@ class SettingsWidget(QWidget):
             QMessageBox.critical(self, "Invalid backup", str(exc))
             return
 
-        reply = QMessageBox.question(
-            self, "Restore backup",
+        dlg_q = QMessageBox(self)
+        dlg_q.setWindowTitle("Restore backup")
+        dlg_q.setText(
             f"Restore backup?\n"
             f"It contains {info['cards']} cards and {info['containers']} containers.\n"
-            f"The current database will be REPLACED.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            f"The current database will be REPLACED."
         )
-        if reply != QMessageBox.StandardButton.Yes:
+        dlg_q.setStandardButtons(
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if await asyncWrap(dlg_q.exec) != QMessageBox.StandardButton.Yes:
             return
 
         self._backup_status.setText("Restoring…")
         try:
             await db.restore_from_bytes(data)
             self._backup_status.setText("Restore complete.")
-            QMessageBox.information(self, "Restore", "Database restored successfully.")
+            dlg_ok = QMessageBox(self)
+            dlg_ok.setWindowTitle("Restore")
+            dlg_ok.setText("Database restored successfully.")
+            await asyncWrap(dlg_ok.exec)
         except Exception as exc:
             QMessageBox.critical(self, "Restore error", str(exc))
             self._backup_status.setText("Restore failed.")

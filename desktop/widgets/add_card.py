@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit,
 )
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QPixmap
+from PyQt6.QtGui import QKeySequence, QPixmap, QShortcut
 from qasync import asyncSlot
 
 from core.i18n import _
@@ -68,6 +68,10 @@ class AddCardWidget(QWidget):
         self._search_lang_cb.currentIndexChanged.connect(self._update_lang_label)
         self._update_lang_label()
 
+        add_sc = QShortcut(QKeySequence("Ctrl+Return"), self)
+        add_sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        add_sc.activated.connect(self._on_add)
+
     # ---- Search pane (left) ------------------------------------------ #
 
     def _build_search_pane(self) -> QWidget:
@@ -87,6 +91,15 @@ class AddCardWidget(QWidget):
         hint.setWordWrap(True)
         hint.setStyleSheet("color: #888; font-size: 11px;")
         layout.addWidget(hint)
+
+        kb_hint = QLabel(
+            _("⌨ Keyboard: type set + collector no. → "
+              "<b>Enter</b> to search → <b>Ctrl+Enter</b> to add. "
+              "Focus returns to collector no. after each add.")
+        )
+        kb_hint.setWordWrap(True)
+        kb_hint.setStyleSheet("color: #555; font-size: 10px;")
+        layout.addWidget(kb_hint)
 
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
@@ -129,6 +142,7 @@ class AddCardWidget(QWidget):
 
         self._search_btn = QPushButton(_("Search"))
         self._search_btn.setDefault(True)
+        self._search_btn.setToolTip("Enter")
         layout.addWidget(self._search_btn)
 
         sep2 = QFrame()
@@ -296,6 +310,7 @@ class AddCardWidget(QWidget):
 
         right.addSpacing(8)
         self._add_btn = QPushButton(_("Add to Collection"))
+        self._add_btn.setToolTip("Ctrl+Enter")
         self._add_btn.setStyleSheet(
             "font-size: 14px; padding: 10px; background: #0f3460; color: white; border-radius: 4px;"
         )
@@ -550,3 +565,6 @@ class AddCardWidget(QWidget):
         self._add_status.setText("   ·   ".join(parts))
         self._add_status.setStyleSheet("font-size: 12px; color: #4caf50;")
         QTimer.singleShot(6000, lambda: self._add_status.setText(""))
+
+        self._cn_edit.setFocus()
+        self._cn_edit.selectAll()

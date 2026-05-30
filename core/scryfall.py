@@ -418,10 +418,22 @@ class ScryfallClient:
             unique="prints",
         )
         if data and data.get("data"):
-            prices = data["data"][0].get("prices", {})
+            # Pick the printing with the lowest non-null EUR price rather than
+            # the most-recently-released one, which may be a premium/showcase
+            # variant priced far above the common reprint the user actually owns.
+            best = None
+            best_eur = None
+            for card in data["data"]:
+                p = card.get("prices", {})
+                eur = _safe_float(p.get("eur"))
+                if eur is not None and (best_eur is None or eur < best_eur):
+                    best_eur = eur
+                    best = p
+            if best is None:
+                best = data["data"][0].get("prices", {})
             result = {
-                "price_eur": _safe_float(prices.get("eur")),
-                "price_usd": _safe_float(prices.get("usd")),
+                "price_eur": _safe_float(best.get("eur")),
+                "price_usd": _safe_float(best.get("usd")),
             }
             self._ncache_set(key, result)
             return result

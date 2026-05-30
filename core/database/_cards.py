@@ -347,9 +347,9 @@ class _CardsMixin:
             return [row[0] for row in await cur.fetchall()]
 
     async def get_recently_priced_ids(self) -> set[str]:
-        """Return scryfall_ids whose price was updated today (UTC date)."""
+        """Return scryfall_ids whose price was updated today (UTC date), excluding approximate prices."""
         async with self._db.execute(
-            "SELECT scryfall_id FROM card_prices WHERE date(updated_at) = date('now')"
+            "SELECT scryfall_id FROM card_prices WHERE date(updated_at) = date('now') AND price_approx = 0"
         ) as cur:
             return {row[0] for row in await cur.fetchall()}
 
