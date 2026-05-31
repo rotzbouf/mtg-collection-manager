@@ -429,7 +429,7 @@ class _CardsMixin:
                                       AND mcs.format = ?
             LEFT JOIN containers ct    ON c.container_id = ct.id
             WHERE c.container_id != ?
-              AND (ct.type IS NULL OR ct.type NOT IN ('commander', 'deck'))
+              AND (ct.type IS NULL OR ct.type NOT IN ('commander', 'deck', 'overcount'))
               AND c.type_line NOT LIKE '%Land%'
             ORDER BY mcs.score DESC
             """,
