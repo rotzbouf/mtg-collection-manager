@@ -394,6 +394,7 @@ class OvercountWidget(QWidget):
         self._sell_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._sell_table.setAlternatingRowColors(True)
         self._sell_table.verticalHeader().setVisible(False)
+        self._sell_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         hdr = self._sell_table.horizontalHeader()
         hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         for col in range(1, len(_SELL_COLS)):
@@ -420,6 +421,7 @@ class OvercountWidget(QWidget):
             lambda _: _bg(self._load_sell_candidates()))
         self._sell_table.currentCellChanged.connect(self._on_sell_row_changed)
         self._sell_table.itemSelectionChanged.connect(self._on_sell_selection_changed)
+        self._sell_table.customContextMenuRequested.connect(self._on_sell_context_menu)
         self._sell_move_btn.clicked.connect(self._on_sell_move)
         return w
 
@@ -485,6 +487,20 @@ class OvercountWidget(QWidget):
 
     def _on_sell_selection_changed(self):
         self._sell_move_btn.setEnabled(bool(self._sell_table.selectedItems()))
+
+    def _on_sell_context_menu(self, pos):
+        cards = self._sell_selected_cards()
+        if not cards:
+            return
+        ids  = [c["id"] for c in cards]
+        n    = len(ids)
+        noun = f"{n} card{'s' if n > 1 else ''}"
+        menu = QMenu(self)
+        menu.addAction(_("↗ Move {noun} to container…").format(noun=noun),
+                       lambda: _bg(self._do_open_sell_move_dialog(cards)))
+        menu.addAction(_("✕ Remove {noun} from container").format(noun=noun),
+                       lambda: _bg(self._do_sell_move(ids, None)))
+        menu.exec(self._sell_table.viewport().mapToGlobal(pos))
 
     def _sell_selected_cards(self) -> list[dict]:
         seen: set[int] = set()
