@@ -80,13 +80,16 @@ class _SearchMixin:
         condition: str = "",
         language: str = "",
         foil: int | None = None,
-        container_id: int | None = None,
+        container_ids: list[int] | None = None,
+        exclude_container_ids: list[int] | None = None,
         commander_only: bool = False,
         price_min: float | None = None,
         price_max: float | None = None,
         limit: int = 300,
     ) -> list[dict]:
         """Flexible filter search across the collection. All parameters are optional."""
+        from core.mtg_dict import expand_term
+
         conditions: list[str] = []
         params: list = []
 
@@ -98,12 +101,16 @@ class _SearchMixin:
             params.extend([like, like, like])
 
         if type_line:
-            conditions.append("c.type_line LIKE ?")
-            params.append(f"%{type_line}%")
+            terms = expand_term(type_line)
+            parts = ["c.type_line LIKE ?" for _ in terms]
+            conditions.append("(" + " OR ".join(parts) + ")")
+            params.extend(f"%{t}%" for t in terms)
 
         if oracle_text:
-            conditions.append("c.oracle_text LIKE ?")
-            params.append(f"%{oracle_text}%")
+            terms = expand_term(oracle_text)
+            parts = ["c.oracle_text LIKE ?" for _ in terms]
+            conditions.append("(" + " OR ".join(parts) + ")")
+            params.extend(f"%{t}%" for t in terms)
 
         if set_code:
             conditions.append("c.set_code = ?")
@@ -148,11 +155,24 @@ class _SearchMixin:
             conditions.append("c.foil = ?")
             params.append(foil)
 
-        if container_id == -1:
-            conditions.append("c.container_id IS NULL")
-        elif container_id is not None:
-            conditions.append("c.container_id = ?")
-            params.append(container_id)
+        if container_ids:
+            parts = []
+            for cid in container_ids:
+                if cid == -1:
+                    parts.append("c.container_id IS NULL")
+                else:
+                    parts.append("c.container_id = ?")
+                    params.append(cid)
+            conditions.append("(" + " OR ".join(parts) + ")")
+
+        if exclude_container_ids:
+            non_null = [cid for cid in exclude_container_ids if cid != -1]
+            if non_null:
+                ph = ",".join("?" * len(non_null))
+                conditions.append(f"(c.container_id IS NULL OR c.container_id NOT IN ({ph}))")
+                params.extend(non_null)
+            if -1 in exclude_container_ids:
+                conditions.append("c.container_id IS NOT NULL")
 
         if commander_only:
             conditions.append("c.is_commander = 1")

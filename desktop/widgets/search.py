@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
     QGroupBox, QScrollArea, QFrame, QSpinBox, QDoubleSpinBox,
     QSizePolicy, QMenu, QDialog, QDialogButtonBox, QFormLayout,
+    QListWidget, QListWidgetItem,
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor, QFont
@@ -226,11 +227,19 @@ class SearchWidget(QWidget):
         self._f_foil.addItem(_("Non-foil only"), 0)
         coll_layout.addWidget(self._f_foil)
 
-        coll_layout.addWidget(QLabel(_("Container:")))
-        self._f_container = QComboBox()
-        self._f_container.addItem(_("Any"), None)
-        self._f_container.addItem(_("(no container)"), -1)
-        coll_layout.addWidget(self._f_container)
+        coll_layout.addWidget(QLabel(_("Containers (include):")))
+        self._f_container_list = QListWidget()
+        self._f_container_list.setMaximumHeight(110)
+        self._f_container_list.setAlternatingRowColors(True)
+        self._f_container_list.setStyleSheet("font-size: 11px;")
+        coll_layout.addWidget(self._f_container_list)
+
+        coll_layout.addWidget(QLabel(_("Containers (exclude):")))
+        self._f_exclude_list = QListWidget()
+        self._f_exclude_list.setMaximumHeight(110)
+        self._f_exclude_list.setAlternatingRowColors(True)
+        self._f_exclude_list.setStyleSheet("font-size: 11px;")
+        coll_layout.addWidget(self._f_exclude_list)
 
         self._f_commander = QCheckBox(_("Commander only"))
         coll_layout.addWidget(self._f_commander)
@@ -339,17 +348,24 @@ class SearchWidget(QWidget):
         except Exception:
             return
 
-        current = self._f_container.currentData()
-        self._f_container.blockSignals(True)
-        while self._f_container.count() > 2:
-            self._f_container.removeItem(2)
-        for c in self._containers:
-            self._f_container.addItem(c["name"], c["id"])
-        for i in range(self._f_container.count()):
-            if self._f_container.itemData(i) == current:
-                self._f_container.setCurrentIndex(i)
-                break
-        self._f_container.blockSignals(False)
+        def _populate(lst: QListWidget):
+            # Preserve current checked IDs across reloads
+            checked: set = set()
+            for i in range(lst.count()):
+                it = lst.item(i)
+                if it.checkState() == Qt.CheckState.Checked:
+                    checked.add(it.data(Qt.ItemDataRole.UserRole))
+
+            lst.clear()
+            for cid, label in [(-1, _("(no container)")), *((c["id"], c["name"]) for c in self._containers)]:
+                item = QListWidgetItem(label)
+                item.setData(Qt.ItemDataRole.UserRole, cid)
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
+                item.setCheckState(Qt.CheckState.Checked if cid in checked else Qt.CheckState.Unchecked)
+                lst.addItem(item)
+
+        _populate(self._f_container_list)
+        _populate(self._f_exclude_list)
 
     # ------------------------------------------------------------------ #
     # Slots                                                                 #
@@ -384,7 +400,8 @@ class SearchWidget(QWidget):
         condition  = self._f_condition.currentData()
         language   = self._f_language.currentData()
         foil       = self._f_foil.currentData()
-        ctr_id     = self._f_container.currentData()
+        ctr_ids    = self._checked_list_ids(self._f_container_list) or None
+        excl_ids   = self._checked_list_ids(self._f_exclude_list) or None
         cmd_only   = self._f_commander.isChecked()
 
         price_min_val = self._f_price_min.value()
@@ -406,7 +423,8 @@ class SearchWidget(QWidget):
                 condition=condition,
                 language=language,
                 foil=foil,
-                container_id=ctr_id,
+                container_ids=ctr_ids,
+                exclude_container_ids=excl_ids,
                 commander_only=cmd_only,
                 price_min=price_min,
                 price_max=price_max,
@@ -508,6 +526,17 @@ class SearchWidget(QWidget):
             from PyQt6.QtWidgets import QMessageBox
             QMessageBox.critical(self, "Error", str(exc))
 
+    def _checked_list_ids(self, lst: QListWidget) -> list[int]:
+        return [
+            lst.item(i).data(Qt.ItemDataRole.UserRole)
+            for i in range(lst.count())
+            if lst.item(i).checkState() == Qt.CheckState.Checked
+        ]
+
+    def _uncheck_list(self, lst: QListWidget):
+        for i in range(lst.count()):
+            lst.item(i).setCheckState(Qt.CheckState.Unchecked)
+
     def _on_reset(self):
         self._f_name.clear()
         self._f_type.clear()
@@ -523,7 +552,8 @@ class SearchWidget(QWidget):
         self._f_condition.setCurrentIndex(0)
         self._f_language.setCurrentIndex(0)
         self._f_foil.setCurrentIndex(0)
-        self._f_container.setCurrentIndex(0)
+        self._uncheck_list(self._f_container_list)
+        self._uncheck_list(self._f_exclude_list)
         self._f_commander.setChecked(False)
         self._f_price_min.setValue(0)
         self._f_price_max.setValue(0)
