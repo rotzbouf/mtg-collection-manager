@@ -1588,17 +1588,19 @@ class SettingsWidget(QWidget):
             self._meta_clear_btn.setEnabled(True)
             self._meta_progress.setVisible(False)
 
+        if total_saved == 0:
+            self._meta_status.setText("Already up to date — no new decks found.")
+            return
+
         # Recompute scores after crawl
         self._meta_status.setText("Recomputing card scores…")
         try:
             n_scores = await db.recompute_meta_scores()
             self._meta_status.setText(
-                f"✓ {total_saved} new deck(s) stored  ·  {n_scores} card scores computed."
+                f"✓ {total_saved} new deck(s) stored  ·  {n_scores} card scores updated."
             )
         except Exception as exc:
             self._meta_status.setText(f"✓ {total_saved} deck(s) saved  (score error: {exc})")
-
-        await self._load_meta_stats()
 
     @asyncSlot()
     async def _on_meta_clear(self):

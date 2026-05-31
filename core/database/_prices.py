@@ -161,8 +161,8 @@ class _PricesMixin:
 
         async with self._db.execute(
             """
-            SELECT c.name_en, c.name_de, c.printed_name, c.price_eur, c.foil, c.language,
-                   c.scryfall_id, c.image_url,
+            SELECT c.name_en, c.name_de, c.printed_name, c.price_eur, c.price_approx,
+                   c.foil, c.language, c.scryfall_id, c.image_url,
                    ct.name AS container_name
             FROM collection_with_prices c
             LEFT JOIN containers ct ON c.container_id = ct.id

@@ -26,6 +26,14 @@ class _MetaMixin:
         ) as cur:
             return {row[0] for row in await cur.fetchall()}
 
+    async def get_crawled_event_ids(self, source: str, format_code: str) -> set[str]:
+        """Return set of event_ids that have at least one deck stored."""
+        async with self._db.execute(
+            "SELECT DISTINCT event_id FROM meta_decks WHERE source=? AND format=?",
+            (source, format_code),
+        ) as cur:
+            return {row[0] for row in await cur.fetchall()}
+
     async def save_meta_deck(
         self,
         source: str,

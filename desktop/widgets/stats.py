@@ -144,6 +144,13 @@ class _CardEmbed(QFrame):
             foil_lbl.setStyleSheet("font-size:10px; color:#FFD700;")
             lay.addWidget(foil_lbl)
 
+        if card.get("container_name"):
+            ct_lbl = QLabel(card["container_name"])
+            ct_lbl.setWordWrap(True)
+            ct_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            ct_lbl.setStyleSheet("font-size:10px; color:#9399b2;")
+            lay.addWidget(ct_lbl)
+
         lay.addStretch()
 
     def load_image(self):

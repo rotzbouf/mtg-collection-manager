@@ -212,7 +212,8 @@ async def crawl_format(
     """
     source = "mtgtop8"
     saved = 0
-    already_stored = await db.get_crawled_deck_ids(source, fmt_code)
+    already_stored_events = await db.get_crawled_event_ids(source, fmt_code)
+    already_stored_decks  = await db.get_crawled_deck_ids(source, fmt_code)
 
     def _report(msg: str, done: int = 0, total: int = 0):
         if progress_cb:
@@ -238,7 +239,16 @@ async def crawl_format(
             _report("No events found.")
             return 0
 
-        _report(f"Found {len(events)} event(s) to process.", 0, len(events))
+        new_events = [e for e in events if e["event_id"] not in already_stored_events]
+        skipped_events = len(events) - len(new_events)
+        if not new_events:
+            skip_msg = f"Already up to date — all {len(events)} event(s) previously crawled."
+            _report(skip_msg)
+            return 0
+
+        skip_note = f" (skipping {skipped_events} already crawled)" if skipped_events else ""
+        _report(f"Found {len(new_events)} new event(s){skip_note}.", 0, len(new_events))
+        events = new_events
 
         # ── 2. Each event page → list of decks ────────────────────── #
         all_decks: list[dict] = []
@@ -255,7 +265,7 @@ async def crawl_format(
             all_decks.extend(decks)
 
         # Filter already-stored decks
-        new_decks = [d for d in all_decks if d["deck_id"] not in already_stored]
+        new_decks = [d for d in all_decks if d["deck_id"] not in already_stored_decks]
         _report(f"Fetching {len(new_decks)} new deck(s) (skipping {len(all_decks)-len(new_decks)} known)…",
                 0, len(new_decks))
 
