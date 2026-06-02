@@ -3,7 +3,7 @@
 A native desktop application for tracking a physical Magic: The Gathering collection.
 Built with PyQt6 — fast, offline-first, no cloud account required.
 
-**Current version: 0.5.2**
+**Current version: 0.5.3**
 
 ---
 
